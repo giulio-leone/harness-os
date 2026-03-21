@@ -1,0 +1,31 @@
+{
+  "name": "agent-harness-core",
+  "version": "0.1.0",
+  "description": "Reusable long-running agent harness core for Copilot-style runtimes.",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "init": "bash scripts/init.sh"
+  },
+  "keywords": [
+    "agent",
+    "harness",
+    "copilot",
+    "mem0",
+    "sqlite",
+    "zod"
+  ],
+  "author": "",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

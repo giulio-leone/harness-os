@@ -1,0 +1,42 @@
+import { z } from 'zod';
+
+export const IssuePrioritySchema = z.enum(['critical', 'high', 'medium', 'low']);
+export const IssueStatusSchema = z.enum(['todo', 'in_progress', 'review', 'done', 'blocked']);
+export const MilestoneStatusSchema = z.enum(['todo', 'in_progress', 'review', 'done']);
+export const TShirtSizeSchema = z.enum(['S', 'M', 'L', 'XL']);
+
+export const IssueSchema: z.ZodType<any> = z.lazy(() =>
+  z.object({
+    id: z.string(),
+    task: z.string(),
+    priority: IssuePrioritySchema,
+    status: IssueStatusSchema,
+    size: TShirtSizeSchema,
+    depends_on: z.array(z.string()),
+    children: z.record(z.string(), IssueSchema).default({}),
+  })
+);
+
+export const MilestoneSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  priority: IssuePrioritySchema,
+  status: MilestoneStatusSchema,
+  depends_on: z.array(z.string()),
+  issues: z.record(z.string(), IssueSchema),
+});
+
+export const PlanSchema = z.object({
+  prd: z.string(),
+  context: z.string(),
+  runtime: z.object({
+    globalSkillsPath: z.string(),
+    syncManifestPath: z.string(),
+    mem0Mode: z.enum(['local_self_hosted', 'hosted', 'hybrid']).optional(),
+  }),
+  milestones: z.record(z.string(), MilestoneSchema),
+});
+
+export type Plan = z.infer<typeof PlanSchema>;
+export type Milestone = z.infer<typeof MilestoneSchema>;
+export type Issue = z.infer<typeof IssueSchema>;
