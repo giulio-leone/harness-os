@@ -39,6 +39,42 @@ The first persistence layer is local and explicit:
 
 - `npm run mem0:mcp:dev`
 - `npm run build && npm run mem0:mcp`
+- `npm run build && npm run mem0:mcp:hot`
+- `npm run build && npm run scheduler:daemon`
+
+### Copilot-friendly local hot reload
+
+For local TypeScript MCP development, `src/bin/mem0-mcp-hot-reload.ts` now keeps the outer MCP connection stable while it restarts the `mem0-mcp` child process from source on the next request after a watched file changes.
+
+What it does:
+- keeps the Copilot-facing stdio transport in a stable wrapper process
+- starts `mem0-mcp` from source through the repo-local `tsx` binary instead of `dist/`
+- watches `src/`, `package.json`, and `tsconfig.json`
+- adapts between Content-Length framing and bare JSON stdio startup messages used by Copilot CLI
+- replays child `initialize` plus `notifications/initialized` after a restart so the session does not need a full client restart for normal code changes
+
+What it does **not** promise:
+- dynamic tool-surface mutations; if you add or remove tools/capabilities, a fresh client session may still be required
+
+### Session lifecycle MCP planning tools
+
+`session-lifecycle-mcp` now exposes additional harness-planning tools for local workspace bootstrapping:
+
+- `harness_init_workspace`
+- `harness_create_campaign`
+- `harness_plan_issues`
+- `harness_rollback_issue`
+
+These helpers now run with transactional writes so partial lifecycle mutations are rolled back on failure.
+
+### Scheduler injector
+
+`src/bin/scheduler-daemon.ts` is a cron-aware, idempotent injector for scheduled harness work. It reads:
+
+- `HARNESS_DB_PATH`
+- `HARNESS_CRON_PATH`
+
+Each run evaluates standard 5-field cron expressions, injects only due jobs, and records per-minute injections so repeated invocations do not duplicate the same scheduled task.
 
 ## Session lifecycle bridge
 

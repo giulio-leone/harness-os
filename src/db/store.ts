@@ -86,3 +86,24 @@ export function runStatement(
 ): void {
   connection.prepare(sql).run(...parameters);
 }
+
+export function runInTransaction<T>(
+  connection: DatabaseSync,
+  operation: () => T,
+): T {
+  connection.exec('BEGIN IMMEDIATE');
+
+  try {
+    const result = operation();
+    connection.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      connection.exec('ROLLBACK');
+    } catch {
+      // Ignore rollback errors so the original failure is preserved.
+    }
+
+    throw error;
+  }
+}

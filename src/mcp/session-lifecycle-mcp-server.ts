@@ -2,6 +2,16 @@ import { z } from 'zod';
 
 import { SessionLifecycleAdapter } from '../runtime/session-lifecycle-adapter.js';
 import {
+  createHarnessCampaign,
+  harnessCreateCampaignInputSchema,
+  harnessInitWorkspaceInputSchema,
+  harnessPlanIssuesInputSchema,
+  harnessRollbackIssueInputSchema,
+  initHarnessWorkspace,
+  planHarnessIssues,
+  rollbackHarnessIssue,
+} from '../runtime/harness-planning-tools.js';
+import {
   incrementalSessionInputSchema,
   inspectIssueInputSchema,
   inspectOverviewInputSchema,
@@ -265,6 +275,86 @@ export class SessionLifecycleMcpServer {
 
   private buildTools(): ToolDefinition[] {
     return [
+      {
+        name: 'harness_init_workspace',
+        description: 'Initialize a new harness workspace and database locally.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            dbPath: { type: 'string' },
+            workspaceName: { type: 'string' },
+          },
+          required: ['dbPath', 'workspaceName'],
+          additionalProperties: false,
+        },
+        handler: async (args) => initHarnessWorkspace(
+          harnessInitWorkspaceInputSchema.parse(args),
+        ),
+      },
+      {
+        name: 'harness_create_campaign',
+        description: 'Create a new project and campaign in a workspace.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            dbPath: { type: 'string' },
+            workspaceId: { type: 'string' },
+            projectName: { type: 'string' },
+            campaignName: { type: 'string' },
+            objective: { type: 'string' },
+          },
+          required: ['dbPath', 'workspaceId', 'projectName', 'campaignName', 'objective'],
+          additionalProperties: false,
+        },
+        handler: async (args) =>
+          createHarnessCampaign(harnessCreateCampaignInputSchema.parse(args)),
+      },
+      {
+        name: 'harness_plan_issues',
+        description: 'Bulk create a milestone and sequential issues for a campaign.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            dbPath: { type: 'string' },
+            projectId: { type: 'string' },
+            campaignId: { type: 'string' },
+            milestoneDescription: { type: 'string' },
+            issues: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  task: { type: 'string' },
+                  priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+                  size: { type: 'string' },
+                  depends_on_indices: { type: 'array', items: { type: 'number' }, description: 'Indices of the issues array this task depends on. E.g. [0] means it depends on the first task in the array.' },
+                },
+                required: ['task', 'priority', 'size'],
+                additionalProperties: false,
+              }
+            }
+          },
+          required: ['dbPath', 'projectId', 'campaignId', 'milestoneDescription', 'issues'],
+          additionalProperties: false,
+        },
+        handler: async (args) =>
+          planHarnessIssues(harnessPlanIssuesInputSchema.parse(args)),
+      },
+      {
+        name: 'harness_rollback_issue',
+        description: 'Hard rollback: reset a failed or stuck issue back to pending status and expire its lease.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            dbPath: { type: 'string' },
+            issueId: { type: 'string' },
+          },
+          required: ['dbPath', 'issueId'],
+          additionalProperties: false,
+        },
+        handler: async (args) =>
+          rollbackHarnessIssue(harnessRollbackIssueInputSchema.parse(args)),
+      },
       {
         name: 'begin_incremental_session',
         description:
