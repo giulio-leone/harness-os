@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "bindings": [
+    {
+      "id": "template-binding",
+      "promptFixtureId": "template-prompt",
+      "promptFixturePath": ".harness/fixtures/template.prompt.txt",
+      "domain": "template-opportunity-lifecycle",
+      "schemaPath": ".harness/schemas/domain-schema.json",
+      "workflowPath": ".harness/mission-workflows/workflow.json",
+      "sourceContext": [
+        "CONTEXT.MD",
+        "JOBS.MD",
+        "NETWORK.MD",
+        "resume.md",
+        "cover-letter.md"
+      ],
+      "requiredDomainEntities": [
+        "opportunities",
+        "executions",
+        "contacts",
+        "memory_notes"
+      ],
+      "campaignBindings": [
+        {
+          "campaignId": "mission-template-discovery",
+          "issueIds": [
+            "issue-template-discovery-batch"
+          ],
+          "promptRules": [
+            "Capture the first structured batch from the chosen source",
+            "Normalize the captured records into canonical state",
+            "Assign one next best action per record"
+          ],
+          "requiredOutputs": [
+            "structured records",
+            "priority signal",
+            "next best action"
+          ]
+        },
+        {
+          "campaignId": "mission-template-execution",
+          "issueIds": [
+            "issue-template-execution-prepare",
+            "issue-template-execution-run"
+          ],
+          "promptRules": [
+            "Prepare the highest-value execution package",
+            "Record the artifact or action chosen",
+            "Preserve execution evidence or blocking context"
+          ],
+          "requiredOutputs": [
+            "execution package",
+            "evidence log",
+            "updated next best action"
+          ]
+        },
+        {
+          "campaignId": "mission-template-follow-up",
+          "issueIds": [
+            "issue-template-follow-up"
+          ],
+          "promptRules": [
+            "Record the follow-up state",
+            "Capture any new contact or memory note",
+            "Set the next best action and follow-up timing"
+          ],
+          "requiredOutputs": [
+            "follow-up note",
+            "contact update",
+            "next best action"
+          ]
+        }
+      ],
+      "validationSuites": [],
+      "requiredMemoryKinds": [
+        "task-summary",
+        "contact-summary",
+        "follow-up-note"
+      ],
+      "operatingRules": [
+        "database-primary-source-of-truth",
+        "mem0-support-only",
+        "single-next-best-action-per-record",
+        "operator-defensible-output"
+      ]
+    }
+  ]
+}

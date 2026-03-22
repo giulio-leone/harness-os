@@ -1,0 +1,76 @@
+{
+  "features": [
+    {
+      "id": "bootstrap-files-in-place",
+      "category": "initializer",
+      "description": "The copied workspace contains the portable bootstrap files and runtime helpers.",
+      "priority": "high",
+      "steps": [
+        "Copy the template into a new workspace",
+        "Run bash init.sh",
+        "Verify the runtime directories and helper scripts"
+      ],
+      "passes": false
+    },
+    {
+      "id": "prompt-contract-customized",
+      "category": "artifact",
+      "description": "The placeholder prompt, bindings, schema, and workflow are replaced with workspace-specific contracts.",
+      "priority": "high",
+      "steps": [
+        "Customize the prompt fixture",
+        "Customize the prompt bindings",
+        "Customize the domain schema and workflow"
+      ],
+      "passes": false
+    },
+    {
+      "id": "live-catalog-seeded",
+      "category": "artifact",
+      "description": "The template live catalog is seeded into a fresh harness SQLite database.",
+      "priority": "high",
+      "steps": [
+        "Customize .harness/live-mission-catalog.json",
+        "Run python3 .harness/seed-live-catalog.py --reset",
+        "Inspect the generated overview input"
+      ],
+      "passes": false
+    },
+    {
+      "id": "live-dry-run-path-validated",
+      "category": "artifact",
+      "description": "The dry-run wrapper can claim the first ready issue without mutating the canonical live database.",
+      "priority": "high",
+      "steps": [
+        "Run bash .harness/run-live-dry-run.sh",
+        "Inspect .harness/runtime/live-dry-run.summary.json",
+        "Verify sandbox state changes while canonical state remains intact"
+      ],
+      "passes": false
+    },
+    {
+      "id": "live-claim-preview-validated",
+      "category": "artifact",
+      "description": "The preview-first live claim wrapper exposes the next ready issue without opening a lease until explicitly executed.",
+      "priority": "high",
+      "steps": [
+        "Run bash .harness/run-live-claim.sh",
+        "Inspect .harness/runtime/live-claim-preview-summary.json",
+        "Execute only when the workspace is ready"
+      ],
+      "passes": false
+    },
+    {
+      "id": "queue-promotion-wrapper-available",
+      "category": "artifact",
+      "description": "The workspace can preview or execute dependency-based queue promotion through the reusable harness wrapper.",
+      "priority": "medium",
+      "steps": [
+        "Run bash .harness/run-live-queue-promotion.sh",
+        "Inspect the preview summary",
+        "Execute after closing eligible issues as done"
+      ],
+      "passes": false
+    }
+  ]
+}

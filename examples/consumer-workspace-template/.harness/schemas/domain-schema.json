@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "domain": "template-opportunity-lifecycle",
+  "promptFixtureId": "template-prompt",
+  "extendsHarnessCore": {
+    "projectKey": "consumer-workspace-template",
+    "workspaceKind": "bootstrap-template",
+    "tables": [
+      "workspaces",
+      "projects",
+      "campaigns",
+      "issues",
+      "runs",
+      "leases",
+      "checkpoints",
+      "events",
+      "artifacts",
+      "memory_links"
+    ]
+  },
+  "canonicalInvariants": [
+    "The database is the primary source of truth.",
+    "mem0 and other semantic memory layers are support-only retrieval surfaces.",
+    "Every tracked record must always have exactly one primary next best action.",
+    "Summaries and decisions must remain operator-defensible."
+  ],
+  "entities": [
+    {
+      "name": "opportunities",
+      "description": "Canonical records discovered before execution work begins.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "source_url", "type": "text", "required": false },
+        { "name": "title", "type": "text", "required": true },
+        { "name": "owner", "type": "text", "required": false },
+        { "name": "priority_tier", "type": "text", "required": true },
+        { "name": "current_state", "type": "text", "required": true },
+        { "name": "next_best_action", "type": "text", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "executions",
+      "description": "Execution records linked to a specific opportunity and harness issue.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "opportunity_id", "type": "text", "required": true },
+        { "name": "issue_id", "type": "text", "required": false },
+        { "name": "current_run_id", "type": "text", "required": false },
+        { "name": "status", "type": "text", "required": true },
+        { "name": "execution_summary", "type": "text", "required": false },
+        { "name": "artifact_id", "type": "text", "required": false },
+        { "name": "next_best_action", "type": "text", "required": true },
+        { "name": "follow_up_at", "type": "timestamp", "required": false },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "contacts",
+      "description": "Relevant contacts or stakeholders connected to one opportunity or execution path.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "opportunity_id", "type": "text", "required": true },
+        { "name": "full_name", "type": "text", "required": true },
+        { "name": "role", "type": "text", "required": true },
+        { "name": "channel", "type": "text", "required": false },
+        { "name": "contact_url", "type": "text", "required": false },
+        { "name": "relevance_reason", "type": "text", "required": true },
+        { "name": "priority_rank", "type": "integer", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "memory_notes",
+      "description": "Compressed notes linked back to canonical state and optional mem0 evidence.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "execution_id", "type": "text", "required": true },
+        { "name": "memory_link_id", "type": "text", "required": false },
+        { "name": "compressed_context", "type": "text", "required": true },
+        { "name": "risks", "type": "text", "required": true },
+        { "name": "next_action_summary", "type": "text", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from": "executions.opportunity_id",
+      "to": "opportunities.id",
+      "purpose": "Each execution path belongs to one canonical opportunity."
+    },
+    {
+      "from": "executions.issue_id",
+      "to": "issues.id",
+      "purpose": "Execution state can be tied back to the currently leased issue."
+    },
+    {
+      "from": "contacts.opportunity_id",
+      "to": "opportunities.id",
+      "purpose": "Contacts stay scoped to a canonical opportunity when relevant."
+    },
+    {
+      "from": "memory_notes.execution_id",
+      "to": "executions.id",
+      "purpose": "Follow-up memory remains linked to canonical execution state."
+    },
+    {
+      "from": "memory_notes.memory_link_id",
+      "to": "memory_links.id",
+      "purpose": "Derived memory can point to optional mem0 evidence without replacing canonical data."
+    }
+  ],
+  "qualificationScoring": {
+    "dimensions": [
+      "source_quality",
+      "fit_signal",
+      "execution_complexity",
+      "contact_accessibility",
+      "follow_up_value"
+    ],
+    "tiers": [
+      { "name": "A", "description": "Highest-value and highest-confidence records." },
+      { "name": "B", "description": "Useful records worth active work." },
+      { "name": "C", "description": "Low-priority or controlled-volume records." }
+    ]
+  },
+  "stateMachine": {
+    "states": [
+      { "name": "discovered", "allowedNext": ["qualified", "deprioritized"] },
+      { "name": "qualified", "allowedNext": ["prepared", "deprioritized"] },
+      { "name": "prepared", "allowedNext": ["executing", "follow_up_pending", "deprioritized"] },
+      { "name": "executing", "allowedNext": ["follow_up_pending", "closed", "blocked"] },
+      { "name": "follow_up_pending", "allowedNext": ["executing", "closed", "deprioritized"] },
+      { "name": "blocked", "allowedNext": ["prepared", "executing", "closed"] }
+    ],
+    "terminalStates": [
+      "closed",
+      "deprioritized"
+    ]
+  },
+  "requiredSummaryFields": [
+    "Record",
+    "Source",
+    "Main signal",
+    "Why it matters",
+    "Main risks",
+    "Contacts identified",
+    "Actions completed",
+    "Current state",
+    "Next best action"
+  ]
+}

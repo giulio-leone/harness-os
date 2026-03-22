@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "catalogId": "consumer-workspace-template-live-v1",
+  "projectIntent": "Template live catalog for a prompt-driven consumer workspace. Replace campaigns, issues, and source context before real execution.",
+  "sourceContext": [
+    "CONTEXT.MD",
+    "JOBS.MD",
+    "NETWORK.MD",
+    "resume.md",
+    "cover-letter.md"
+  ],
+  "workspace": {
+    "id": "workspace-template-consumer",
+    "name": "consumer-workspace-template",
+    "kind": "bootstrap-template"
+  },
+  "project": {
+    "id": "project-template-consumer",
+    "key": "consumer-workspace-template",
+    "name": "Consumer Workspace Template",
+    "domain": "template-opportunity-lifecycle",
+    "status": "active"
+  },
+  "campaigns": [
+    {
+      "id": "mission-template-discovery",
+      "name": "template-discovery",
+      "objective": "Capture the first structured batch of records and normalize them into canonical state.",
+      "status": "active",
+      "scope": {
+        "sources": ["replace-me"],
+        "qualityBar": "operator-defined",
+        "sourceContext": ["CONTEXT.MD", "JOBS.MD"]
+      }
+    },
+    {
+      "id": "mission-template-execution",
+      "name": "template-execution",
+      "objective": "Prepare and execute the next best action for the highest-value record.",
+      "status": "active",
+      "scope": {
+        "executionBias": "preview-first",
+        "supportAssets": ["resume.md", "cover-letter.md"],
+        "sourceContext": ["CONTEXT.MD", "JOBS.MD"]
+      }
+    },
+    {
+      "id": "mission-template-follow-up",
+      "name": "template-follow-up",
+      "objective": "Track contacts, follow-up timing, and memory-linked notes after the first execution.",
+      "status": "active",
+      "scope": {
+        "channels": ["replace-me"],
+        "sourceContext": ["CONTEXT.MD", "NETWORK.MD"]
+      }
+    }
+  ],
+  "issues": [
+    {
+      "id": "issue-template-discovery-batch",
+      "campaignId": "mission-template-discovery",
+      "task": "Capture the first batch of records and assign one next best action per item.",
+      "priority": "high",
+      "status": "ready",
+      "size": "S",
+      "dependsOn": [],
+      "nextBestAction": "Use the structured batch to unlock the first execution-ready issue."
+    },
+    {
+      "id": "issue-template-execution-prepare",
+      "campaignId": "mission-template-execution",
+      "task": "Prepare the first execution package from the best structured record.",
+      "priority": "medium",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-template-discovery-batch"
+      ],
+      "nextBestAction": "Promote this issue after the discovery batch is captured and ranked."
+    },
+    {
+      "id": "issue-template-execution-run",
+      "campaignId": "mission-template-execution",
+      "task": "Execute the prepared package and preserve evidence or blocking state.",
+      "priority": "medium",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-template-execution-prepare"
+      ],
+      "nextBestAction": "Claim this issue when the execution package is ready."
+    },
+    {
+      "id": "issue-template-follow-up",
+      "campaignId": "mission-template-follow-up",
+      "task": "Capture the follow-up state, contact context, and next timing after execution.",
+      "priority": "low",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-template-execution-run"
+      ],
+      "nextBestAction": "Promote this issue when the first execution result exists."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+version: 1
+workspace: consumer-workspace-template
+mode: live-dry-run
+artifacts:
+  liveCatalog: .harness/live-mission-catalog.json
+  seedScript: .harness/seed-live-catalog.py
+  sandboxDb: .harness/runtime/live-dry-run.sqlite
+  summary: .harness/runtime/live-dry-run.summary.json

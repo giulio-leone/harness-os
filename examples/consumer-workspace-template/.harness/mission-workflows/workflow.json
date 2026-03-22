@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "workflowId": "template-workflow",
+  "domain": "template-opportunity-lifecycle",
+  "promptFixtureId": "template-prompt",
+  "stages": [
+    {
+      "id": "discover-and-qualify",
+      "campaignId": "mission-template-discovery",
+      "currentIssueIds": [
+        "issue-template-discovery-batch"
+      ],
+      "promptRules": [
+        "Capture the first batch of records",
+        "Normalize them into canonical state",
+        "Assign one next best action per record"
+      ],
+      "requiredEntities": [
+        "opportunities"
+      ],
+      "requiredCheckpoints": [
+        "records captured",
+        "priority assigned",
+        "next best action set"
+      ],
+      "resultingStates": [
+        "discovered",
+        "qualified"
+      ]
+    },
+    {
+      "id": "prepare-and-execute",
+      "campaignId": "mission-template-execution",
+      "currentIssueIds": [
+        "issue-template-execution-prepare",
+        "issue-template-execution-run"
+      ],
+      "promptRules": [
+        "Prepare the best execution package",
+        "Attach the supporting artifact or evidence",
+        "Record the execution result or blocking reason"
+      ],
+      "requiredEntities": [
+        "executions",
+        "opportunities"
+      ],
+      "requiredCheckpoints": [
+        "execution package prepared",
+        "execution evidence saved",
+        "state updated"
+      ],
+      "resultingStates": [
+        "prepared",
+        "executing"
+      ]
+    },
+    {
+      "id": "follow-up-and-memory",
+      "campaignId": "mission-template-follow-up",
+      "currentIssueIds": [
+        "issue-template-follow-up"
+      ],
+      "promptRules": [
+        "Record the follow-up context",
+        "Update contacts or stakeholders if needed",
+        "Write the next best action and any timing"
+      ],
+      "requiredEntities": [
+        "contacts",
+        "memory_notes",
+        "executions"
+      ],
+      "requiredCheckpoints": [
+        "follow-up note written",
+        "memory note linked",
+        "next best action refreshed"
+      ],
+      "resultingStates": [
+        "follow_up_pending",
+        "closed"
+      ]
+    }
+  ],
+  "stateMachine": {
+    "states": [
+      { "id": "discovered", "allowedNext": ["qualified", "deprioritized"] },
+      { "id": "qualified", "allowedNext": ["prepared", "deprioritized"] },
+      { "id": "prepared", "allowedNext": ["executing", "follow_up_pending", "deprioritized"] },
+      { "id": "executing", "allowedNext": ["follow_up_pending", "closed", "blocked"] },
+      { "id": "follow_up_pending", "allowedNext": ["executing", "closed", "deprioritized"] },
+      { "id": "blocked", "allowedNext": ["prepared", "executing", "closed"] }
+    ],
+    "terminalStates": [
+      "closed",
+      "deprioritized"
+    ]
+  },
+  "nextBestActionCatalog": [
+    "capture more context",
+    "prepare execution package",
+    "execute now",
+    "contact stakeholder",
+    "follow up later",
+    "deprioritize",
+    "close"
+  ],
+  "summaryTemplate": [
+    "Record",
+    "Source",
+    "Main signal",
+    "Why it matters",
+    "Main risks",
+    "Contacts identified",
+    "Actions completed",
+    "Current state",
+    "Next best action"
+  ]
+}

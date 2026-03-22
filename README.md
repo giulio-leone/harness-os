@@ -94,6 +94,7 @@ Example fixtures live under `examples/session-lifecycle/`:
 - `inspect-overview.json`
 - `inspect-issue.json`
 - `promote-queue.json`
+- `consumer-workspace-template/` for a portable consumer bootstrap that can be copied outside the repo and re-pointed with `HARNESS_CORE`
 
 Example usage:
 - `npm run build && npm run session:lifecycle < examples/session-lifecycle/inspect-overview.json`
@@ -126,3 +127,21 @@ python3 examples/skill-reuse/prove-global-skill-reuse.py \
 ```
 
 This validates repo-native skill source parity, runtime mirror parity, the updated `SYNC_MANIFEST` routing, and a real consumer `init.sh` bootstrap without claiming any skill reload mechanism.
+
+## Consumer workspace bootstrap template
+
+A reusable consumer bootstrap now lives under `examples/consumer-workspace-template/`.
+
+It packages the portable workspace shell that was previously only proven in a live consumer workspace:
+- `init.sh`, `AGENTS.MD`, `harness-project.json`, `progress.md`, and `feature_list.json`
+- generic prompt/schema/workflow placeholders under `.harness/`
+- a template live catalog plus preview-first wrappers for dry-run, live claim, and queue promotion
+
+It intentionally does **not** include personal assets, live runtime snapshots, or smoke proof artifacts. Copy the directory into a new workspace, set `HARNESS_CORE=/absolute/path/to/agent-harness-core` if needed, customize the template files, and then run:
+
+```bash
+bash init.sh
+python3 .harness/seed-live-catalog.py --reset
+bash .harness/run-live-dry-run.sh
+bash .harness/run-live-claim.sh
+```
