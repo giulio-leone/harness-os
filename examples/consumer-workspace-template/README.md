@@ -5,6 +5,7 @@ This template extracts the reusable bootstrap surface from a real consumer works
 ## What is included
 
 - portable bootstrap scripts
+- local Copilot CLI skill copies under `.github/skills/`
 - prompt/schema/workflow placeholders
 - a template live catalog with dependency-driven issues
 - preview-first wrappers for dry-run, live claim, and queue promotion
@@ -37,5 +38,6 @@ This template extracts the reusable bootstrap surface from a real consumer works
 
 - SQLite remains canonical.
 - mem0 remains support-only.
+- Copilot CLI discovers local workspace skills from `.github/skills/`, so the template ships with local `session-lifecycle` and `prompt-contract-bindings` skill copies there.
 - The template intentionally ships without smoke proof artifacts or runtime snapshots.
 - `run-smoke-suites.js` is included as the reusable verifier, but the manifest starts empty until you add your own validated suites.

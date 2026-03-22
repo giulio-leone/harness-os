@@ -49,6 +49,11 @@ Use the harness hierarchy exactly like this:
 - `.harness/mission-workflows/workflow.json`
 - `.harness/live-mission-catalog.json`
 
+Local Copilot CLI skills for this template are published under:
+
+- `.github/skills/session-lifecycle/SKILL.md`
+- `.github/skills/prompt-contract-bindings/SKILL.md`
+
 ---
 
 ## 5. Bootstrap flow

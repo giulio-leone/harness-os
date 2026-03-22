@@ -22,6 +22,7 @@
     "schemas": ".harness/schemas",
     "missionWorkflows": ".harness/mission-workflows"
   },
+  "localSkillsDir": ".github/skills",
   "missions": [
     {
       "id": "template-discovery",

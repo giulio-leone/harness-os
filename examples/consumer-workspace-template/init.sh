@@ -100,6 +100,8 @@ for required_file in \
   "$HARNESS_DIR/schemas/domain-schema.json" \
   "$HARNESS_DIR/mission-workflows/workflow.json" \
   "$HARNESS_DIR/live-mission-catalog.json" \
+  "$ROOT_DIR/.github/skills/session-lifecycle/SKILL.md" \
+  "$ROOT_DIR/.github/skills/prompt-contract-bindings/SKILL.md" \
   "$HARNESS_DIR/smoke-suite-manifest.json" \
   "$HARNESS_DIR/run-smoke-suites.js" \
   "$HARNESS_DIR/seed-live-catalog.py" \
