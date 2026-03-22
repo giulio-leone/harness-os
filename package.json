@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').copyFileSync('src/db/sqlite.schema.sql','dist/db/sqlite.schema.sql')\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/**/*.test.js",
     "init": "bash scripts/init.sh",
@@ -29,8 +29,7 @@
   "type": "module",
   "dependencies": {
     "mem0-mcp": "file:../mem0-mcp",
-    "zod": "^4.3.6",
-    "mcp-hot-reload": "file:../mcp-hot-reload"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

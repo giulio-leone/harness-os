@@ -1,7 +1,10 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 export interface HarnessStoreConfig {
   dbPath: string;
   schemaPath?: string;
@@ -21,7 +24,7 @@ export interface HarnessDatabase {
 }
 
 export function loadSchemaSnapshot(config: HarnessStoreConfig): SchemaSnapshot {
-  const schemaPath = config.schemaPath ?? resolve(process.cwd(), 'src/db/sqlite.schema.sql');
+  const schemaPath = config.schemaPath ?? resolve(__dirname, 'sqlite.schema.sql');
   const schemaSql = readFileSync(schemaPath, 'utf8');
 
   return {

@@ -43,7 +43,7 @@ import {
   type JsonRpcMessage,
   JsonRpcError,
   StdioJsonRpcTransport,
-} from 'mcp-hot-reload';
+} from './jsonrpc-stdio.js';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
