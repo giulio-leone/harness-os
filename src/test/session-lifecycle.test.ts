@@ -58,7 +58,7 @@ class InMemoryMem0Adapter implements Mem0Adapter {
       this.memories.find(
         (candidate) =>
           candidate.id === input.memoryId &&
-          matchesScope(candidate.scope, input.scope),
+          matchesScope(candidate.scope as any, input.scope as any),
       ) ?? null;
 
     return memory;
@@ -68,10 +68,15 @@ class InMemoryMem0Adapter implements Mem0Adapter {
     input: MemorySearchInput,
   ): Promise<MemorySearchResult[]> {
     return this.memories
-      .filter((candidate) => matchesScope(candidate.scope, input.scope))
+      .filter((candidate) => matchesScope(candidate.scope as any, input.scope as any))
       .slice(0, input.limit)
       .map((memory) => ({ memory, score: 1 }));
   }
+
+  async updateMemory(): Promise<PublicMemoryRecord> { throw new Error('stub'); }
+  async deleteMemory(): Promise<void> {}
+  async listWorkspaces(): Promise<string[]> { return []; }
+  async listProjects(): Promise<string[]> { return []; }
 }
 
 test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', async () => {
@@ -898,8 +903,8 @@ async function runCliCommand(
 }
 
 function matchesScope(
-  storedScope: PublicMemoryRecord['scope'],
-  requestedScope: MemorySearchInput['scope'],
+  storedScope: any,
+  requestedScope: any,
 ): boolean {
   return (
     storedScope.workspace === requestedScope.workspace &&

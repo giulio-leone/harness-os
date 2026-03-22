@@ -68,6 +68,11 @@ class StubMem0Adapter implements Mem0Adapter {
       .slice(0, input.limit)
       .map((memory) => ({ memory, score: 1 }));
   }
+
+  async updateMemory(): Promise<PublicMemoryRecord> { throw new Error('stub'); }
+  async deleteMemory(): Promise<void> {}
+  async listWorkspaces(): Promise<string[]> { return []; }
+  async listProjects(): Promise<string[]> { return []; }
 }
 
 interface ServerInternals {

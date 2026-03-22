@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import { FileBackedMem0Adapter } from 'mem0-mcp';
+import { SqliteMem0Adapter } from 'mem0-mcp';
 import {
   formatSessionLifecycleError,
   SessionLifecycleAdapter,
@@ -12,7 +12,7 @@ async function main(): Promise<void> {
   const payload = JSON.parse(rawPayload) as unknown;
   const adapter = new SessionLifecycleAdapter(
     new SessionOrchestrator({
-      mem0Adapter: FileBackedMem0Adapter.fromEnv(),
+      mem0Adapter: SqliteMem0Adapter.fromEnv(),
     }),
   );
   const result = await adapter.execute(payload);

@@ -441,8 +441,8 @@ export class SessionOrchestrator {
         projectId: context.projectId,
         campaignId: context.campaignId,
         issueId: context.issueId,
-        memoryKind: memoryResult.memory.kind,
-        memoryRef: memoryResult.memory.id,
+        memoryKind: memoryResult.memory.kind as string,
+        memoryRef: memoryResult.memory.id as string,
         summary: input.summary,
         createdAt: now,
       });
@@ -462,7 +462,7 @@ export class SessionOrchestrator {
       return {
         context: updatedContext,
         checkpoint,
-        memoryId: memoryResult.memory.id,
+        memoryId: memoryResult.memory.id as string,
       };
     } finally {
       database.close();
