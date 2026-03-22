@@ -12,6 +12,13 @@ import {
   rollbackHarnessIssue,
 } from '../runtime/harness-planning-tools.js';
 import {
+  AgenticToolError,
+  buildMeta,
+  resolveDbPath,
+  resolveProjectId,
+  resolveCampaignId,
+} from '../runtime/harness-agentic-helpers.js';
+import {
   incrementalSessionInputSchema,
   inspectIssueInputSchema,
   inspectOverviewInputSchema,
@@ -22,12 +29,19 @@ import {
   sessionContextSchema,
 } from '../runtime/session-lifecycle-cli.schemas.js';
 import {
-  JsonRpcError,
-  StdioJsonRpcTransport,
+  openHarnessDatabase,
+  selectAll,
+  selectOne,
+} from '../db/store.js';
+import {
   type JsonRpcErrorPayload,
   type JsonRpcId,
   type JsonRpcMessage,
-} from './jsonrpc-stdio.js';
+  JsonRpcError,
+  StdioJsonRpcTransport,
+} from 'copilot-mcp-hot-reload';
+
+// ─── Types ──────────────────────────────────────────────────────────
 
 interface ToolDefinition {
   name: string;
@@ -49,6 +63,8 @@ const toolCallParamsSchema = z
   })
   .strict();
 
+// ─── JSON Schema fragments ─────────────────────────────────────────
+
 const scopeJsonSchema = {
   type: 'object',
   properties: {
@@ -59,7 +75,6 @@ const scopeJsonSchema = {
     run: { type: 'string' },
   },
   required: ['workspace', 'project'],
-  additionalProperties: false,
 } as const;
 
 const sessionMemoryContextJsonSchema = {
@@ -95,11 +110,9 @@ const sessionMemoryContextJsonSchema = {
                   note: { type: 'string' },
                 },
                 required: ['checkpointId', 'artifactIds'],
-                additionalProperties: false,
               },
               metadata: {
                 type: 'object',
-                additionalProperties: { type: 'string' },
               },
               createdAt: { type: 'string', format: 'date-time' },
               updatedAt: { type: 'string', format: 'date-time' },
@@ -114,17 +127,14 @@ const sessionMemoryContextJsonSchema = {
               'createdAt',
               'updatedAt',
             ],
-            additionalProperties: false,
           },
           score: { type: 'number' },
         },
         required: ['memory', 'score'],
-        additionalProperties: false,
       },
     },
   },
   required: ['enabled', 'available', 'query', 'recalledMemories'],
-  additionalProperties: false,
 } as const;
 
 const sessionContextJsonSchema = {
@@ -169,8 +179,37 @@ const sessionContextJsonSchema = {
     'currentCheckpointId',
     'mem0',
   ],
-  additionalProperties: false,
 } as const;
+
+// ─── Server ─────────────────────────────────────────────────────────
+
+const HARNESS_INSTRUCTIONS = `You are connected to the agent-harness lifecycle server — an Agentic OS for autonomous task execution.
+
+ORIENTATION (call first in any new session):
+- harness_get_context → see current workspace, project, campaign, and queue status
+- harness_next_action → get a directive on exactly what tool to call next
+
+SETUP (one-time, when no workspace/project exists):
+1. harness_init_workspace → creates the SQLite database and workspace
+2. harness_create_campaign → registers a project and campaign
+3. harness_plan_issues → populates the task queue with issues
+
+EXECUTION LOOP (repeated):
+4. promote_queue → unlocks pending tasks whose dependencies are done
+5. begin_incremental_session → claims the next ready task, returns session context
+6. [Do the work described in the issued task]
+7. checkpoint_session → save progress so recovery can resume from here
+8. close_session → mark done and release the lease (auto-promotes dependent tasks)
+9. Go to step 4
+
+RECOVERY:
+- harness_rollback_issue → hard-reset a failed/stuck issue to pending
+- begin_recovery_session → claim a needs_recovery issue with a fresh lease
+
+RULES:
+- dbPath is optional: set HARNESS_DB_PATH env var to avoid passing it every call.
+- Tools accept human-readable names (projectName, campaignName) instead of UUIDs.
+- Every response includes _meta.nextTools and _meta.hint telling you what to do next.`;
 
 export class SessionLifecycleMcpServer {
   private readonly transport: StdioJsonRpcTransport;
@@ -265,27 +304,67 @@ export class SessionLifecycleMcpServer {
         },
       },
       serverInfo: {
-        name: 'session-lifecycle-mcp',
-        version: '0.1.0',
+        name: 'agent-harness',
+        version: '0.2.0',
       },
-      instructions:
-        'Use the lifecycle tools to claim, reconcile, recover, checkpoint, close, and inspect work through the stabilized session-lifecycle core. SQLite remains canonical.',
+      instructions: HARNESS_INSTRUCTIONS,
     };
   }
 
+  // ─── Tool Definitions ───────────────────────────────────────────
+
   private buildTools(): ToolDefinition[] {
     return [
+      // ── Orientation Tools ───────────────────────────────────────
       {
-        name: 'harness_init_workspace',
-        description: 'Initialize a new harness workspace and database locally.',
+        name: 'harness_get_context',
+        description:
+          'Get the current workspace, project, campaign, and queue status. Call this FIRST when starting a new session to orient yourself. Returns everything you need to know about the current state.',
         inputSchema: {
           type: 'object',
           properties: {
-            dbPath: { type: 'string' },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
+          },
+        },
+        handler: async (args) => {
+          const parsed = z.object({ dbPath: z.string().optional() }).parse(args ?? {});
+          return getHarnessContext(parsed.dbPath);
+        },
+      },
+      {
+        name: 'harness_next_action',
+        description:
+          'Evaluates the current DB state and returns a directive: exactly which tool to call next and why. Use this when you are unsure what to do. Returns { action, tool, reason, suggestedPayload }.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
+            projectId: { type: 'string' },
+            projectName: { type: 'string', description: 'Human-readable project name (alternative to projectId).' },
+          },
+        },
+        handler: async (args) => {
+          const parsed = z.object({
+            dbPath: z.string().optional(),
+            projectId: z.string().optional(),
+            projectName: z.string().optional(),
+          }).parse(args ?? {});
+          return getNextAction(parsed);
+        },
+      },
+
+      // ── Setup Tools ─────────────────────────────────────────────
+      {
+        name: 'harness_init_workspace',
+        description:
+          'Create a brand-new workspace with its SQLite database. Call this FIRST when no workspace exists yet. Returns the workspaceId you need for harness_create_campaign.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            dbPath: { type: 'string', description: 'Path for the SQLite DB. Optional if HARNESS_DB_PATH is set.' },
             workspaceName: { type: 'string' },
           },
-          required: ['dbPath', 'workspaceName'],
-          additionalProperties: false,
+          required: ['workspaceName'],
         },
         handler: async (args) => initHarnessWorkspace(
           harnessInitWorkspaceInputSchema.parse(args),
@@ -293,31 +372,34 @@ export class SessionLifecycleMcpServer {
       },
       {
         name: 'harness_create_campaign',
-        description: 'Create a new project and campaign in a workspace.',
+        description:
+          'Register a project and campaign inside an existing workspace. Idempotent: re-calling with the same names returns existing IDs. workspaceId is auto-resolved if only one workspace exists. Returns projectId and campaignId needed by harness_plan_issues.',
         inputSchema: {
           type: 'object',
           properties: {
-            dbPath: { type: 'string' },
-            workspaceId: { type: 'string' },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
+            workspaceId: { type: 'string', description: 'Optional: auto-resolved if only one workspace exists.' },
             projectName: { type: 'string' },
             campaignName: { type: 'string' },
             objective: { type: 'string' },
           },
-          required: ['dbPath', 'workspaceId', 'projectName', 'campaignName', 'objective'],
-          additionalProperties: false,
+          required: ['projectName', 'campaignName', 'objective'],
         },
         handler: async (args) =>
           createHarnessCampaign(harnessCreateCampaignInputSchema.parse(args)),
       },
       {
         name: 'harness_plan_issues',
-        description: 'Bulk create a milestone and sequential issues for a campaign.',
+        description:
+          'Inject a batch of tasks into the execution queue as "pending" issues. Use depends_on_indices to chain tasks sequentially (e.g., [0] means "depends on the first task"). Accepts projectName/campaignName instead of UUIDs. After this, call promote_queue then begin_incremental_session to start working.',
         inputSchema: {
           type: 'object',
           properties: {
-            dbPath: { type: 'string' },
-            projectId: { type: 'string' },
-            campaignId: { type: 'string' },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
+            projectId: { type: 'string', description: 'Project UUID (or use projectName instead).' },
+            projectName: { type: 'string', description: 'Human-readable project name (resolved to projectId).' },
+            campaignId: { type: 'string', description: 'Campaign UUID (or use campaignName instead).' },
+            campaignName: { type: 'string', description: 'Human-readable campaign name (resolved to campaignId).' },
             milestoneDescription: { type: 'string' },
             issues: {
               type: 'array',
@@ -327,43 +409,47 @@ export class SessionLifecycleMcpServer {
                   task: { type: 'string' },
                   priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
                   size: { type: 'string' },
-                  depends_on_indices: { type: 'array', items: { type: 'number' }, description: 'Indices of the issues array this task depends on. E.g. [0] means it depends on the first task in the array.' },
+                  depends_on_indices: {
+                    type: 'array',
+                    items: { type: 'number' },
+                    description: 'Indices of the issues array this task depends on. E.g. [0] means it depends on the first task in the array.',
+                  },
                 },
                 required: ['task', 'priority', 'size'],
-                additionalProperties: false,
-              }
-            }
+              },
+            },
           },
-          required: ['dbPath', 'projectId', 'campaignId', 'milestoneDescription', 'issues'],
-          additionalProperties: false,
+          required: ['milestoneDescription', 'issues'],
         },
         handler: async (args) =>
           planHarnessIssues(harnessPlanIssuesInputSchema.parse(args)),
       },
       {
         name: 'harness_rollback_issue',
-        description: 'Hard rollback: reset a failed or stuck issue back to pending status and expire its lease.',
+        description:
+          'Emergency reset: moves a failed/stuck issue back to "pending" and releases its lease. Use when an issue is unrecoverable in its current state. Does NOT revert file-system changes — only resets the DB state.',
         inputSchema: {
           type: 'object',
           properties: {
-            dbPath: { type: 'string' },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
             issueId: { type: 'string' },
           },
-          required: ['dbPath', 'issueId'],
-          additionalProperties: false,
+          required: ['issueId'],
         },
         handler: async (args) =>
           rollbackHarnessIssue(harnessRollbackIssueInputSchema.parse(args)),
       },
+
+      // ── Lifecycle Tools ─────────────────────────────────────────
       {
         name: 'begin_incremental_session',
         description:
-          'Claim or resume incremental lifecycle work after reconciliation checks.',
+          'Pick up the next available task from the queue. Returns the full session context (issueId, leaseId, task description, mem0 memories) you need to do the work and later call checkpoint_session or close_session. Accepts projectName instead of projectId.',
         inputSchema: {
           type: 'object',
           properties: {
             sessionId: { type: 'string' },
-            dbPath: { type: 'string' },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
             workspaceId: { type: 'string' },
             projectId: { type: 'string' },
             progressPath: { type: 'string' },
@@ -382,7 +468,6 @@ export class SessionLifecycleMcpServer {
           },
           required: [
             'sessionId',
-            'dbPath',
             'workspaceId',
             'projectId',
             'progressPath',
@@ -391,25 +476,32 @@ export class SessionLifecycleMcpServer {
             'syncManifestPath',
             'mem0Enabled',
           ],
-          additionalProperties: false,
         },
         handler: async (args) => {
           const input = incrementalSessionInputSchema.parse(args);
-          return await this.adapter.execute({
+          const dbPath = resolveDbPath(input.dbPath);
+          const result = await this.adapter.execute({
             action: 'begin_incremental',
-            input,
+            input: { ...input, dbPath },
           });
+          return {
+            ...result,
+            ...buildMeta(
+              ['checkpoint_session', 'close_session'],
+              'Session started. Do the work described in the task, then call checkpoint_session to save progress or close_session when done.',
+            ),
+          };
         },
       },
       {
         name: 'begin_recovery_session',
         description:
-          'Resolve a needs_recovery task by superseding stale leases and claiming a fresh recovery lease.',
+          'Resolve a needs_recovery task by superseding stale leases and claiming a fresh recovery lease. Use when harness_next_action tells you a task needs recovery.',
         inputSchema: {
           type: 'object',
           properties: {
             sessionId: { type: 'string' },
-            dbPath: { type: 'string' },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
             workspaceId: { type: 'string' },
             projectId: { type: 'string' },
             progressPath: { type: 'string' },
@@ -430,7 +522,6 @@ export class SessionLifecycleMcpServer {
           },
           required: [
             'sessionId',
-            'dbPath',
             'workspaceId',
             'projectId',
             'progressPath',
@@ -440,20 +531,27 @@ export class SessionLifecycleMcpServer {
             'mem0Enabled',
             'recoverySummary',
           ],
-          additionalProperties: false,
         },
         handler: async (args) => {
           const input = recoverySessionInputSchema.parse(args);
-          return await this.adapter.execute({
+          const dbPath = resolveDbPath(input.dbPath);
+          const result = await this.adapter.execute({
             action: 'begin_recovery',
-            input,
+            input: { ...input, dbPath },
           });
+          return {
+            ...result,
+            ...buildMeta(
+              ['checkpoint_session', 'close_session'],
+              'Recovery session started. Do the recovery work, then call checkpoint_session or close_session.',
+            ),
+          };
         },
       },
       {
         name: 'checkpoint_session',
         description:
-          'Write a canonical lifecycle checkpoint and optionally persist a derived mem0 summary.',
+          'Save your progress on the current task. Call this after every meaningful step so that if you crash, recovery can resume from here. The context object is the one returned by begin_incremental_session or begin_recovery_session.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -465,38 +563,22 @@ export class SessionLifecycleMcpServer {
                 summary: { type: 'string' },
                 taskStatus: {
                   type: 'string',
-                  enum: [
-                    'pending',
-                    'ready',
-                    'in_progress',
-                    'blocked',
-                    'needs_recovery',
-                    'done',
-                    'failed',
-                  ],
+                  enum: ['pending', 'ready', 'in_progress', 'blocked', 'needs_recovery', 'done', 'failed'],
                 },
                 nextStep: { type: 'string' },
-                artifactIds: {
-                  type: 'array',
-                  items: { type: 'string' },
-                },
+                artifactIds: { type: 'array', items: { type: 'string' } },
                 persistToMem0: { type: 'boolean' },
                 memoryKind: {
                   type: 'string',
                   enum: ['decision', 'preference', 'summary', 'artifact_context', 'note'],
                 },
                 memoryContent: { type: 'string' },
-                metadata: {
-                  type: 'object',
-                  additionalProperties: { type: 'string' },
-                },
+                metadata: { type: 'object' },
               },
               required: ['title', 'summary', 'taskStatus', 'nextStep'],
-              additionalProperties: false,
             },
           },
           required: ['context', 'input'],
-          additionalProperties: false,
         },
         handler: async (args) => {
           const parsed = z
@@ -506,16 +588,25 @@ export class SessionLifecycleMcpServer {
             })
             .strict()
             .parse(args);
-          return await this.adapter.execute({
+          const dbPath = resolveDbPath(parsed.context.dbPath);
+          const result = await this.adapter.execute({
             action: 'checkpoint',
-            ...parsed,
+            context: { ...parsed.context, dbPath },
+            input: parsed.input,
           });
+          return {
+            ...result,
+            ...buildMeta(
+              ['checkpoint_session', 'close_session'],
+              'Progress saved. Continue working and checkpoint again, or call close_session when the task is complete.',
+            ),
+          };
         },
       },
       {
         name: 'close_session',
         description:
-          'Write the final checkpoint, optionally persist mem0, and close the current lease.',
+          'Mark the current task as done (or failed) and release the lease. Automatically promotes dependent tasks. After closing with status "done", the next ready task is available via begin_incremental_session.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -527,39 +618,23 @@ export class SessionLifecycleMcpServer {
                 summary: { type: 'string' },
                 taskStatus: {
                   type: 'string',
-                  enum: [
-                    'pending',
-                    'ready',
-                    'in_progress',
-                    'blocked',
-                    'needs_recovery',
-                    'done',
-                    'failed',
-                  ],
+                  enum: ['pending', 'ready', 'in_progress', 'blocked', 'needs_recovery', 'done', 'failed'],
                 },
                 nextStep: { type: 'string' },
-                artifactIds: {
-                  type: 'array',
-                  items: { type: 'string' },
-                },
+                artifactIds: { type: 'array', items: { type: 'string' } },
                 persistToMem0: { type: 'boolean' },
                 memoryKind: {
                   type: 'string',
                   enum: ['decision', 'preference', 'summary', 'artifact_context', 'note'],
                 },
                 memoryContent: { type: 'string' },
-                metadata: {
-                  type: 'object',
-                  additionalProperties: { type: 'string' },
-                },
+                metadata: { type: 'object' },
                 releaseLease: { type: 'boolean' },
               },
               required: ['title', 'summary', 'taskStatus', 'nextStep'],
-              additionalProperties: false,
             },
           },
           required: ['context', 'input'],
-          additionalProperties: false,
         },
         handler: async (args) => {
           const parsed = z
@@ -569,82 +644,186 @@ export class SessionLifecycleMcpServer {
             })
             .strict()
             .parse(args);
-          return await this.adapter.execute({
+          const dbPath = resolveDbPath(parsed.context.dbPath);
+          const result = await this.adapter.execute({
             action: 'close',
-            ...parsed,
-          });
+            context: { ...parsed.context, dbPath },
+            input: parsed.input,
+          }) as Record<string, unknown>;
+
+          const promotedIds = (result['promotedIssueIds'] as string[] | undefined) ?? [];
+          const hint = promotedIds.length > 0
+            ? `Session closed. ${promotedIds.length} dependent task(s) promoted to ready. Call begin_incremental_session to pick up the next one.`
+            : 'Session closed. No more ready tasks. Call inspect_overview or harness_next_action to check queue status.';
+
+          return {
+            ...result,
+            ...buildMeta(
+              promotedIds.length > 0
+                ? ['begin_incremental_session']
+                : ['harness_next_action', 'inspect_overview'],
+              hint,
+            ),
+          };
         },
       },
+
+      // ── Inspection Tools ────────────────────────────────────────
       {
         name: 'inspect_overview',
         description:
-          'Read a project-level lifecycle overview including ready work, recovery queue, leases, and recent runs.',
+          'Get a dashboard of all tasks: what is ready, what is in_progress, what needs recovery. Use this to understand the current state before deciding what to do. Accepts projectName instead of projectId.',
         inputSchema: {
           type: 'object',
           properties: {
-            dbPath: { type: 'string' },
-            projectId: { type: 'string' },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
+            projectId: { type: 'string', description: 'Project UUID (or use projectName instead).' },
+            projectName: { type: 'string', description: 'Human-readable project name (resolved to projectId).' },
             campaignId: { type: 'string' },
             runLimit: { type: 'integer', minimum: 1, maximum: 100 },
           },
-          required: ['dbPath', 'projectId'],
-          additionalProperties: false,
         },
         handler: async (args) => {
-          const input = inspectOverviewInputSchema.parse(args);
-          return await this.adapter.execute({
-            action: 'inspect_overview',
-            input,
-          });
+          const parsed = z.object({
+            dbPath: z.string().optional(),
+            projectId: z.string().optional(),
+            projectName: z.string().optional(),
+            campaignId: z.string().optional(),
+            runLimit: z.number().int().positive().max(100).optional(),
+          }).parse(args);
+          const dbPath = resolveDbPath(parsed.dbPath);
+          const db = openHarnessDatabase({ dbPath });
+          try {
+            const projectId = resolveProjectId(db.connection, {
+              projectId: parsed.projectId,
+              projectName: parsed.projectName,
+            });
+            const result = await this.adapter.execute({
+              action: 'inspect_overview',
+              input: { dbPath, projectId, campaignId: parsed.campaignId, runLimit: parsed.runLimit },
+            }) as Record<string, unknown>;
+            const counts = result['counts'] as Record<string, number> | undefined;
+            const readyCount = counts?.['readyIssues'] ?? 0;
+            const recoveryCount = counts?.['recoveryIssues'] ?? 0;
+
+            let hint = '';
+            if (recoveryCount > 0) {
+              hint = `${recoveryCount} issue(s) need recovery. Call begin_recovery_session.`;
+            } else if (readyCount > 0) {
+              hint = `${readyCount} ready task(s). Call begin_incremental_session to start working.`;
+            } else {
+              hint = 'No ready tasks. Call promote_queue to check for promotable pending tasks.';
+            }
+
+            return {
+              ...result,
+              ...buildMeta(
+                recoveryCount > 0
+                  ? ['begin_recovery_session']
+                  : readyCount > 0
+                    ? ['begin_incremental_session']
+                    : ['promote_queue'],
+                hint,
+              ),
+            };
+          } finally {
+            db.close();
+          }
         },
       },
       {
         name: 'inspect_issue',
         description:
-          'Read issue-level lifecycle evidence including leases, checkpoints, memory links, and events.',
+          'Read issue-level lifecycle evidence including leases, checkpoints, memory links, and events. Use to debug a specific task.',
         inputSchema: {
           type: 'object',
           properties: {
-            dbPath: { type: 'string' },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
             issueId: { type: 'string' },
             includeEvents: { type: 'boolean' },
             eventLimit: { type: 'integer', minimum: 1, maximum: 100 },
           },
-          required: ['dbPath', 'issueId'],
-          additionalProperties: false,
+          required: ['issueId'],
         },
         handler: async (args) => {
           const input = inspectIssueInputSchema.parse(args);
-          return await this.adapter.execute({
+          const dbPath = resolveDbPath(input.dbPath);
+          const result = await this.adapter.execute({
             action: 'inspect_issue',
-            input,
-          });
+            input: { ...input, dbPath },
+          }) as Record<string, unknown>;
+          const issue = result['issue'] as Record<string, unknown> | undefined;
+          const status = issue?.['status'] as string | undefined;
+
+          let hint = 'Issue details loaded.';
+          let nextTools = ['inspect_overview'];
+          if (status === 'needs_recovery') {
+            hint = 'This issue needs recovery. Call begin_recovery_session with this issueId.';
+            nextTools = ['begin_recovery_session'];
+          } else if (status === 'failed') {
+            hint = 'This issue has failed. Call harness_rollback_issue to reset it to pending.';
+            nextTools = ['harness_rollback_issue'];
+          }
+
+          return {
+            ...result,
+            ...buildMeta(nextTools, hint),
+          };
         },
       },
       {
         name: 'promote_queue',
         description:
-          'Promote eligible pending issues to ready when their dependencies are satisfied.',
+          'Scan all "pending" tasks and promote any whose dependencies are now satisfied to "ready" status. Call this after closing a task to unlock downstream work. Accepts projectName instead of projectId.',
         inputSchema: {
           type: 'object',
           properties: {
-            dbPath: { type: 'string' },
-            projectId: { type: 'string' },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
+            projectId: { type: 'string', description: 'Project UUID (or use projectName instead).' },
+            projectName: { type: 'string', description: 'Human-readable project name (resolved to projectId).' },
             campaignId: { type: 'string' },
           },
-          required: ['dbPath', 'projectId'],
-          additionalProperties: false,
         },
         handler: async (args) => {
-          const input = queuePromotionInputSchema.parse(args);
-          return await this.adapter.execute({
-            action: 'promote_queue',
-            input,
-          });
+          const parsed = z.object({
+            dbPath: z.string().optional(),
+            projectId: z.string().optional(),
+            projectName: z.string().optional(),
+            campaignId: z.string().optional(),
+          }).parse(args);
+          const dbPath = resolveDbPath(parsed.dbPath);
+          const db = openHarnessDatabase({ dbPath });
+          try {
+            const projectId = resolveProjectId(db.connection, {
+              projectId: parsed.projectId,
+              projectName: parsed.projectName,
+            });
+            const result = await this.adapter.execute({
+              action: 'promote_queue',
+              input: { dbPath, projectId, campaignId: parsed.campaignId },
+            }) as Record<string, unknown>;
+            const promotedIds = (result['promotedIssueIds'] as string[] | undefined) ?? [];
+
+            return {
+              ...result,
+              ...buildMeta(
+                promotedIds.length > 0
+                  ? ['begin_incremental_session']
+                  : ['harness_next_action'],
+                promotedIds.length > 0
+                  ? `${promotedIds.length} task(s) promoted to ready. Call begin_incremental_session to start working.`
+                  : 'No tasks were promoted. All dependencies may still be pending. Call harness_next_action for guidance.',
+              ),
+            };
+          } finally {
+            db.close();
+          }
         },
       },
     ];
   }
+
+  // ─── Tool Call Dispatcher ───────────────────────────────────────
 
   private async callTool(params: unknown): Promise<Record<string, unknown>> {
     const parsed = toolCallParamsSchema.parse(params);
@@ -658,17 +837,26 @@ export class SessionLifecycleMcpServer {
       const payload = await tool.handler(parsed.arguments);
       return toToolResult(payload, false);
     } catch (error) {
+      if (error instanceof AgenticToolError) {
+        return toToolResult(error.toJSON(), true);
+      }
+
       if (error instanceof z.ZodError) {
         return toToolResult(
           {
             error: `Invalid arguments for ${parsed.name}`,
             issues: error.issues,
+            recovery: 'Check the tool description for the correct input schema and retry.',
           },
           true,
         );
       }
 
-      return toToolResult({ error: getErrorMessage(error) }, true);
+      return toToolResult({
+        error: getErrorMessage(error),
+        recovery: 'Inspect the error message. If the issue persists, call harness_get_context to re-orient.',
+        suggestedTool: 'harness_get_context',
+      }, true);
     }
   }
 
@@ -681,6 +869,266 @@ export class SessionLifecycleMcpServer {
     }
   }
 }
+
+// ─── New Tool Implementations ───────────────────────────────────────
+
+interface StatusCountRow {
+  status: string;
+  cnt: number;
+}
+
+interface WorkspaceInfoRow {
+  id: string;
+  name: string;
+}
+
+interface ProjectInfoRow {
+  id: string;
+  name: string;
+  key: string;
+  status: string;
+}
+
+interface CampaignInfoRow {
+  id: string;
+  name: string;
+  objective: string;
+  status: string;
+}
+
+interface RecoveryIssueRow {
+  id: string;
+  task: string;
+  priority: string;
+}
+
+interface ReadyIssueRow {
+  id: string;
+  task: string;
+  priority: string;
+}
+
+interface ExpiredLeaseRow {
+  id: string;
+  issue_id: string;
+  expires_at: string;
+}
+
+function getHarnessContext(dbPathInput?: string): Record<string, unknown> {
+  const dbPath = resolveDbPath(dbPathInput);
+  const database = openHarnessDatabase({ dbPath });
+
+  try {
+    const workspaces = selectAll<WorkspaceInfoRow>(
+      database.connection,
+      `SELECT id, name FROM workspaces ORDER BY created_at DESC`,
+    );
+
+    if (workspaces.length === 0) {
+      return {
+        workspace: null,
+        projects: [],
+        campaigns: [],
+        queue: {},
+        ...buildMeta(
+          ['harness_init_workspace'],
+          'No workspace found. Call harness_init_workspace to create one.',
+        ),
+      };
+    }
+
+    const workspace = workspaces[0];
+    const projects = selectAll<ProjectInfoRow>(
+      database.connection,
+      `SELECT id, name, key, status FROM projects WHERE workspace_id = ? ORDER BY created_at DESC`,
+      [workspace.id],
+    );
+
+    if (projects.length === 0) {
+      return {
+        workspace: { id: workspace.id, name: workspace.name },
+        projects: [],
+        campaigns: [],
+        queue: {},
+        ...buildMeta(
+          ['harness_create_campaign'],
+          `Workspace "${workspace.name}" exists but has no projects. Call harness_create_campaign to create one.`,
+        ),
+      };
+    }
+
+    const project = projects[0];
+    const campaigns = selectAll<CampaignInfoRow>(
+      database.connection,
+      `SELECT id, name, objective, status FROM campaigns WHERE project_id = ? ORDER BY created_at DESC`,
+      [project.id],
+    );
+
+    const statusCounts = selectAll<StatusCountRow>(
+      database.connection,
+      `SELECT status, COUNT(*) as cnt FROM issues WHERE project_id = ? GROUP BY status`,
+      [project.id],
+    );
+
+    const queue: Record<string, number> = {};
+    for (const row of statusCounts) {
+      queue[row.status] = Number(row.cnt);
+    }
+
+    const readyCount = queue['ready'] ?? 0;
+    const recoveryCount = queue['needs_recovery'] ?? 0;
+    const inProgressCount = queue['in_progress'] ?? 0;
+
+    let hint: string;
+    let nextTools: string[];
+
+    if (recoveryCount > 0) {
+      hint = `${recoveryCount} issue(s) need recovery. Call begin_recovery_session.`;
+      nextTools = ['begin_recovery_session'];
+    } else if (inProgressCount > 0) {
+      hint = `${inProgressCount} issue(s) in progress. Call begin_incremental_session to resume.`;
+      nextTools = ['begin_incremental_session'];
+    } else if (readyCount > 0) {
+      hint = `${readyCount} ready task(s). Call begin_incremental_session to start working.`;
+      nextTools = ['begin_incremental_session'];
+    } else {
+      hint = 'No ready tasks. Call promote_queue or harness_plan_issues to add work.';
+      nextTools = ['promote_queue', 'harness_plan_issues'];
+    }
+
+    return {
+      workspace: { id: workspace.id, name: workspace.name },
+      project: { id: project.id, name: project.name, key: project.key },
+      activeCampaign: campaigns.length > 0
+        ? { id: campaigns[0].id, name: campaigns[0].name, objective: campaigns[0].objective }
+        : null,
+      queue,
+      ...buildMeta(nextTools, hint),
+    };
+  } finally {
+    database.close();
+  }
+}
+
+function getNextAction(input: {
+  dbPath?: string;
+  projectId?: string;
+  projectName?: string;
+}): Record<string, unknown> {
+  const dbPath = resolveDbPath(input.dbPath);
+  const database = openHarnessDatabase({ dbPath });
+
+  try {
+    // If no project specified, pick the first active one
+    let projectId = input.projectId;
+    if (!projectId && !input.projectName) {
+      const firstProject = selectOne<{ id: string }>(
+        database.connection,
+        `SELECT id FROM projects WHERE status = 'active' ORDER BY created_at DESC LIMIT 1`,
+      );
+      if (firstProject === null) {
+        return {
+          action: 'setup_required',
+          tool: 'harness_create_campaign',
+          reason: 'No active projects found. Create a project and campaign first.',
+          ...buildMeta(['harness_create_campaign'], 'No projects exist. Call harness_create_campaign to get started.'),
+        };
+      }
+      projectId = firstProject.id;
+    } else if (!projectId && input.projectName) {
+      projectId = resolveProjectId(database.connection, { projectName: input.projectName });
+    }
+
+    const now = new Date().toISOString();
+
+    // Priority 1: Expired leases
+    const expiredLeases = selectAll<ExpiredLeaseRow>(
+      database.connection,
+      `SELECT id, issue_id, expires_at FROM leases
+       WHERE project_id = ? AND status = 'active' AND expires_at < ?
+       ORDER BY expires_at ASC LIMIT 1`,
+      [projectId!, now],
+    );
+
+    if (expiredLeases.length > 0) {
+      const lease = expiredLeases[0];
+      return {
+        action: 'call_tool',
+        tool: 'begin_recovery_session',
+        reason: `Lease ${lease.id} on issue ${lease.issue_id} expired at ${lease.expires_at}. Recovery needed before claiming new work.`,
+        suggestedPayload: { preferredIssueId: lease.issue_id },
+        ...buildMeta(['begin_recovery_session'], 'Expired lease detected. Call begin_recovery_session to recover.'),
+      };
+    }
+
+    // Priority 2: needs_recovery issues
+    const recoveryIssues = selectAll<RecoveryIssueRow>(
+      database.connection,
+      `SELECT id, task, priority FROM issues WHERE project_id = ? AND status = 'needs_recovery'
+       ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
+       LIMIT 1`,
+      [projectId!],
+    );
+
+    if (recoveryIssues.length > 0) {
+      const issue = recoveryIssues[0];
+      return {
+        action: 'call_tool',
+        tool: 'begin_recovery_session',
+        reason: `Issue "${issue.task}" (${issue.id}, priority: ${issue.priority}) needs recovery.`,
+        suggestedPayload: { preferredIssueId: issue.id },
+        ...buildMeta(['begin_recovery_session'], 'Recovery issue found. Call begin_recovery_session.'),
+      };
+    }
+
+    // Priority 3: Ready issues
+    const readyIssues = selectAll<ReadyIssueRow>(
+      database.connection,
+      `SELECT id, task, priority FROM issues WHERE project_id = ? AND status = 'ready'
+       ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
+       LIMIT 1`,
+      [projectId!],
+    );
+
+    if (readyIssues.length > 0) {
+      const issue = readyIssues[0];
+      return {
+        action: 'call_tool',
+        tool: 'begin_incremental_session',
+        reason: `Task "${issue.task}" (${issue.id}, priority: ${issue.priority}) is ready to be claimed.`,
+        suggestedPayload: { preferredIssueId: issue.id },
+        ...buildMeta(['begin_incremental_session'], 'Ready task available. Call begin_incremental_session.'),
+      };
+    }
+
+    // Priority 4: Pending issues that might be promotable
+    const pendingCount = selectOne<{ cnt: number }>(
+      database.connection,
+      `SELECT COUNT(*) as cnt FROM issues WHERE project_id = ? AND status = 'pending'`,
+      [projectId!],
+    );
+
+    if (pendingCount && pendingCount.cnt > 0) {
+      return {
+        action: 'call_tool',
+        tool: 'promote_queue',
+        reason: `${pendingCount.cnt} pending task(s) exist. Promote them to check if any dependencies are satisfied.`,
+        ...buildMeta(['promote_queue'], 'Pending tasks exist. Call promote_queue to check promotability.'),
+      };
+    }
+
+    // Priority 5: All done
+    return {
+      action: 'idle',
+      reason: 'All tasks are complete or no tasks exist in the queue.',
+      ...buildMeta(['harness_plan_issues', 'harness_get_context'], 'Queue is empty. Add more work with harness_plan_issues or inspect with harness_get_context.'),
+    };
+  } finally {
+    database.close();
+  }
+}
+
+// ─── Utilities ──────────────────────────────────────────────────────
 
 function toToolResult(payload: unknown, isError: boolean): Record<string, unknown> {
   return {

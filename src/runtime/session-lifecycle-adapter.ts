@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { resolveDbPath } from './harness-agentic-helpers.js';
 import { sessionLifecycleCommandSchema, type SessionLifecycleCommand } from './session-lifecycle-cli.schemas.js';
 import { SessionLifecycleInspector } from './session-lifecycle-inspector.js';
 import { SessionOrchestrator } from './session-orchestrator.js';
@@ -17,37 +18,58 @@ export class SessionLifecycleAdapter {
       case 'begin_incremental':
         return {
           action: command.action,
-          context: await this.orchestrator.beginIncrementalSession(command.input),
+          context: await this.orchestrator.beginIncrementalSession({
+            ...command.input,
+            dbPath: resolveDbPath(command.input.dbPath),
+          }),
         };
       case 'begin_recovery':
         return {
           action: command.action,
-          context: await this.orchestrator.beginRecoverySession(command.input),
+          context: await this.orchestrator.beginRecoverySession({
+            ...command.input,
+            dbPath: resolveDbPath(command.input.dbPath),
+          }),
         };
       case 'checkpoint':
         return {
           action: command.action,
-          result: await this.orchestrator.checkpoint(command.context, command.input),
+          result: await this.orchestrator.checkpoint(
+            { ...command.context, dbPath: resolveDbPath(command.context.dbPath) },
+            command.input,
+          ),
         };
       case 'close':
         return {
           action: command.action,
-          result: await this.orchestrator.close(command.context, command.input),
+          result: await this.orchestrator.close(
+            { ...command.context, dbPath: resolveDbPath(command.context.dbPath) },
+            command.input,
+          ),
         };
       case 'inspect_overview':
         return {
           action: command.action,
-          result: this.inspector.inspectOverview(command.input),
+          result: this.inspector.inspectOverview({
+            ...command.input,
+            dbPath: resolveDbPath(command.input.dbPath),
+          }),
         };
       case 'inspect_issue':
         return {
           action: command.action,
-          result: this.inspector.inspectIssue(command.input),
+          result: this.inspector.inspectIssue({
+            ...command.input,
+            dbPath: resolveDbPath(command.input.dbPath),
+          }),
         };
       case 'promote_queue':
         return {
           action: command.action,
-          result: await this.orchestrator.promoteQueue(command.input),
+          result: await this.orchestrator.promoteQueue({
+            ...command.input,
+            dbPath: resolveDbPath(command.input.dbPath),
+          }),
         };
       default:
         return assertNever(command);

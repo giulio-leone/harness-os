@@ -15,6 +15,33 @@ import {
   selectOne,
 } from '../index.js';
 
+// ─── Helper types for test assertions ───────────────────────────────
+
+interface PlanResult {
+  milestoneId: string;
+  issueCount: number;
+  generatedIssues: Array<{ id: string; task: string; dependsOn: string[] }>;
+}
+
+interface CampaignResult {
+  projectId: string;
+  projectKey: string;
+  campaignId: string;
+}
+
+interface WorkspaceResult {
+  workspaceId: string;
+}
+
+interface RollbackResult {
+  issueId: string;
+  previousStatus: string;
+  newStatus: string;
+  rollbackRunId: string;
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────
+
 test('createHarnessCampaign isolates projects by workspace and is idempotent within one workspace', () => {
   const tempDir = createTempDir('harness-planning-');
   const dbPath = join(tempDir, 'harness.sqlite');
@@ -23,11 +50,11 @@ test('createHarnessCampaign isolates projects by workspace and is idempotent wit
     const firstWorkspace = initHarnessWorkspace({
       dbPath,
       workspaceName: 'Workspace One',
-    });
+    }) as unknown as WorkspaceResult;
     const secondWorkspace = initHarnessWorkspace({
       dbPath,
       workspaceName: 'Workspace Two',
-    });
+    }) as unknown as WorkspaceResult;
 
     const firstCampaign = createHarnessCampaign({
       dbPath,
@@ -35,21 +62,21 @@ test('createHarnessCampaign isolates projects by workspace and is idempotent wit
       projectName: 'Shared Project',
       campaignName: 'Campaign Alpha',
       objective: 'Ship the first branch',
-    });
+    }) as unknown as CampaignResult;
     const repeatedCampaign = createHarnessCampaign({
       dbPath,
       workspaceId: firstWorkspace.workspaceId,
       projectName: 'Shared Project',
       campaignName: 'Campaign Alpha',
       objective: 'Ship the first branch',
-    });
+    }) as unknown as CampaignResult;
     const secondCampaign = createHarnessCampaign({
       dbPath,
       workspaceId: secondWorkspace.workspaceId,
       projectName: 'Shared Project',
       campaignName: 'Campaign Alpha',
       objective: 'Ship the second branch',
-    });
+    }) as unknown as CampaignResult;
 
     assert.equal(repeatedCampaign.projectId, firstCampaign.projectId);
     assert.equal(repeatedCampaign.campaignId, firstCampaign.campaignId);
@@ -86,14 +113,14 @@ test('planHarnessIssues stores validated backward dependencies', () => {
     const workspace = initHarnessWorkspace({
       dbPath,
       workspaceName: 'Planning Workspace',
-    });
+    }) as unknown as WorkspaceResult;
     const campaign = createHarnessCampaign({
       dbPath,
       workspaceId: workspace.workspaceId,
       projectName: 'Planner',
       campaignName: 'Campaign Beta',
       objective: 'Plan the queue',
-    });
+    }) as unknown as CampaignResult;
     const planned = planHarnessIssues({
       dbPath,
       projectId: campaign.projectId,
@@ -118,7 +145,7 @@ test('planHarnessIssues stores validated backward dependencies', () => {
           depends_on_indices: [0, 1],
         },
       ],
-    });
+    }) as unknown as PlanResult;
 
     assert.equal(planned.generatedIssues.length, 3);
     assert.deepEqual(planned.generatedIssues[1].dependsOn, [
@@ -183,14 +210,14 @@ test('rollbackHarnessIssue creates a rollback run and releases active leases ato
     const workspace = initHarnessWorkspace({
       dbPath,
       workspaceName: 'Rollback Workspace',
-    });
+    }) as unknown as WorkspaceResult;
     const campaign = createHarnessCampaign({
       dbPath,
       workspaceId: workspace.workspaceId,
       projectName: 'Rollback Project',
       campaignName: 'Campaign Gamma',
       objective: 'Recover broken work',
-    });
+    }) as unknown as CampaignResult;
     const planned = planHarnessIssues({
       dbPath,
       projectId: campaign.projectId,
@@ -203,7 +230,7 @@ test('rollbackHarnessIssue creates a rollback run and releases active leases ato
           size: 'M',
         },
       ],
-    });
+    }) as unknown as PlanResult;
 
     const database = openHarnessDatabase({ dbPath });
 
@@ -235,9 +262,9 @@ test('rollbackHarnessIssue creates a rollback run and releases active leases ato
     const rollback = rollbackHarnessIssue({
       dbPath,
       issueId: planned.generatedIssues[0].id,
-    });
+    }) as unknown as RollbackResult;
 
-    assert.equal(rollback.success, true);
+    assert.equal(rollback.newStatus, 'pending');
 
     const reopenedDatabase = openHarnessDatabase({ dbPath });
 

@@ -5,15 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import type { Mem0Adapter } from '../memory/mem0-adapter.interface.js';
 import type {
   HealthCheckResult,
+  Mem0Adapter,
   MemoryRecallInput,
   MemorySearchInput,
   MemorySearchResult,
   MemoryStoreInput,
   PublicMemoryRecord,
-} from '../memory/mem0.schemas.js';
+} from 'mem0-mcp';
 import {
   SessionOrchestrator,
   openHarnessDatabase,

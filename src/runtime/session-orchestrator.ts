@@ -30,8 +30,7 @@ import {
   updateIssueStatus,
 } from '../db/lease-manager.js';
 import { openHarnessDatabase, runStatement } from '../db/store.js';
-import type { Mem0Adapter } from '../memory/mem0-adapter.interface.js';
-import type { MemoryKind, MemoryScope } from '../memory/mem0.schemas.js';
+import type { Mem0Adapter, MemoryKind, MemoryScope } from 'mem0-mcp';
 import { Mem0SessionBridge } from './mem0-session-bridge.js';
 
 export interface SessionCheckpointResult {

@@ -1,4 +1,4 @@
-import { FileBackedMem0Adapter } from '../memory/file-mem0-adapter.js';
+import { FileBackedMem0Adapter } from 'mem0-mcp';
 import { SessionLifecycleMcpServer } from '../mcp/session-lifecycle-mcp-server.js';
 import { SessionLifecycleAdapter } from '../runtime/session-lifecycle-adapter.js';
 import { SessionOrchestrator } from '../runtime/session-orchestrator.js';

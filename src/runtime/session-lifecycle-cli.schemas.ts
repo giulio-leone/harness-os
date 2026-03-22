@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { storedMemoryRecordSchema } from '../memory/mem0.schemas.js';
+import { storedMemoryRecordSchema } from 'mem0-mcp';
 
 export const taskStatusSchema = z.enum([
   'pending',
@@ -36,7 +36,7 @@ export const sessionMemoryContextSchema = z
 export const sessionContextSchema = z
   .object({
     sessionId: z.string().min(1),
-    dbPath: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
     workspaceId: z.string().min(1),
     projectId: z.string().min(1),
     campaignId: z.string().min(1).optional(),
@@ -66,7 +66,7 @@ export const sessionContextSchema = z
 export const incrementalSessionInputSchema = z
   .object({
     sessionId: z.string().min(1),
-    dbPath: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
     workspaceId: z.string().min(1),
     projectId: z.string().min(1),
     progressPath: z.string().min(1),
@@ -116,7 +116,7 @@ export const sessionCloseInputSchema = sessionCheckpointInputSchema
 
 export const inspectOverviewInputSchema = z
   .object({
-    dbPath: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
     projectId: z.string().min(1),
     campaignId: z.string().min(1).optional(),
     runLimit: z.number().int().positive().max(100).optional(),
@@ -125,7 +125,7 @@ export const inspectOverviewInputSchema = z
 
 export const inspectIssueInputSchema = z
   .object({
-    dbPath: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
     issueId: z.string().min(1),
     includeEvents: z.boolean().optional(),
     eventLimit: z.number().int().positive().max(100).optional(),
@@ -134,7 +134,7 @@ export const inspectIssueInputSchema = z
 
 export const queuePromotionInputSchema = z
   .object({
-    dbPath: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
     projectId: z.string().min(1),
     campaignId: z.string().min(1).optional(),
   })

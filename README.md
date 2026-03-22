@@ -2,34 +2,23 @@
 
 Reusable long-running agent harness core.
 
-This repository starts with Slice A (Contracts & State):
+This repository now focuses on the harness core itself:
 - Zod plan contract
 - session contracts
-- mem0 adapter interface
 - skill-policy registry
 - SQLite schema and state-layer placeholders
+- session orchestration and inspection
 
-## Runnable `mem0-mcp` scaffold
+The extracted source-of-truth repositories now live alongside this repo:
 
-This repository now hosts a first runnable `mem0-mcp` server scaffold under `src/bin/mem0-mcp.ts`.
+- `../copilot-mcp-hot-reload` for adaptive JSON-RPC stdio transport plus generic MCP hot reload
+- `../mem0-mcp` for the dedicated `mem0` MCP server, file-backed adapter, schemas, and Ollama embeddings
 
-The initial tool surface is intentionally small:
-- `health`
-- `memory_store`
-- `memory_recall`
-- `memory_search`
-
-`memory_store` is already aligned with the harness contract:
-- canonical scope object with `workspace`, `project`, and optional `campaign`, `task`, `run`
-- required provenance back to SQLite via `checkpointId`
-- optional `artifactIds` and provenance note
-
-The first persistence layer is local and explicit:
-- JSONL store under `MEM0_STORE_PATH`
-- Ollama embeddings for semantic search
-- no independent canonical state: SQLite remains authoritative
+`agent-harness-core` consumes those packages as local dependencies instead of keeping duplicate implementations.
 
 ### Environment
+
+When the session lifecycle CLI/MCP surfaces are configured with `mem0`, they still honor:
 
 - `MEM0_STORE_PATH` (default: `~/.copilot/mem0`)
 - `OLLAMA_BASE_URL` (default: `http://127.0.0.1:11434`)
@@ -37,24 +26,9 @@ The first persistence layer is local and explicit:
 
 ### Commands
 
-- `npm run mem0:mcp:dev`
-- `npm run build && npm run mem0:mcp`
-- `npm run build && npm run mem0:mcp:hot`
 - `npm run build && npm run scheduler:daemon`
-
-### Copilot-friendly local hot reload
-
-For local TypeScript MCP development, `src/bin/mem0-mcp-hot-reload.ts` now keeps the outer MCP connection stable while it restarts the `mem0-mcp` child process from source on the next request after a watched file changes.
-
-What it does:
-- keeps the Copilot-facing stdio transport in a stable wrapper process
-- starts `mem0-mcp` from source through the repo-local `tsx` binary instead of `dist/`
-- watches `src/`, `package.json`, and `tsconfig.json`
-- adapts between Content-Length framing and bare JSON stdio startup messages used by Copilot CLI
-- replays child `initialize` plus `notifications/initialized` after a restart so the session does not need a full client restart for normal code changes
-
-What it does **not** promise:
-- dynamic tool-surface mutations; if you add or remove tools/capabilities, a fresh client session may still be required
+- `npm run build && npm run session:lifecycle`
+- `npm run build && npm run session:lifecycle:mcp`
 
 ### Session lifecycle MCP planning tools
 

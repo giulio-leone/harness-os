@@ -10,20 +10,29 @@ import {
   runStatement,
   selectOne,
 } from '../db/store.js';
+import {
+  AgenticToolError,
+  buildMeta,
+  resolveCampaignId,
+  resolveDbPath,
+  resolveProjectId,
+} from './harness-agentic-helpers.js';
 
 const issuePriorityOrder = ['critical', 'high', 'medium', 'low'] as const;
 
+// ─── Input Schemas ──────────────────────────────────────────────────
+
 export const harnessInitWorkspaceInputSchema = z
   .object({
-    dbPath: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
     workspaceName: z.string().min(1),
   })
   .strict();
 
 export const harnessCreateCampaignInputSchema = z
   .object({
-    dbPath: z.string().min(1),
-    workspaceId: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
+    workspaceId: z.string().min(1).optional(),
     projectName: z.string().min(1),
     campaignName: z.string().min(1),
     objective: z.string().min(1),
@@ -32,9 +41,11 @@ export const harnessCreateCampaignInputSchema = z
 
 export const harnessPlanIssuesInputSchema = z
   .object({
-    dbPath: z.string().min(1),
-    projectId: z.string().min(1),
-    campaignId: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
+    projectId: z.string().min(1).optional(),
+    projectName: z.string().min(1).optional(),
+    campaignId: z.string().min(1).optional(),
+    campaignName: z.string().min(1).optional(),
     milestoneDescription: z.string().min(1),
     issues: z
       .array(
@@ -53,7 +64,7 @@ export const harnessPlanIssuesInputSchema = z
 
 export const harnessRollbackIssueInputSchema = z
   .object({
-    dbPath: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
     issueId: z.string().min(1),
   })
   .strict();
@@ -61,6 +72,8 @@ export const harnessRollbackIssueInputSchema = z
 export type HarnessPlanIssueInput = z.infer<
   typeof harnessPlanIssuesInputSchema
 >['issues'][number];
+
+// ─── Row types ──────────────────────────────────────────────────────
 
 interface ProjectRow {
   id: string;
@@ -79,16 +92,23 @@ interface RollbackIssueRow {
   workspace_id: string;
 }
 
+interface WorkspaceRow {
+  id: string;
+}
+
+// ─── Tool Implementations ───────────────────────────────────────────
+
 export function initHarnessWorkspace(
   rawInput: unknown,
-): { workspaceId: string } {
+): Record<string, unknown> {
   const input = harnessInitWorkspaceInputSchema.parse(rawInput);
-  mkdirSync(dirname(input.dbPath), { recursive: true });
+  const dbPath = resolveDbPath(input.dbPath);
+  mkdirSync(dirname(dbPath), { recursive: true });
 
-  const database = openHarnessDatabase({ dbPath: input.dbPath });
+  const database = openHarnessDatabase({ dbPath });
 
   try {
-    return runInTransaction(database.connection, () => {
+    const result = runInTransaction(database.connection, () => {
       const workspaceId = `W-${randomUUID()}`;
       const now = new Date().toISOString();
 
@@ -101,6 +121,14 @@ export function initHarnessWorkspace(
 
       return { workspaceId };
     });
+
+    return {
+      ...result,
+      ...buildMeta(
+        ['harness_create_campaign'],
+        `Workspace "${input.workspaceName}" created. Now call harness_create_campaign with workspaceId "${result.workspaceId}" to register a project and campaign.`,
+      ),
+    };
   } finally {
     database.close();
   }
@@ -108,26 +136,45 @@ export function initHarnessWorkspace(
 
 export function createHarnessCampaign(
   rawInput: unknown,
-): { projectId: string; projectKey: string; campaignId: string } {
+): Record<string, unknown> {
   const input = harnessCreateCampaignInputSchema.parse(rawInput);
-  const database = openHarnessDatabase({ dbPath: input.dbPath });
+  const dbPath = resolveDbPath(input.dbPath);
+  const database = openHarnessDatabase({ dbPath });
 
   try {
-    return runInTransaction(database.connection, () => {
+    const result = runInTransaction(database.connection, () => {
       const now = new Date().toISOString();
+
+      // Auto-resolve workspaceId if not provided
+      let workspaceId = input.workspaceId;
+      if (!workspaceId) {
+        const ws = selectOne<WorkspaceRow>(
+          database.connection,
+          `SELECT id FROM workspaces LIMIT 1`,
+        );
+        if (ws === null) {
+          throw new AgenticToolError(
+            'No workspace found. Cannot auto-resolve workspaceId.',
+            'Call harness_init_workspace first to create a workspace.',
+            'harness_init_workspace',
+          );
+        }
+        workspaceId = ws.id;
+      }
+
       let project = selectOne<ProjectRow>(
         database.connection,
         `SELECT id, key
            FROM projects
           WHERE workspace_id = ? AND name = ?
           LIMIT 1`,
-        [input.workspaceId, input.projectName],
+        [workspaceId, input.projectName],
       );
 
       if (project === null) {
         project = {
           id: `P-${randomUUID()}`,
-          key: buildProjectKey(input.workspaceId, input.projectName),
+          key: buildProjectKey(workspaceId, input.projectName),
         };
 
         runStatement(
@@ -136,7 +183,7 @@ export function createHarnessCampaign(
            VALUES (?, ?, ?, ?, 'default', 'active', ?, ?)`,
           [
             project.id,
-            input.workspaceId,
+            workspaceId,
             project.key,
             input.projectName,
             now,
@@ -177,6 +224,15 @@ export function createHarnessCampaign(
         campaignId: campaign.id,
       };
     });
+
+    return {
+      ...result,
+      ...buildMeta(
+        ['harness_plan_issues'],
+        `Project "${input.projectName}" and campaign "${input.campaignName}" ready. Now call harness_plan_issues with projectId "${result.projectId}" and campaignId "${result.campaignId}" to populate the task queue.`,
+        { idempotent: true },
+      ),
+    };
   } finally {
     database.close();
   }
@@ -184,17 +240,24 @@ export function createHarnessCampaign(
 
 export function planHarnessIssues(
   rawInput: unknown,
-): {
-  milestoneId: string;
-  generatedIssues: Array<{ id: string; task: string; dependsOn: string[] }>;
-} {
+): Record<string, unknown> {
   const input = harnessPlanIssuesInputSchema.parse(rawInput);
+  const dbPath = resolveDbPath(input.dbPath);
   validateIssueDependencies(input.issues);
 
-  const database = openHarnessDatabase({ dbPath: input.dbPath });
+  const database = openHarnessDatabase({ dbPath });
 
   try {
-    return runInTransaction(database.connection, () => {
+    const projectId = resolveProjectId(database.connection, {
+      projectId: input.projectId,
+      projectName: input.projectName,
+    });
+    const campaignId = resolveCampaignId(database.connection, projectId, {
+      campaignId: input.campaignId,
+      campaignName: input.campaignName,
+    });
+
+    const result = runInTransaction(database.connection, () => {
       const milestoneId = `M-${randomUUID()}`;
       runStatement(
         database.connection,
@@ -202,7 +265,7 @@ export function planHarnessIssues(
          VALUES (?, ?, ?, ?, 'in_progress')`,
         [
           milestoneId,
-          input.projectId,
+          projectId,
           input.milestoneDescription,
           resolveHighestPriority(input.issues),
         ],
@@ -232,8 +295,8 @@ export function planHarnessIssues(
            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
           [
             issue.id,
-            input.projectId,
-            input.campaignId,
+            projectId,
+            campaignId,
             milestoneId,
             issue.task,
             issue.priority,
@@ -245,7 +308,8 @@ export function planHarnessIssues(
 
       return {
         milestoneId,
-        generatedIssues: createdIssues.map((issue, index) => ({
+        issueCount: createdIssues.length,
+        generatedIssues: createdIssues.map((issue) => ({
           id: issue.id,
           task: issue.task,
           dependsOn: (issue.depends_on_indices ?? []).map(
@@ -254,6 +318,14 @@ export function planHarnessIssues(
         })),
       };
     });
+
+    return {
+      ...result,
+      ...buildMeta(
+        ['promote_queue', 'begin_incremental_session'],
+        `${result.issueCount} issues injected into the queue as "pending". Call promote_queue to unlock tasks with no dependencies, then begin_incremental_session to start working.`,
+      ),
+    };
   } finally {
     database.close();
   }
@@ -261,17 +333,13 @@ export function planHarnessIssues(
 
 export function rollbackHarnessIssue(
   rawInput: unknown,
-): {
-  success: true;
-  issueId: string;
-  rollbackRunId: string;
-  message: string;
-} {
+): Record<string, unknown> {
   const input = harnessRollbackIssueInputSchema.parse(rawInput);
-  const database = openHarnessDatabase({ dbPath: input.dbPath });
+  const dbPath = resolveDbPath(input.dbPath);
+  const database = openHarnessDatabase({ dbPath });
 
   try {
-    return runInTransaction(database.connection, () => {
+    const result = runInTransaction(database.connection, () => {
       const issue = selectOne<RollbackIssueRow>(
         database.connection,
         `SELECT i.id, i.status, i.project_id, i.campaign_id, p.workspace_id
@@ -283,7 +351,11 @@ export function rollbackHarnessIssue(
       );
 
       if (issue === null) {
-        throw new Error(`Issue ${input.issueId} does not exist.`);
+        throw new AgenticToolError(
+          `Issue ${input.issueId} does not exist.`,
+          'Call inspect_overview to list all valid issue IDs, then retry with a correct issueId.',
+          'inspect_overview',
+        );
       }
 
       const now = new Date().toISOString();
@@ -337,16 +409,26 @@ export function rollbackHarnessIssue(
       );
 
       return {
-        success: true,
         issueId: input.issueId,
+        previousStatus: issue.status,
+        newStatus: 'pending',
         rollbackRunId,
-        message: `Issue ${input.issueId} has been explicitly rolled back to 'pending'.`,
       };
     });
+
+    return {
+      ...result,
+      ...buildMeta(
+        ['promote_queue', 'begin_incremental_session'],
+        `Issue ${input.issueId} rolled back from "${result.previousStatus}" to "pending". Call promote_queue to re-evaluate the queue, then begin_incremental_session to retry.`,
+      ),
+    };
   } finally {
     database.close();
   }
 }
+
+// ─── Internals ──────────────────────────────────────────────────────
 
 function buildProjectKey(workspaceId: string, projectName: string): string {
   return `${slugify(workspaceId)}-${slugify(projectName) || 'project'}`;
@@ -365,8 +447,9 @@ function validateIssueDependencies(issues: HarnessPlanIssueInput[]): void {
   issues.forEach((issue, index) => {
     for (const dependencyIndex of issue.depends_on_indices ?? []) {
       if (dependencyIndex >= index) {
-        throw new Error(
+        throw new AgenticToolError(
           `Issue at index ${index} can depend only on earlier issues. Received dependency index ${dependencyIndex}.`,
+          'Reorder your issues array so that dependencies appear before the tasks that depend on them. depends_on_indices must reference strictly lower indices.',
         );
       }
     }

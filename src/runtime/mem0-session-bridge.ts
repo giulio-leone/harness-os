@@ -1,9 +1,9 @@
-import type { Mem0Adapter } from '../memory/mem0-adapter.interface.js';
 import type {
+  Mem0Adapter,
   MemoryKind,
   MemoryScope,
   PublicMemoryRecord,
-} from '../memory/mem0.schemas.js';
+} from 'mem0-mcp';
 import type { SessionMemoryContext } from '../contracts/session-contracts.js';
 
 export interface LoadMem0ContextInput {

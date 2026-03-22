@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import { FileBackedMem0Adapter } from '../memory/file-mem0-adapter.js';
+import { FileBackedMem0Adapter } from 'mem0-mcp';
 import {
   formatSessionLifecycleError,
   SessionLifecycleAdapter,

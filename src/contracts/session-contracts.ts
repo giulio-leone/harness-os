@@ -1,4 +1,4 @@
-import type { MemoryKind, MemoryScope, MemorySearchResult } from '../memory/mem0.schemas.js';
+import type { MemoryKind, MemoryScope, MemorySearchResult } from 'mem0-mcp';
 
 export interface InitializerSessionInput {
   sessionId: string;

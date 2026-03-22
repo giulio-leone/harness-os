@@ -58,11 +58,13 @@ Local Copilot CLI skills for this template are published under:
 
 ## 5. Bootstrap flow
 
-1. `bash init.sh`
-2. `python3 .harness/seed-live-catalog.py --reset`
-3. `bash .harness/run-live-dry-run.sh`
-4. `bash .harness/run-live-claim.sh`
-5. `bash .harness/run-live-queue-promotion.sh --execute` after closing issues as `done`
+Agents can now autonomously bootstrap workspaces and campaigns without executing raw bash scripts or SQL queries.
+
+1. **Initialize Workspace:** Call the `harness_init_workspace` MCP tool to create the `harness.db` and inject the workspace record.
+2. **Create Campaign:** Call the `harness_create_campaign` MCP tool to create the target project and campaign.
+3. **Plan Issues:** Call the `harness_plan_issues` MCP tool with the generated plan and dependencies to populate the `pending` queue.
+4. **Execution Loop:** Call `begin_incremental_session` via MCP to pick up the first issue in the queue.
+5. (Legacy Fallback): You can still run `bash init.sh` and python scripts if a manual override is needed.
 
 ---
 
