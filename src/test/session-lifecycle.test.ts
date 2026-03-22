@@ -465,13 +465,12 @@ test('advance_session closes cleanly when no next ready issue exists', async () 
       tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
       tokenStore: { resolve(token: string): unknown };
     }).tokenStore;
-    const begin = tools.get('begin_incremental_session');
-    const advance = tools.get('advance_session');
+    const sessionTool = tools.get('harness_session');
 
-    assert.ok(begin);
-    assert.ok(advance);
+    assert.ok(sessionTool);
 
-    const started = (await begin.handler({
+    const started = (await sessionTool.handler({
+      action: 'begin',
       sessionId: 'run-mcp-1',
       dbPath,
       workspaceId: 'workspace-1',
@@ -487,7 +486,8 @@ test('advance_session closes cleanly when no next ready issue exists', async () 
       sessionToken: string;
     };
 
-    const advanced = (await advance.handler({
+    const advanced = (await sessionTool.handler({
+      action: 'advance',
       sessionToken: started.sessionToken,
       closeInput: {
         title: 'close',
@@ -511,8 +511,7 @@ test('advance_session closes cleanly when no next ready issue exists', async () 
 
       assert.equal(advanced.advanced, false);
       assert.deepEqual(advanced._meta.nextTools, [
-        'inspect_overview',
-        'harness_next_action',
+        'harness_inspector',
       ]);
       assert.equal(issue?.status, 'done');
       assert.throws(() => tokenStore.resolve(started.sessionToken));
