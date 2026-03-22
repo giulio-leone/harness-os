@@ -1,0 +1,41 @@
+{
+  "action": "checkpoint",
+  "context": {
+    "sessionId": "session-001",
+    "dbPath": "/absolute/path/to/harness.sqlite",
+    "workspaceId": "workspace-1",
+    "projectId": "project-1",
+    "agentId": "copilot-cli",
+    "host": "local-host",
+    "runId": "session-001",
+    "leaseId": "lease-001",
+    "leaseExpiresAt": "2026-03-21T00:30:00.000Z",
+    "issueId": "issue-1",
+    "issueTask": "Stabilize lifecycle runtime",
+    "claimMode": "claim",
+    "scope": {
+      "workspace": "workspace-1",
+      "project": "project-1",
+      "task": "issue-1",
+      "run": "session-001"
+    },
+    "currentTaskStatus": "in_progress",
+    "currentCheckpointId": "00000000-0000-0000-0000-000000000001",
+    "mem0": {
+      "enabled": true,
+      "available": true,
+      "query": "Stabilize lifecycle runtime",
+      "recalledMemories": []
+    }
+  },
+  "input": {
+    "title": "checkpoint",
+    "summary": "Recorded incremental progress on the current task.",
+    "taskStatus": "in_progress",
+    "nextStep": "Continue implementation and write a final close checkpoint when finished.",
+    "artifactIds": [
+      "artifact-001"
+    ],
+    "persistToMem0": false
+  }
+}

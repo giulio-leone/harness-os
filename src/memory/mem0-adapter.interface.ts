@@ -1,20 +1,15 @@
-export interface MemoryFact {
-  id: string;
-  category: 'decision' | 'preference' | 'project' | 'campaign' | 'contact' | 'sync_rule';
-  content: string;
-  scope: 'global' | 'repo' | 'campaign';
-  projectId?: string;
-  createdAt: string;
-}
-
-export interface MemorySearchResult {
-  fact: MemoryFact;
-  score: number;
-}
+import type {
+  HealthCheckResult,
+  MemoryRecallInput,
+  MemorySearchInput,
+  MemorySearchResult,
+  MemoryStoreInput,
+  PublicMemoryRecord,
+} from './mem0.schemas.js';
 
 export interface Mem0Adapter {
-  healthCheck(): Promise<{ ok: boolean; details?: string }>;
-  addMemory(fact: MemoryFact): Promise<string>;
-  searchMemory(query: string, scope?: MemoryFact['scope']): Promise<MemorySearchResult[]>;
-  deleteMemory(id: string): Promise<void>;
+  healthCheck(): Promise<HealthCheckResult>;
+  storeMemory(input: MemoryStoreInput): Promise<PublicMemoryRecord>;
+  recallMemory(input: MemoryRecallInput): Promise<PublicMemoryRecord | null>;
+  searchMemory(input: MemorySearchInput): Promise<MemorySearchResult[]>;
 }

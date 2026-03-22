@@ -1,0 +1,9 @@
+{
+  "action": "inspect_issue",
+  "input": {
+    "dbPath": "/absolute/path/to/harness.sqlite",
+    "issueId": "issue-1",
+    "includeEvents": true,
+    "eventLimit": 20
+  }
+}

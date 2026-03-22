@@ -2,11 +2,19 @@
   "name": "agent-harness-core",
   "version": "0.1.0",
   "description": "Reusable long-running agent harness core for Copilot-style runtimes.",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "init": "bash scripts/init.sh"
+    "test": "npm run build && node --test dist/test/**/*.test.js",
+    "init": "bash scripts/init.sh",
+    "mem0:mcp": "node dist/bin/mem0-mcp.js",
+    "mem0:mcp:dev": "tsx src/bin/mem0-mcp.ts",
+    "session:lifecycle": "node dist/bin/session-lifecycle.js",
+    "session:lifecycle:dev": "tsx src/bin/session-lifecycle.ts",
+    "session:lifecycle:mcp": "node dist/bin/session-lifecycle-mcp.js",
+    "session:lifecycle:mcp:dev": "tsx src/bin/session-lifecycle-mcp.ts"
   },
   "keywords": [
     "agent",

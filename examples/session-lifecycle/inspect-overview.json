@@ -1,0 +1,8 @@
+{
+  "action": "inspect_overview",
+  "input": {
+    "dbPath": "/absolute/path/to/harness.sqlite",
+    "projectId": "project-1",
+    "runLimit": 10
+  }
+}
