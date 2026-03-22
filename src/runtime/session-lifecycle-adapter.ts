@@ -44,6 +44,11 @@ export class SessionLifecycleAdapter {
           action: command.action,
           result: this.inspector.inspectIssue(command.input),
         };
+      case 'promote_queue':
+        return {
+          action: command.action,
+          result: await this.orchestrator.promoteQueue(command.input),
+        };
       default:
         return assertNever(command);
     }

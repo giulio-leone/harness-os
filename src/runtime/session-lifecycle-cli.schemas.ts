@@ -132,6 +132,14 @@ export const inspectIssueInputSchema = z
   })
   .strict();
 
+export const queuePromotionInputSchema = z
+  .object({
+    dbPath: z.string().min(1),
+    projectId: z.string().min(1),
+    campaignId: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const sessionLifecycleCommandSchema = z.discriminatedUnion('action', [
   z
     .object({
@@ -169,6 +177,12 @@ export const sessionLifecycleCommandSchema = z.discriminatedUnion('action', [
     .object({
       action: z.literal('inspect_issue'),
       input: inspectIssueInputSchema,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('promote_queue'),
+      input: queuePromotionInputSchema,
     })
     .strict(),
 ]);

@@ -2,6 +2,8 @@ import { hostname } from 'node:os';
 
 import type {
   IncrementalSessionInput,
+  QueuePromotionInput,
+  QueuePromotionResult,
   RecoverySessionInput,
   SessionCheckpointInput,
   SessionCloseInput,
@@ -20,6 +22,7 @@ import {
   claimOrResumeLease,
   findRecoverableLeasesForIssue,
   loadRecoveryIssue,
+  promoteEligiblePendingIssues,
   reconcileProjectState,
   selectNextRecoveryIssue,
   markLeaseRecovered,
@@ -36,6 +39,7 @@ export interface SessionCheckpointResult {
   checkpoint: CheckpointRecord;
   memoryId?: string;
   mem0WriteSkippedReason?: string;
+  promotedIssueIds?: string[];
 }
 
 export interface SessionOrchestratorOptions {
@@ -498,6 +502,26 @@ export class SessionOrchestrator {
         releaseLease(database.connection, context.leaseId, finishedAt);
       }
 
+      const promotedIssueIds =
+        input.taskStatus === 'done'
+          ? promoteEligiblePendingIssues(database.connection, {
+              projectId: context.projectId,
+              campaignId: context.campaignId,
+            }).map((issue) => issue.id)
+          : [];
+
+      if (promotedIssueIds.length > 0) {
+        appendRunEvent(database.connection, {
+          runId: context.runId,
+          issueId: context.issueId,
+          kind: 'queue_promoted',
+          payload: {
+            promotedIssueIds,
+          },
+          createdAt: finishedAt,
+        });
+      }
+
       appendRunEvent(database.connection, {
         runId: context.runId,
         issueId: context.issueId,
@@ -510,7 +534,29 @@ export class SessionOrchestrator {
         createdAt: finishedAt,
       });
 
-      return checkpointResult;
+      return promotedIssueIds.length === 0
+        ? checkpointResult
+        : {
+            ...checkpointResult,
+            promotedIssueIds,
+          };
+    } finally {
+      database.close();
+    }
+  }
+
+  async promoteQueue(input: QueuePromotionInput): Promise<QueuePromotionResult> {
+    const database = openHarnessDatabase({ dbPath: input.dbPath });
+
+    try {
+      const promotedIssueIds = promoteEligiblePendingIssues(database.connection, {
+        projectId: input.projectId,
+        campaignId: input.campaignId,
+      }).map((issue) => issue.id);
+
+      return {
+        promotedIssueIds,
+      };
     } finally {
       database.close();
     }

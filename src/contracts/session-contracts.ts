@@ -40,6 +40,16 @@ export interface RecoverySessionInput extends IncrementalSessionInput {
   recoveryNextStep?: string;
 }
 
+export interface QueuePromotionInput {
+  dbPath: string;
+  projectId: string;
+  campaignId?: string;
+}
+
+export interface QueuePromotionResult {
+  promotedIssueIds: string[];
+}
+
 export interface IncrementalSessionOutput {
   selectedIssueId: string;
   runId?: string;

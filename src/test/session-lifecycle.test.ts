@@ -333,6 +333,108 @@ test('beginRecoverySession replaces stale leases with a fresh recovery lease', a
   }
 });
 
+test('close promotes dependent pending issues and the next session can claim them', async () => {
+  const tempDir = createTempDir('queue-promotion-close-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-primary',
+      task: 'Complete the first queue item',
+      status: 'ready',
+      nextBestAction: 'Finish this issue to unlock the next one.',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-followup',
+      task: 'Claim the promoted follow-up issue',
+      status: 'pending',
+      dependsOn: ['issue-primary'],
+      nextBestAction: 'Claim after issue-primary is done.',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-final',
+      task: 'Stay pending until the follow-up issue completes',
+      status: 'pending',
+      dependsOn: ['issue-followup'],
+      nextBestAction: 'Wait for issue-followup to complete.',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+
+    const session = await orchestrator.beginIncrementalSession({
+      sessionId: 'run-primary',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      progressPath: '/tmp/progress.md',
+      featureListPath: '/tmp/features.json',
+      planPath: '/tmp/plan.md',
+      syncManifestPath: '/tmp/manifest.yaml',
+      mem0Enabled: false,
+      agentId: 'agent-primary',
+      preferredIssueId: 'issue-primary',
+    });
+    const closed = await orchestrator.close(session, {
+      title: 'close',
+      summary: 'Closed the first issue and unlocked the next queue item.',
+      taskStatus: 'done',
+      nextStep: 'Claim the promoted follow-up issue.',
+      artifactIds: ['artifact-primary'],
+    });
+
+    const inspectedAfterClose = openHarnessDatabase({ dbPath });
+    try {
+      const followup = selectOne<{ status: string }>(
+        inspectedAfterClose.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-followup'],
+      );
+      const finalIssue = selectOne<{ status: string }>(
+        inspectedAfterClose.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-final'],
+      );
+      const events = selectAll<{ kind: string }>(
+        inspectedAfterClose.connection,
+        'SELECT kind FROM events WHERE run_id = ? ORDER BY created_at ASC',
+        ['run-primary'],
+      );
+
+      assert.deepEqual(closed.promotedIssueIds, ['issue-followup']);
+      assert.equal(followup?.status, 'ready');
+      assert.equal(finalIssue?.status, 'pending');
+      assert.equal(events.map((event) => event.kind).includes('queue_promoted'), true);
+    } finally {
+      inspectedAfterClose.close();
+    }
+
+    const nextSession = await orchestrator.beginIncrementalSession({
+      sessionId: 'run-followup',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      progressPath: '/tmp/progress.md',
+      featureListPath: '/tmp/features.json',
+      planPath: '/tmp/plan.md',
+      syncManifestPath: '/tmp/manifest.yaml',
+      mem0Enabled: false,
+      agentId: 'agent-primary',
+    });
+
+    assert.equal(nextSession.issueId, 'issue-followup');
+    assert.equal(nextSession.claimMode, 'claim');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('CLI supports lifecycle commands and read-only inspection commands', async () => {
   const tempDir = createTempDir('cli-surface-');
   const dbPath = join(tempDir, 'harness.sqlite');
@@ -459,6 +561,52 @@ test('CLI supports lifecycle commands and read-only inspection commands', async 
   }
 });
 
+test('CLI supports promote_queue for eligible pending issues', async () => {
+  const tempDir = createTempDir('cli-promote-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-done',
+      task: 'Already completed dependency',
+      status: 'done',
+      nextBestAction: 'Nothing else.',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-promoted',
+      task: 'Should become ready through the CLI helper',
+      status: 'pending',
+      dependsOn: ['issue-done'],
+      nextBestAction: 'Claim after the dependency is complete.',
+    });
+
+    const promoted = await runCliCommand(tempDir, {
+      action: 'promote_queue',
+      input: {
+        dbPath,
+        projectId: 'project-1',
+      },
+    });
+    const overview = await runCliCommand(tempDir, {
+      action: 'inspect_overview',
+      input: {
+        dbPath,
+        projectId: 'project-1',
+      },
+    });
+
+    assert.equal(promoted.action, 'promote_queue');
+    assert.deepEqual(promoted.result.promotedIssueIds, ['issue-promoted']);
+    assert.equal(overview.result.counts.readyIssues, 1);
+    assert.equal(overview.result.readyIssues[0].id, 'issue-promoted');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 function createTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
@@ -505,6 +653,8 @@ function insertIssue(input: {
   task: string;
   status: string;
   nextBestAction: string;
+  dependsOn?: string[];
+  priority?: string;
 }): void {
   const database = openHarnessDatabase({ dbPath: input.dbPath });
 
@@ -519,10 +669,10 @@ function insertIssue(input: {
         null,
         null,
         input.task,
-        'high',
+        input.priority ?? 'high',
         input.status,
         'M',
-        '[]',
+        JSON.stringify(input.dependsOn ?? []),
         input.nextBestAction,
       ],
     );

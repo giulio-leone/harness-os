@@ -5,6 +5,7 @@ import {
   incrementalSessionInputSchema,
   inspectIssueInputSchema,
   inspectOverviewInputSchema,
+  queuePromotionInputSchema,
   recoverySessionInputSchema,
   sessionCheckpointInputSchema,
   sessionCloseInputSchema,
@@ -526,6 +527,28 @@ export class SessionLifecycleMcpServer {
           const input = inspectIssueInputSchema.parse(args);
           return await this.adapter.execute({
             action: 'inspect_issue',
+            input,
+          });
+        },
+      },
+      {
+        name: 'promote_queue',
+        description:
+          'Promote eligible pending issues to ready when their dependencies are satisfied.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            dbPath: { type: 'string' },
+            projectId: { type: 'string' },
+            campaignId: { type: 'string' },
+          },
+          required: ['dbPath', 'projectId'],
+          additionalProperties: false,
+        },
+        handler: async (args) => {
+          const input = queuePromotionInputSchema.parse(args);
+          return await this.adapter.execute({
+            action: 'promote_queue',
             input,
           });
         },

@@ -46,6 +46,11 @@ export interface ReconcileProjectInput {
   now?: string;
 }
 
+export interface PromoteQueueInput {
+  projectId: string;
+  campaignId?: string;
+}
+
 export interface ClaimedLeaseResult {
   issue: IssueRecord;
   lease: LeaseRecord;
@@ -387,6 +392,13 @@ export function claimOrResumeLease(
     };
   }
 
+  if (input.preferredIssueId === undefined) {
+    promoteEligiblePendingIssues(connection, {
+      projectId: input.projectId,
+      campaignId: input.campaignId,
+    });
+  }
+
   const issue =
     input.preferredIssueId !== undefined
       ? loadClaimableIssue(connection, input.preferredIssueId)
@@ -507,6 +519,83 @@ export function updateIssueStatus(
      WHERE id = ?`,
     [status, issueId],
   );
+}
+
+export function promoteEligiblePendingIssues(
+  connection: DatabaseSync,
+  input: PromoteQueueInput,
+): IssueRecord[] {
+  const rows = selectAll<RawIssueRow>(
+    connection,
+    `SELECT
+       id,
+       project_id,
+       campaign_id,
+       milestone_id,
+       task,
+       priority,
+       status,
+       size,
+       depends_on,
+       next_best_action
+     FROM issues
+     WHERE project_id = ?
+       AND (? IS NULL OR campaign_id = ?)
+       AND status = 'pending'
+     ORDER BY
+       CASE priority
+         WHEN 'critical' THEN 0
+         WHEN 'high' THEN 1
+         WHEN 'medium' THEN 2
+         ELSE 3
+       END,
+       id ASC`,
+    [input.projectId, input.campaignId ?? null, input.campaignId ?? null],
+  );
+  const pendingIssues = rows.map(mapIssueRow);
+
+  if (pendingIssues.length === 0) {
+    return [];
+  }
+
+  const dependencyIds = [...new Set(pendingIssues.flatMap((issue) => issue.dependsOn))];
+  const dependencyStatuses = new Map<string, string>();
+
+  if (dependencyIds.length > 0) {
+    const placeholders = dependencyIds.map(() => '?').join(', ');
+    const dependencyRows = selectAll<{ id: string; status: string }>(
+      connection,
+      `SELECT id, status
+       FROM issues
+       WHERE id IN (${placeholders})`,
+      dependencyIds,
+    );
+
+    for (const row of dependencyRows) {
+      dependencyStatuses.set(row.id, row.status);
+    }
+  }
+
+  const promoted: IssueRecord[] = [];
+
+  for (const issue of pendingIssues) {
+    const readyToPromote =
+      issue.dependsOn.length === 0 ||
+      issue.dependsOn.every((dependencyId) => dependencyStatuses.get(dependencyId) === 'done');
+
+    if (!readyToPromote) {
+      continue;
+    }
+
+    updateIssueStatus(connection, issue.id, 'ready');
+    dependencyStatuses.set(issue.id, 'ready');
+    promoted.push({
+      ...issue,
+      status: 'ready',
+    });
+  }
+
+  return promoted;
 }
 
 function findBlockingStaleLeases(

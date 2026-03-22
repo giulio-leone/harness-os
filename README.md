@@ -55,6 +55,7 @@ What the first bridge does:
 - runs reconciliation before every new claim and promotes stale work to `needs_recovery`
 - provides an explicit `beginRecoverySession()` path that replaces stale leases with a fresh recovery lease
 - writes canonical checkpoints into SQLite plus structured checkpoint payload events
+- promotes eligible `pending` issues to `ready` when dependency chains are satisfied
 - reads mem0 context on begin or recovery at task scope
 - writes derived mem0 summaries only on significant checkpoints or close
 - links stored mem0 records back to SQLite through `memory_links`
@@ -78,6 +79,7 @@ The CLI accepts a JSON command on stdin (or via `--input <path>`) with one of th
 - `close`
 - `inspect_overview`
 - `inspect_issue`
+- `promote_queue`
 
 Commands:
 - `npm run session:lifecycle:dev`
@@ -91,12 +93,36 @@ Example fixtures live under `examples/session-lifecycle/`:
 - `close.json`
 - `inspect-overview.json`
 - `inspect-issue.json`
+- `promote-queue.json`
 
 Example usage:
 - `npm run build && npm run session:lifecycle < examples/session-lifecycle/inspect-overview.json`
+- `npm run build && npm run session:lifecycle < examples/session-lifecycle/promote-queue.json`
 - `npm run build && npm run session:lifecycle:mcp`
 
 The intended boundary stays unchanged:
 - SQLite is canonical for task, lease, checkpoint, and event state
 - mem0 remains derived support memory only
 - project skills should not write canonical state directly
+
+## Repo-native skill sources
+
+This repository now also publishes repo-native skill sources under `.github/skills/`:
+- `session-lifecycle` for the verified operational lease/checkpoint/inspection/promotion protocol
+- `prompt-contract-bindings` for the reusable local-prompt/global-harness publication pattern
+
+There is no dedicated skill reload mechanism in this repository. Global availability comes from validating the files on disk and syncing the approved copies into `~/.copilot/skills` according to `~/.copilot/SYNC_MANIFEST.yaml`.
+
+
+### Proving global skill reuse
+
+Run the deterministic consumer proof with explicit paths:
+
+```bash
+python3 examples/skill-reuse/prove-global-skill-reuse.py \
+  --runtime-skills ~/.copilot/skills \
+  --consumer-workspace /absolute/path/to/consumer-workspace \
+  --output /absolute/path/to/consumer-workspace/.harness/runtime/global-skill-reuse-proof.json
+```
+
+This validates repo-native skill source parity, runtime mirror parity, the updated `SYNC_MANIFEST` routing, and a real consumer `init.sh` bootstrap without claiming any skill reload mechanism.

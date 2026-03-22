@@ -1,0 +1,7 @@
+{
+  "action": "promote_queue",
+  "input": {
+    "dbPath": "/absolute/path/to/harness.sqlite",
+    "projectId": "project-1"
+  }
+}
