@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { z } from 'zod';
 
 import { SessionLifecycleAdapter } from '../runtime/session-lifecycle-adapter.js';
@@ -17,7 +19,9 @@ import {
   resolveDbPath,
   resolveProjectId,
   resolveCampaignId,
+  SessionTokenStore,
 } from '../runtime/harness-agentic-helpers.js';
+import type { SessionContext } from '../contracts/session-contracts.js';
 import {
   incrementalSessionInputSchema,
   inspectIssueInputSchema,
@@ -26,7 +30,6 @@ import {
   recoverySessionInputSchema,
   sessionCheckpointInputSchema,
   sessionCloseInputSchema,
-  sessionContextSchema,
 } from '../runtime/session-lifecycle-cli.schemas.js';
 import {
   openHarnessDatabase,
@@ -39,7 +42,7 @@ import {
   type JsonRpcMessage,
   JsonRpcError,
   StdioJsonRpcTransport,
-} from 'copilot-mcp-hot-reload';
+} from 'mcp-hot-reload';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -63,123 +66,6 @@ const toolCallParamsSchema = z
   })
   .strict();
 
-// ─── JSON Schema fragments ─────────────────────────────────────────
-
-const scopeJsonSchema = {
-  type: 'object',
-  properties: {
-    workspace: { type: 'string' },
-    project: { type: 'string' },
-    campaign: { type: 'string' },
-    task: { type: 'string' },
-    run: { type: 'string' },
-  },
-  required: ['workspace', 'project'],
-} as const;
-
-const sessionMemoryContextJsonSchema = {
-  type: 'object',
-  properties: {
-    enabled: { type: 'boolean' },
-    available: { type: 'boolean' },
-    query: { type: 'string' },
-    details: { type: 'string' },
-    recalledMemories: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          memory: {
-            type: 'object',
-            properties: {
-              id: { type: 'string', format: 'uuid' },
-              kind: {
-                type: 'string',
-                enum: ['decision', 'preference', 'summary', 'artifact_context', 'note'],
-              },
-              content: { type: 'string' },
-              scope: scopeJsonSchema,
-              provenance: {
-                type: 'object',
-                properties: {
-                  checkpointId: { type: 'string' },
-                  artifactIds: {
-                    type: 'array',
-                    items: { type: 'string' },
-                  },
-                  note: { type: 'string' },
-                },
-                required: ['checkpointId', 'artifactIds'],
-              },
-              metadata: {
-                type: 'object',
-              },
-              createdAt: { type: 'string', format: 'date-time' },
-              updatedAt: { type: 'string', format: 'date-time' },
-            },
-            required: [
-              'id',
-              'kind',
-              'content',
-              'scope',
-              'provenance',
-              'metadata',
-              'createdAt',
-              'updatedAt',
-            ],
-          },
-          score: { type: 'number' },
-        },
-        required: ['memory', 'score'],
-      },
-    },
-  },
-  required: ['enabled', 'available', 'query', 'recalledMemories'],
-} as const;
-
-const sessionContextJsonSchema = {
-  type: 'object',
-  properties: {
-    sessionId: { type: 'string' },
-    dbPath: { type: 'string' },
-    workspaceId: { type: 'string' },
-    projectId: { type: 'string' },
-    campaignId: { type: 'string' },
-    agentId: { type: 'string' },
-    host: { type: 'string' },
-    runId: { type: 'string' },
-    leaseId: { type: 'string' },
-    leaseExpiresAt: { type: 'string', format: 'date-time' },
-    issueId: { type: 'string' },
-    issueTask: { type: 'string' },
-    claimMode: { type: 'string', enum: ['claim', 'resume', 'recovery'] },
-    scope: scopeJsonSchema,
-    currentTaskStatus: {
-      type: 'string',
-      enum: ['pending', 'ready', 'in_progress', 'blocked', 'needs_recovery', 'done', 'failed'],
-    },
-    currentCheckpointId: { type: 'string', format: 'uuid' },
-    mem0: sessionMemoryContextJsonSchema,
-  },
-  required: [
-    'sessionId',
-    'dbPath',
-    'workspaceId',
-    'projectId',
-    'agentId',
-    'host',
-    'runId',
-    'leaseId',
-    'leaseExpiresAt',
-    'issueId',
-    'issueTask',
-    'claimMode',
-    'scope',
-    'currentTaskStatus',
-    'currentCheckpointId',
-    'mem0',
-  ],
-} as const;
 
 // ─── Server ─────────────────────────────────────────────────────────
 
@@ -196,11 +82,11 @@ SETUP (one-time, when no workspace/project exists):
 
 EXECUTION LOOP (repeated):
 4. promote_queue → unlocks pending tasks whose dependencies are done
-5. begin_incremental_session → claims the next ready task, returns session context
+5. begin_incremental_session → claims the next ready task, returns sessionToken + context
 6. [Do the work described in the issued task]
-7. checkpoint_session → save progress so recovery can resume from here
-8. close_session → mark done and release the lease (auto-promotes dependent tasks)
-9. Go to step 4
+7. checkpoint_session → save progress (accepts sessionToken)
+8. advance_session → closes the current task and IMMEDIATELY claims the next one (accepts sessionToken). Prefer this over step 8 + 4 + 5 for efficiency.
+9. close_session → if you must close without advancing, use this instead (accepts sessionToken).
 
 RECOVERY:
 - harness_rollback_issue → hard-reset a failed/stuck issue to pending
@@ -209,11 +95,13 @@ RECOVERY:
 RULES:
 - dbPath is optional: set HARNESS_DB_PATH env var to avoid passing it every call.
 - Tools accept human-readable names (projectName, campaignName) instead of UUIDs.
+- Always pass the short \`sessionToken\` returned by begin_* to checkpoint/close tools, instead of the heavy \`context\` object.
 - Every response includes _meta.nextTools and _meta.hint telling you what to do next.`;
 
 export class SessionLifecycleMcpServer {
   private readonly transport: StdioJsonRpcTransport;
   private readonly tools: Map<string, ToolDefinition>;
+  private readonly tokenStore = new SessionTokenStore();
 
   constructor(
     private readonly adapter: SessionLifecycleAdapter,
@@ -480,15 +368,20 @@ export class SessionLifecycleMcpServer {
         handler: async (args) => {
           const input = incrementalSessionInputSchema.parse(args);
           const dbPath = resolveDbPath(input.dbPath);
-          const result = await this.adapter.execute({
+          const result = (await this.adapter.execute({
             action: 'begin_incremental',
             input: { ...input, dbPath },
-          });
+          })) as { context: SessionContext };
+          const sessionToken = this.tokenStore.store(
+            result.context as unknown as Record<string, unknown>,
+            input as Record<string, unknown>
+          );
           return {
             ...result,
+            sessionToken,
             ...buildMeta(
-              ['checkpoint_session', 'close_session'],
-              'Session started. Do the work described in the task, then call checkpoint_session to save progress or close_session when done.',
+              ['checkpoint_session', 'close_session', 'advance_session'],
+              'Session started. Do the work described in the task, then call checkpoint_session to save progress, close_session when done, or advance_session to close and immediately start the next task.',
             ),
           };
         },
@@ -535,15 +428,20 @@ export class SessionLifecycleMcpServer {
         handler: async (args) => {
           const input = recoverySessionInputSchema.parse(args);
           const dbPath = resolveDbPath(input.dbPath);
-          const result = await this.adapter.execute({
+          const result = (await this.adapter.execute({
             action: 'begin_recovery',
             input: { ...input, dbPath },
-          });
+          })) as { context: SessionContext };
+          const sessionToken = this.tokenStore.store(
+            result.context as unknown as Record<string, unknown>,
+            input as Record<string, unknown>
+          );
           return {
             ...result,
+            sessionToken,
             ...buildMeta(
-              ['checkpoint_session', 'close_session'],
-              'Recovery session started. Do the recovery work, then call checkpoint_session or close_session.',
+              ['checkpoint_session', 'close_session', 'advance_session'],
+              'Recovery session started. Do the recovery work, then call checkpoint_session, close_session, or advance_session.',
             ),
           };
         },
@@ -551,11 +449,11 @@ export class SessionLifecycleMcpServer {
       {
         name: 'checkpoint_session',
         description:
-          'Save your progress on the current task. Call this after every meaningful step so that if you crash, recovery can resume from here. The context object is the one returned by begin_incremental_session or begin_recovery_session.',
+          'Save your progress on the current task. Call this after every meaningful step so that if you crash, recovery can resume from here. Pass the sessionToken returned by begin_* instead of the full context.',
         inputSchema: {
           type: 'object',
           properties: {
-            context: sessionContextJsonSchema,
+            sessionToken: { type: 'string' },
             input: {
               type: 'object',
               properties: {
@@ -578,27 +476,36 @@ export class SessionLifecycleMcpServer {
               required: ['title', 'summary', 'taskStatus', 'nextStep'],
             },
           },
-          required: ['context', 'input'],
+          required: ['sessionToken', 'input'],
         },
         handler: async (args) => {
           const parsed = z
             .object({
-              context: sessionContextSchema,
+              sessionToken: z.string(),
               input: sessionCheckpointInputSchema,
             })
             .strict()
             .parse(args);
-          const dbPath = resolveDbPath(parsed.context.dbPath);
-          const result = await this.adapter.execute({
+          
+          const session = this.tokenStore.resolve(parsed.sessionToken);
+          const context = session.context as unknown as SessionContext;
+          const dbPath = resolveDbPath(context.dbPath);
+          const result = (await this.adapter.execute({
             action: 'checkpoint',
-            context: { ...parsed.context, dbPath },
+            context: { ...context, dbPath },
             input: parsed.input,
+          })) as { result: { checkpoint: { id: string } } };
+
+          this.tokenStore.updateContext(parsed.sessionToken, {
+            currentCheckpointId: result.result.checkpoint.id,
+            currentTaskStatus: parsed.input.taskStatus,
           });
+
           return {
             ...result,
             ...buildMeta(
-              ['checkpoint_session', 'close_session'],
-              'Progress saved. Continue working and checkpoint again, or call close_session when the task is complete.',
+              ['checkpoint_session', 'close_session', 'advance_session'],
+              'Progress saved. Continue working and checkpoint again, or call close_session/advance_session when the task is complete.',
             ),
           };
         },
@@ -606,11 +513,11 @@ export class SessionLifecycleMcpServer {
       {
         name: 'close_session',
         description:
-          'Mark the current task as done (or failed) and release the lease. Automatically promotes dependent tasks. After closing with status "done", the next ready task is available via begin_incremental_session.',
+          'Mark the current task as done (or failed) and release the lease. Automatically promotes dependent tasks. If closing with "done", you should probably use "advance_session" instead to immediately pick up the next task.',
         inputSchema: {
           type: 'object',
           properties: {
-            context: sessionContextJsonSchema,
+            sessionToken: { type: 'string' },
             input: {
               type: 'object',
               properties: {
@@ -634,27 +541,33 @@ export class SessionLifecycleMcpServer {
               required: ['title', 'summary', 'taskStatus', 'nextStep'],
             },
           },
-          required: ['context', 'input'],
+          required: ['sessionToken', 'input'],
         },
         handler: async (args) => {
           const parsed = z
             .object({
-              context: sessionContextSchema,
+              sessionToken: z.string(),
               input: sessionCloseInputSchema,
             })
             .strict()
             .parse(args);
-          const dbPath = resolveDbPath(parsed.context.dbPath);
-          const result = await this.adapter.execute({
+          const session = this.tokenStore.resolve(parsed.sessionToken);
+          const context = session.context as unknown as SessionContext;
+          const dbPath = resolveDbPath(context.dbPath);
+          
+          const result = (await this.adapter.execute({
             action: 'close',
-            context: { ...parsed.context, dbPath },
+            context: { ...context, dbPath },
             input: parsed.input,
-          }) as Record<string, unknown>;
+          })) as Record<string, unknown>;
+
+          this.tokenStore.remove(parsed.sessionToken);
 
           const promotedIds = (result['promotedIssueIds'] as string[] | undefined) ?? [];
-          const hint = promotedIds.length > 0
-            ? `Session closed. ${promotedIds.length} dependent task(s) promoted to ready. Call begin_incremental_session to pick up the next one.`
-            : 'Session closed. No more ready tasks. Call inspect_overview or harness_next_action to check queue status.';
+          const hint =
+            promotedIds.length > 0
+              ? `Session closed. ${promotedIds.length} dependent task(s) promoted to ready. Call begin_incremental_session to pick up the next one.`
+              : 'Session closed. No more ready tasks. Call inspect_overview or harness_next_action to check queue status.';
 
           return {
             ...result,
@@ -663,6 +576,120 @@ export class SessionLifecycleMcpServer {
                 ? ['begin_incremental_session']
                 : ['harness_next_action', 'inspect_overview'],
               hint,
+            ),
+          };
+        },
+      },
+      {
+        name: 'advance_session',
+        description:
+          'Close the current session and IMMEDIATELY begin the next one. This combines close_session, promote_queue, and begin_incremental_session into a single atomic action. Use this to move to the next task faster. Returns the new sessionToken and context.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sessionToken: { type: 'string' },
+            closeInput: {
+              type: 'object',
+              properties: {
+                title: { type: 'string' },
+                summary: { type: 'string' },
+                taskStatus: {
+                  type: 'string',
+                  enum: ['pending', 'ready', 'in_progress', 'blocked', 'needs_recovery', 'done', 'failed'],
+                },
+                nextStep: { type: 'string' },
+                artifactIds: { type: 'array', items: { type: 'string' } },
+                persistToMem0: { type: 'boolean' },
+                memoryKind: {
+                  type: 'string',
+                  enum: ['decision', 'preference', 'summary', 'artifact_context', 'note'],
+                },
+                memoryContent: { type: 'string' },
+                metadata: { type: 'object' },
+                releaseLease: { type: 'boolean' },
+              },
+              required: ['title', 'summary', 'taskStatus', 'nextStep'],
+            },
+          },
+          required: ['sessionToken', 'closeInput'],
+        },
+        handler: async (args) => {
+          const parsed = z
+            .object({
+              sessionToken: z.string(),
+              closeInput: sessionCloseInputSchema,
+            })
+            .strict()
+            .parse(args);
+
+          const session = this.tokenStore.resolve(parsed.sessionToken);
+          const context = session.context as unknown as SessionContext;
+          const dbPath = resolveDbPath(context.dbPath);
+
+          // 1. Close current session
+          const closeResult = (await this.adapter.execute({
+            action: 'close',
+            context: { ...context, dbPath },
+            input: parsed.closeInput,
+          })) as Record<string, unknown>;
+
+          // 2. Begin new session explicitly reusing the original inputs from begin_*
+          const nextBeginInput = buildNextIncrementalInput(
+            session.beginInput,
+            dbPath,
+          );
+          let beginResult: { context: SessionContext };
+          try {
+            beginResult = (await this.adapter.execute({
+              action: 'begin_incremental',
+              input: nextBeginInput,
+            })) as { context: SessionContext };
+          } catch (error) {
+            this.tokenStore.remove(parsed.sessionToken);
+
+            if (
+              error instanceof Error &&
+              error.message.startsWith('No ready issues are available for project ')
+            ) {
+              const promotedIds =
+                (closeResult['promotedIssueIds'] as string[] | undefined) ?? [];
+              const hint =
+                promotedIds.length > 0
+                  ? `Session closed. ${promotedIds.length} dependent task(s) were promoted, but none were claimable yet. Call begin_incremental_session to retry or inspect_overview to check queue state.`
+                  : 'Session closed. No more ready tasks were available to advance into. Call inspect_overview or harness_next_action to decide the next step.';
+
+              return {
+                ...closeResult,
+                advanced: false,
+                ...buildMeta(
+                  promotedIds.length > 0
+                    ? ['begin_incremental_session', 'inspect_overview']
+                    : ['inspect_overview', 'harness_next_action'],
+                  hint,
+                ),
+              };
+            }
+
+            throw new AgenticToolError(
+              `Current session was closed, but advance_session could not start the next task: ${getErrorMessage(error)}`,
+              'The current task is already closed. Call inspect_overview or harness_next_action to inspect queue state before starting another session.',
+              'inspect_overview',
+            );
+          }
+
+          this.tokenStore.remove(parsed.sessionToken);
+
+          const newToken = this.tokenStore.store(
+            beginResult.context as unknown as Record<string, unknown>,
+            session.beginInput
+          );
+
+          return {
+            ...beginResult,
+            sessionToken: newToken,
+            ...buildMeta(
+              ['checkpoint_session', 'close_session', 'advance_session'],
+              'Advanced to next session! Do the work described in the task, then call checkpoint_session or advance_session.',
             ),
           };
         },
@@ -1168,4 +1195,40 @@ function toJsonRpcErrorPayload(error: unknown): JsonRpcErrorPayload {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function buildNextIncrementalInput(
+  beginInput: Record<string, unknown>,
+  dbPath: string,
+): z.infer<typeof incrementalSessionInputSchema> {
+  const candidate = beginInput as Partial<z.infer<typeof incrementalSessionInputSchema>>;
+
+  return incrementalSessionInputSchema.parse({
+    sessionId: `ADV-${randomUUID()}`,
+    dbPath,
+    workspaceId: candidate.workspaceId,
+    projectId: candidate.projectId,
+    progressPath: candidate.progressPath,
+    featureListPath: candidate.featureListPath,
+    planPath: candidate.planPath,
+    syncManifestPath: candidate.syncManifestPath,
+    mem0Enabled: candidate.mem0Enabled,
+    ...(candidate.campaignId !== undefined
+      ? { campaignId: candidate.campaignId }
+      : {}),
+    ...(candidate.agentId !== undefined ? { agentId: candidate.agentId } : {}),
+    ...(candidate.host !== undefined ? { host: candidate.host } : {}),
+    ...(candidate.leaseTtlSeconds !== undefined
+      ? { leaseTtlSeconds: candidate.leaseTtlSeconds }
+      : {}),
+    ...(candidate.checkpointFreshnessSeconds !== undefined
+      ? { checkpointFreshnessSeconds: candidate.checkpointFreshnessSeconds }
+      : {}),
+    ...(candidate.memoryQuery !== undefined
+      ? { memoryQuery: candidate.memoryQuery }
+      : {}),
+    ...(candidate.memorySearchLimit !== undefined
+      ? { memorySearchLimit: candidate.memorySearchLimit }
+      : {}),
+  });
 }

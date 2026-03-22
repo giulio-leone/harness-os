@@ -11,7 +11,7 @@ This repository now focuses on the harness core itself:
 
 The extracted source-of-truth repositories now live alongside this repo:
 
-- `../copilot-mcp-hot-reload` for adaptive JSON-RPC stdio transport plus generic MCP hot reload
+- `../mcp-hot-reload` for adaptive JSON-RPC stdio transport plus generic MCP hot reload
 - `../mem0-mcp` for the dedicated `mem0` MCP server, file-backed adapter, schemas, and Ollama embeddings
 
 `agent-harness-core` consumes those packages as local dependencies instead of keeping duplicate implementations.

@@ -1,6 +1,56 @@
+import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
 import { selectAll, selectOne } from '../db/store.js';
+
+// ─── Session Token Store ────────────────────────────────────────────
+
+/**
+ * In-memory store that maps short session tokens to full SessionContext objects.
+ * Eliminates the need for LLMs to pass back ~500-token context objects on every
+ * checkpoint/close call. The token is ephemeral (lives for the lifetime of the
+ * MCP server process), which is fine since MCP servers are tied to a single agent session.
+ */
+export class SessionTokenStore {
+  private readonly sessions = new Map<
+    string,
+    { context: Record<string, unknown>; beginInput: Record<string, unknown> }
+  >();
+
+  /** Store a context with its original parameters and return a short token. */
+  store(context: Record<string, unknown>, beginInput: Record<string, unknown>): string {
+    const token = `ST-${randomUUID().slice(0, 12)}`;
+    this.sessions.set(token, { context, beginInput });
+    return token;
+  }
+
+  /** Retrieve session data by token. Throws AgenticToolError if not found. */
+  resolve(token: string): { context: Record<string, unknown>; beginInput: Record<string, unknown> } {
+    const session = this.sessions.get(token);
+    if (!session) {
+      throw new AgenticToolError(
+        `Session token "${token}" not found or expired.`,
+        'The token may have expired because the MCP server restarted. Call begin_incremental_session to start a new session.',
+        'begin_incremental_session',
+      );
+    }
+    return session;
+  }
+
+  /** Update stored context (e.g., after checkpoint updates checkpointId/taskStatus). */
+  updateContext(token: string, patch: Record<string, unknown>): void {
+    const session = this.resolve(token);
+    this.sessions.set(token, {
+      ...session,
+      context: { ...session.context, ...patch },
+    });
+  }
+
+  /** Remove a session token (e.g., after close). */
+  remove(token: string): void {
+    this.sessions.delete(token);
+  }
+}
 
 // ─── dbPath resolution ───────────────────────────────────────────────
 

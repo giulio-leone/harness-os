@@ -15,6 +15,8 @@ import type {
   PublicMemoryRecord,
 } from 'mem0-mcp';
 import {
+  SessionLifecycleAdapter,
+  SessionLifecycleMcpServer,
   SessionOrchestrator,
   openHarnessDatabase,
   runStatement,
@@ -430,6 +432,93 @@ test('close promotes dependent pending issues and the next session can claim the
 
     assert.equal(nextSession.issueId, 'issue-followup');
     assert.equal(nextSession.claimMode, 'claim');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('advance_session closes cleanly when no next ready issue exists', async () => {
+  const tempDir = createTempDir('mcp-advance-no-next-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-only',
+      task: 'Complete the only ready issue',
+      status: 'ready',
+      nextBestAction: 'Finish this issue.',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const adapter = new SessionLifecycleAdapter(orchestrator);
+    const server = new SessionLifecycleMcpServer(adapter);
+    const tools = (server as unknown as {
+      tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
+      tokenStore: { resolve(token: string): unknown };
+    }).tools;
+    const tokenStore = (server as unknown as {
+      tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
+      tokenStore: { resolve(token: string): unknown };
+    }).tokenStore;
+    const begin = tools.get('begin_incremental_session');
+    const advance = tools.get('advance_session');
+
+    assert.ok(begin);
+    assert.ok(advance);
+
+    const started = (await begin.handler({
+      sessionId: 'run-mcp-1',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      progressPath: '/tmp/progress.md',
+      featureListPath: '/tmp/features.json',
+      planPath: '/tmp/plan.md',
+      syncManifestPath: '/tmp/manifest.yaml',
+      mem0Enabled: false,
+      agentId: 'agent-mcp',
+      preferredIssueId: 'issue-only',
+    })) as {
+      sessionToken: string;
+    };
+
+    const advanced = (await advance.handler({
+      sessionToken: started.sessionToken,
+      closeInput: {
+        title: 'close',
+        summary: 'Finished the only issue.',
+        taskStatus: 'done',
+        nextStep: 'Stop.',
+        artifactIds: ['artifact-only'],
+      },
+    })) as {
+      advanced: boolean;
+      _meta: { nextTools: string[] };
+    };
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const issue = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-only'],
+      );
+
+      assert.equal(advanced.advanced, false);
+      assert.deepEqual(advanced._meta.nextTools, [
+        'inspect_overview',
+        'harness_next_action',
+      ]);
+      assert.equal(issue?.status, 'done');
+      assert.throws(() => tokenStore.resolve(started.sessionToken));
+    } finally {
+      inspected.close();
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
