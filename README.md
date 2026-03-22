@@ -155,3 +155,14 @@ python3 .harness/seed-live-catalog.py --reset
 bash .harness/run-live-dry-run.sh
 bash .harness/run-live-claim.sh
 ```
+
+
+## License
+
+This project is licensed under the **Business Source License 1.1 (BSL)**.
+
+**You may use this software for non-commercial and non-production purposes (e.g., development, testing, research, and personal projects) free of charge.**
+
+**Commercial and production use is strictly prohibited without prior written authorization.**
+
+On March 22, 2030 (the Change Date), this license automatically converts to the **Apache License, Version 2.0**.
