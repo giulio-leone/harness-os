@@ -65,7 +65,7 @@ const toolCallParamsSchema = z
     name: z.string().min(1),
     arguments: z.unknown().optional(),
   })
-  .strict();
+  .passthrough();
 
 // ─── Checkpoint / Close shared input schema (JSON Schema) ────────
 
