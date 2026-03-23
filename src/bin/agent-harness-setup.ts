@@ -39,13 +39,13 @@ function saveConfig(config: HarnessConfig) {
 }
 
 async function menu() {
-  console.log('\n=== Agent Harness Core Interactive CLI Setup ===');
+  console.log('\n=== HarnessOS — Interactive Setup ===');
   const config = loadConfig();
   
   if (config.hosts.length === 0) {
     console.log('No active hosts configured.');
   } else {
-    console.log('Active hosts integrating the Agent Harness:');
+    console.log('Active hosts:');
     config.hosts.forEach((host, i) => console.log(`  ${i + 1}. ${host}`));
   }
 
@@ -57,7 +57,7 @@ async function menu() {
   const answer = await ask('\nSelect an option [1-3]: ');
   
   if (answer === '1') {
-    let newHost = await ask('Enter the absolute path to the host directory (or use ~): ');
+    let newHost = await ask('\nEnter the absolute path to the host directory (or use ~): ');
     if (newHost.startsWith('~/')) {
       newHost = path.join(os.homedir(), newHost.slice(2));
     }
@@ -91,7 +91,7 @@ async function menu() {
     await menu();
   } else if (answer === '3') {
     console.log(`\nSetup finished. Configuration saved to ${CONFIG_FILE}`);
-    console.log('To synchronize core skills to these hosts, run: npx agent-harness-sync');
+    console.log('To synchronize core skills to these hosts, run: npx harness-sync');
     rl.close();
   } else {
     console.log('❌ Invalid selection.');
