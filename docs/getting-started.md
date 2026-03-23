@@ -12,8 +12,8 @@ Welcome to **HarnessOS** — the operating system for autonomous AI agents. This
 ## 1. Local Setup
 
 ```bash
-git clone https://github.com/giulio-leone/agent-harness-core.git
-cd agent-harness-core
+git clone https://github.com/giulio-leone/harness-os.git
+cd harness-os
 npm install
 npm run build
 ```

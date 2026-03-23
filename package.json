@@ -50,12 +50,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/giulio-leone/agent-harness-core.git"
+    "url": "https://github.com/giulio-leone/harness-os.git"
   },
   "bugs": {
-    "url": "https://github.com/giulio-leone/agent-harness-core/issues"
+    "url": "https://github.com/giulio-leone/harness-os/issues"
   },
-  "homepage": "https://github.com/giulio-leone/agent-harness-core#readme",
+  "homepage": "https://github.com/giulio-leone/harness-os#readme",
   "license": "BUSL-1.1",
   "type": "module",
   "dependencies": {
