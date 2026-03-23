@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -38,7 +39,7 @@ function saveConfig(config: HarnessConfig) {
 }
 
 async function menu() {
-  console.log('\n=== Agent Harness Core Interactive Setup ===');
+  console.log('\n=== Agent Harness Core Interactive CLI Setup ===');
   const config = loadConfig();
   
   if (config.hosts.length === 0) {
@@ -90,7 +91,7 @@ async function menu() {
     await menu();
   } else if (answer === '3') {
     console.log(`\nSetup finished. Configuration saved to ${CONFIG_FILE}`);
-    console.log('To synchronize core skills to these hosts, run the sync script.');
+    console.log('To synchronize core skills to these hosts, run: npx agent-harness-sync');
     rl.close();
   } else {
     console.log('❌ Invalid selection.');
@@ -98,8 +99,9 @@ async function menu() {
   }
 }
 
-// Only run the menu if this file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Only run the menu if this file is executed directly 
+// Since TS to JS preserves structure, we check argv
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1].endsWith('agent-harness-setup') || process.argv[1].endsWith('agent-harness-setup.js')) {
   menu().catch(err => {
     console.error(err);
     rl.close();

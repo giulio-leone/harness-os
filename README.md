@@ -69,10 +69,10 @@ This harness is designed to work interactively with **any AI agent or IDE** (Cop
 
 ```bash
 # Interactively add/remove host workspaces (~/.gemini, ~/.cursor, etc.)
-npm run setup
+npx agent-harness-setup
 
 # Synchronize the latest harness skills securely to your registered hosts
-npm run sync
+npx agent-harness-sync
 ```
 
 ### 2️⃣ Environment Variables

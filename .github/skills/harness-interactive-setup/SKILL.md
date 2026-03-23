@@ -18,15 +18,15 @@ You have two ways to set this up for the user:
 1. Check if `~/.agent-harness/config.json` exists. If not, create an empty structure: `{"hosts": []}`
 2. Add the requested absolute paths (e.g., `~/.gemini`, `/Users/username/.cursor`) to the `hosts` array. Ensure there are no duplicates.
 3. Save the file.
-4. Run `npm run sync` inside the `agent-harness-core` repository directory to push the skills to all registered hosts.
+4. Run `npx agent-harness-sync` inside your tool environment to push the skills to all registered hosts.
 
 ### Method 2: Interactive CLI
 
 If you prefer to use the interactive menu:
-1. Run `npm run setup` using your terminal control system.
+1. Run `npx agent-harness-setup` using your terminal control system.
 2. Provide '1' (to add), '2' (to remove), or '3' (to exit) using terminal input mechanisms (like `send_command_input`).
 3. Follow the prompts.
-4. Once finished, run `npm run sync`.
+4. Once finished, run `npx agent-harness-sync`.
 
 ## Verifying the Setup
 
