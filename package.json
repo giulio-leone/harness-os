@@ -1,7 +1,7 @@
 {
-  "name": "agent-harness-core",
+  "name": "harness-os",
   "version": "1.0.0",
-  "description": "Reusable long-running agent harness core with SQLite-backed lifecycle orchestration and optional derived memory integrations.",
+  "description": "The operating system for autonomous AI agents. SQLite-backed lifecycle orchestration, canonical state, and plug-and-play multi-host integration.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -20,10 +20,10 @@
     ".github/skills"
   ],
   "bin": {
-    "agent-harness-session-lifecycle": "./dist/bin/session-lifecycle.js",
-    "agent-harness-session-lifecycle-mcp": "./dist/bin/session-lifecycle-mcp.js",
-    "agent-harness-setup": "./dist/bin/agent-harness-setup.js",
-    "agent-harness-sync": "./dist/bin/agent-harness-sync.js"
+    "harness-session-lifecycle": "./dist/bin/session-lifecycle.js",
+    "harness-session-lifecycle-mcp": "./dist/bin/session-lifecycle-mcp.js",
+    "harness-setup": "./dist/bin/agent-harness-setup.js",
+    "harness-sync": "./dist/bin/agent-harness-sync.js"
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').copyFileSync('src/db/sqlite.schema.sql','dist/db/sqlite.schema.sql')\"",
@@ -41,7 +41,9 @@
   "keywords": [
     "agent",
     "harness",
-    "copilot",
+    "harness-os",
+    "ai-runtime",
+    "orchestration",
     "mem0",
     "sqlite",
     "zod"

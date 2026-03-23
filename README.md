@@ -1,16 +1,17 @@
 <div align="center">
-  <img src="assets/banner.svg" alt="Agent Harness Core Banner" width="100%" />
+  <img src="assets/banner.svg" alt="HarnessOS Banner" width="100%" />
 
-  # ⚙️ Agent Harness Core
+  # HarnessOS
 
-  <p><strong>A reusable, robust, and highly scalable long-running agent harness core built for autonomous task execution.</strong></p>
+  <p><strong>The operating system for autonomous AI agents.</strong></p>
 
-  [![Version](https://img.shields.io/npm/v/agent-harness-core?style=for-the-badge&color=3B82F6)](https://www.npmjs.com/package/agent-harness-core)
+  [![Version](https://img.shields.io/npm/v/harness-os?style=for-the-badge&color=6366F1)](https://www.npmjs.com/package/harness-os)
   [![License](https://img.shields.io/badge/License-BUSL--1.1-8B5CF6?style=for-the-badge)](LICENSE)
   [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-3178C6?style=for-the-badge&logo=typescript&logoColor=white)]()
   [![Developer](https://img.shields.io/badge/Developer-Giulio%20Leone-EC4899?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/giulioleone-ai/)
 
   <p align="center">
+    <a href="#-what-is-a-harness">What is a Harness?</a> •
     <a href="#-key-features">Key Features</a> •
     <a href="#-getting-started">Getting Started</a> •
     <a href="#-architecture">Architecture</a> •
@@ -20,16 +21,41 @@
 
 ---
 
+## 🧬 What is a Harness?
+
+In AI, an LLM can *think*. A tool can *act*. But neither can **persist, recover, coordinate, or remember** on its own.
+
+A **Harness** is the missing execution layer. It is the infrastructure that wraps around AI agents to give them:
+
+- **Persistence** — Every task, every checkpoint, every event is written to a canonical SQLite store. If the agent dies, the work survives.
+- **Lifecycle** — Tasks follow a strict state machine (`pending → ready → in_progress → done/failed`). Leases prevent two agents from claiming the same work. Stale leases are automatically recovered.
+- **Memory** — Optional semantic memory powered by `mem0` allows agents to recall context across sessions, threads, and even projects — without polluting the canonical state.
+- **Coordination** — Dependency chains between tasks are resolved automatically. When task A completes, its dependents are promoted to `ready`. No human intervention needed.
+- **Portability** — The harness is agent-agnostic and IDE-agnostic. It works with Copilot, Gemini, Cursor, Windsurf, or any custom runtime. Set it up once, use it everywhere.
+
+### Why does this matter?
+
+Without a harness, every AI agent is a **stateless function call**. It forgets everything between sessions. It can't coordinate with other agents. It can't recover from crashes. It can't prove what it did or why.
+
+**HarnessOS turns disposable AI into a persistent, self-healing, auditable system.**
+
+Think of it this way:
+- An LLM is a CPU.
+- Tools are peripherals.
+- **HarnessOS is the operating system that makes them work together reliably.**
+
+---
+
 ## 🚀 Overview
 
-**Agent Harness Core** provides the foundational execution framework for advanced autonomous agents. It focuses strictly on robust lifecycle management, leaving LLM inference and tool implementation to the consumer.
+**HarnessOS** provides the foundational execution framework for advanced autonomous agents. It focuses strictly on robust lifecycle management, leaving LLM inference and tool implementation to the consumer.
 
 ### What it handles:
-- **Zod Plan Contracts:** Strongly typed schema validation for robust planning.
-- **Session Contracts:** Standardized agent execution lifecycles.
-- **Skill-Policy Registry:** Dynamic management of agent capabilities and operational rules.
-- **Canonical SQLite Store:** Robust, ACID-compliant state layer for leases, checkpoints, events, and task states.
-- **Session Orchestration:** High-level inspection, queue promotion, and task lifecycle management.
+- **Zod Plan Contracts** — Strongly typed schema validation for robust planning.
+- **Session Contracts** — Standardized agent execution lifecycles.
+- **Skill-Policy Registry** — Dynamic management of agent capabilities and operational rules.
+- **Canonical SQLite Store** — Robust, ACID-compliant state layer for leases, checkpoints, events, and task states.
+- **Session Orchestration** — High-level inspection, queue promotion, and task lifecycle management.
 
 ---
 
@@ -37,15 +63,15 @@
 
 ### 🗄️ Canonical SQLite State
 SQLite acts as the absolute source of truth for:
-- **Leases:** Task-scoped locks to prevent concurrent race conditions.
-- **Checkpoints:** Snapshot history of agent progress.
-- **Events:** Immutable transaction logs.
-- **Task State:** Workflow queues and resolutions.
+- **Leases** — Task-scoped locks to prevent concurrent race conditions.
+- **Checkpoints** — Snapshot history of agent progress.
+- **Events** — Immutable transaction logs.
+- **Task State** — Workflow queues and resolutions.
 
 ### 🧠 Optional Memory Derivation
 - Integrating `mem0-mcp` provides advanced semantic memory and context extraction.
-- **Lazy Loading:** Derived memory is loaded *only* when needed to conserve resources.
-- **Failsafe Operations:** If `mem0-mcp` is unavailable, the harness gracefully degrades without corrupting the canonical SQLite tasks.
+- **Lazy Loading** — Derived memory is loaded *only* when needed to conserve resources.
+- **Failsafe Operations** — If `mem0-mcp` is unavailable, the harness gracefully degrades without corrupting the canonical SQLite tasks.
 
 ### ⏱️ Reusable Scheduler Injector
 A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-daemon.ts`), supporting full 5-field cron expressions to safely trigger work without duplications.
@@ -56,8 +82,6 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-daemon.
 
 ### 1️⃣ Installation & Multi-Host Setup
 
-You can pull this into your own project or clone it to run the lifecycle endpoints.
-
 ```bash
 git clone https://github.com/giulio-leone/agent-harness-core.git
 cd agent-harness-core
@@ -65,23 +89,21 @@ npm install
 npm run build
 ```
 
-This harness is designed to work interactively with **any AI agent or IDE** (Copilot, Windsurf, Cursor, Gemini, etc.). You can register your environments dynamically:
+HarnessOS is designed to work interactively with **any AI agent or IDE** (Copilot, Windsurf, Cursor, Gemini, etc.). You can register your environments dynamically:
 
 ```bash
 # Interactively add/remove host workspaces (~/.gemini, ~/.cursor, etc.)
-npx agent-harness-setup
+npx harness-setup
 
-# Synchronize the latest harness skills securely to your registered hosts
-npx agent-harness-sync
+# Synchronize the latest harness skills to your registered hosts
+npx harness-sync
 ```
 
 ### 2️⃣ Environment Variables
 
-Configure your harness behavior by setting these standard variables:
-
 | Variable | Default Value | Description |
 |----------|---------------|-------------|
-| `MEM0_STORE_PATH` | `~/.copilot/mem0` | Path to Mem0 semantic storage |
+| `MEM0_STORE_PATH` | `~/.agent-harness/mem0` | Path to Mem0 semantic storage |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | URL to the Ollama embedding API |
 | `MEM0_EMBED_MODEL` | `qwen3-embedding:latest` | The model used for extracting memory |
 | `AGENT_HARNESS_DISABLE_DEFAULT_MEM0`| N/A | Set to `1` to disable lazy loaded mem0 entirely |
@@ -105,19 +127,19 @@ npm run build && npm run session:lifecycle:mcp
 
 ## 🧩 Architecture
 
-For an in-depth look at how the harness works, refer to the [Architecture Documentation](docs/architecture.md).
+For an in-depth look at how HarnessOS works, refer to the [Architecture Documentation](docs/architecture.md).
 
 The typical execution flow:
-1. `beginIncrementalSession()` - Claims a pending task.
-2. `beginRecoverySession()` - Resolves and overrides a stuck or failed task.
-3. `checkpoint()` - Writes immediate progress to SQLite.
-4. `close()` - Releases the lease and promotes task resolution.
+1. `beginIncrementalSession()` — Claims a pending task.
+2. `beginRecoverySession()` — Resolves and overrides a stuck or failed task.
+3. `checkpoint()` — Writes immediate progress to SQLite.
+4. `close()` — Releases the lease and promotes task resolution.
 
 ---
 
 ## 🤝 Contributing
 
-We welcome contributions to make the Agent Harness even better! Please read our [Contributing Guidelines](CONTRIBUTING.md) to get started with setting up the project and submitting pull requests.
+We welcome contributions to make HarnessOS even better! Please read our [Contributing Guidelines](CONTRIBUTING.md) to get started with setting up the project and submitting pull requests.
 
 ---
 
@@ -136,7 +158,7 @@ We welcome contributions to make the Agent Harness even better! Please read our 
 
 ## 📄 License
 
-This project is generously licensed under the **Business Source License 1.1 (BSL)**.
+This project is licensed under the **Business Source License 1.1 (BSL)**.
 
 You may use this software for **non-commercial** and **non-production** purposes (e.g., development, testing, research, and personal projects) **free of charge**.
 
