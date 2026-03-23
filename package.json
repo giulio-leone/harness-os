@@ -28,7 +28,7 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').copyFileSync('src/db/sqlite.schema.sql','dist/db/sqlite.schema.sql')\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/**/*.test.js",
+    "test": "npm run build && node --disable-warning=ExperimentalWarning --test 'dist/test/**/*.test.js' 'dist/test/*.test.js'",
     "init": "bash scripts/init.sh",
     "setup": "npx tsx src/bin/agent-harness-setup.ts",
     "sync": "npx tsx src/bin/agent-harness-sync.ts",
