@@ -40,4 +40,11 @@ export const defaultSkillPolicies: SkillFamilyPolicy[] = [
     preferredUpstream: 'manual',
     syncToGlobalHosts: false,
   },
+  {
+    family: 'harness_installation_and_sync',
+    scope: 'global_runtime',
+    preferredUpstream: 'workflow_instructions',
+    syncToGlobalHosts: true,
+    notes: 'Skills that teach LLMs how to auto-configure and sync the harness to their own environments.',
+  },
 ];
