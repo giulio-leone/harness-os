@@ -1,18 +1,19 @@
 import { readFile } from 'node:fs/promises';
 
-import { SqliteMem0Adapter } from 'mem0-mcp';
 import {
   formatSessionLifecycleError,
   SessionLifecycleAdapter,
 } from '../runtime/session-lifecycle-adapter.js';
+import { loadDefaultMem0Adapter } from '../runtime/default-mem0-loader.js';
 import { SessionOrchestrator } from '../runtime/session-orchestrator.js';
 
 async function main(): Promise<void> {
   const rawPayload = await readCommandPayload(process.argv.slice(2));
   const payload = JSON.parse(rawPayload) as unknown;
+  const mem0Adapter = await loadDefaultMem0Adapter();
   const adapter = new SessionLifecycleAdapter(
     new SessionOrchestrator({
-      mem0Adapter: SqliteMem0Adapter.fromEnv(),
+      mem0Adapter,
     }),
   );
   const result = await adapter.execute(payload);

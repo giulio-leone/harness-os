@@ -1,58 +1,181 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
-import { selectAll, selectOne } from '../db/store.js';
+import {
+  closeActiveSession,
+  insertActiveSession,
+  loadActiveSession,
+  updateActiveSessionContext,
+} from '../db/active-session-store.js';
+import {
+  openHarnessDatabase,
+  runInTransaction,
+  selectAll,
+  selectOne,
+} from '../db/store.js';
 
-// ─── Session Token Store ────────────────────────────────────────────
+interface IdRow {
+  id: string;
+  name?: string;
+  workspace_id?: string;
+}
 
-/**
- * In-memory store that maps short session tokens to full SessionContext objects.
- * Eliminates the need for LLMs to pass back ~500-token context objects on every
- * checkpoint/close call. The token is ephemeral (lives for the lifetime of the
- * MCP server process), which is fine since MCP servers are tied to a single agent session.
- */
 export class SessionTokenStore {
   private readonly sessions = new Map<
     string,
-    { context: Record<string, unknown>; beginInput: Record<string, unknown> }
+    {
+      dbPath: string;
+      context: Record<string, unknown>;
+      beginInput: Record<string, unknown>;
+    }
   >();
 
-  /** Store a context with its original parameters and return a short token. */
-  store(context: Record<string, unknown>, beginInput: Record<string, unknown>): string {
+  store(
+    context: Record<string, unknown>,
+    beginInput: Record<string, unknown>,
+  ): string {
+    const dbPath = resolveSessionDbPath(context, beginInput);
     const token = `ST-${randomUUID().slice(0, 12)}`;
-    this.sessions.set(token, { context, beginInput });
+    const now = new Date().toISOString();
+    const database = openHarnessDatabase({ dbPath });
+
+    try {
+      runInTransaction(database.connection, () => {
+        insertActiveSession(database.connection, {
+          token,
+          runId: extractStringField(context, 'runId'),
+          workspaceId: extractStringField(context, 'workspaceId'),
+          projectId: extractStringField(context, 'projectId'),
+          campaignId: extractOptionalStringField(context, 'campaignId'),
+          issueId: extractStringField(context, 'issueId'),
+          leaseId: extractStringField(context, 'leaseId'),
+          contextJson: JSON.stringify(context),
+          beginInputJson: JSON.stringify(beginInput),
+          createdAt: now,
+        });
+      });
+    } finally {
+      database.close();
+    }
+
+    this.sessions.set(token, { dbPath, context, beginInput });
     return token;
   }
 
-  /** Retrieve session data by token. Throws AgenticToolError if not found. */
-  resolve(token: string): { context: Record<string, unknown>; beginInput: Record<string, unknown> } {
-    const session = this.sessions.get(token);
-    if (!session) {
-      throw new AgenticToolError(
-        `Session token "${token}" not found or expired.`,
-        'The token may have expired because the MCP server restarted. Call begin_incremental_session to start a new session.',
-        'begin_incremental_session',
-      );
+  resolve(
+    token: string,
+    dbPathInput?: string,
+  ): { context: Record<string, unknown>; beginInput: Record<string, unknown> } {
+    const cached = this.sessions.get(token);
+
+    if (cached) {
+      return {
+        context: cached.context,
+        beginInput: cached.beginInput,
+      };
     }
-    return session;
+
+    const dbPath = resolveDbPath(dbPathInput);
+    const database = openHarnessDatabase({ dbPath });
+
+    try {
+      const record = loadActiveSession(database.connection, token);
+
+      if (record === null) {
+        throw new AgenticToolError(
+          `Session token "${token}" not found or expired.`,
+          'The token may have expired because the MCP server restarted. Retry the call with dbPath set (or HARNESS_DB_PATH exported), or start a new session with harness_session(action: "begin").',
+          'harness_session',
+        );
+      }
+
+      const session = {
+        dbPath,
+        context: JSON.parse(record.contextJson) as Record<string, unknown>,
+        beginInput: JSON.parse(record.beginInputJson) as Record<string, unknown>,
+      };
+
+      this.sessions.set(token, session);
+      return {
+        context: session.context,
+        beginInput: session.beginInput,
+      };
+    } finally {
+      database.close();
+    }
   }
 
-  /** Update stored context (e.g., after checkpoint updates checkpointId/taskStatus). */
-  updateContext(token: string, patch: Record<string, unknown>): void {
-    const session = this.resolve(token);
+  updateContext(
+    token: string,
+    patch: Record<string, unknown>,
+    dbPathInput?: string,
+  ): void {
+    const cached = this.resolveWithDbPath(token, dbPathInput);
+    const nextContext = {
+      ...cached.context,
+      ...patch,
+    };
+    const updatedAt = new Date().toISOString();
+    const database = openHarnessDatabase({ dbPath: cached.dbPath });
+
+    try {
+      runInTransaction(database.connection, () => {
+        updateActiveSessionContext(
+          database.connection,
+          token,
+          JSON.stringify(nextContext),
+          updatedAt,
+        );
+      });
+    } finally {
+      database.close();
+    }
+
     this.sessions.set(token, {
-      ...session,
-      context: { ...session.context, ...patch },
+      ...cached,
+      context: nextContext,
     });
   }
 
-  /** Remove a session token (e.g., after close). */
-  remove(token: string): void {
+  remove(token: string, dbPathInput?: string): void {
+    const cached = this.resolveWithDbPath(token, dbPathInput);
+    const closedAt = new Date().toISOString();
+    const database = openHarnessDatabase({ dbPath: cached.dbPath });
+
+    try {
+      runInTransaction(database.connection, () => {
+        closeActiveSession(database.connection, token, closedAt);
+      });
+    } finally {
+      database.close();
+    }
+
     this.sessions.delete(token);
   }
-}
 
-// ─── dbPath resolution ───────────────────────────────────────────────
+  private resolveWithDbPath(
+    token: string,
+    dbPathInput?: string,
+  ): {
+    dbPath: string;
+    context: Record<string, unknown>;
+    beginInput: Record<string, unknown>;
+  } {
+    const cached = this.sessions.get(token);
+
+    if (cached) {
+      return cached;
+    }
+
+    const dbPath = resolveDbPath(dbPathInput);
+    const resolved = this.resolve(token, dbPath);
+    return {
+      dbPath,
+      context: resolved.context,
+      beginInput: resolved.beginInput,
+    };
+  }
+}
 
 export function resolveDbPath(input?: string): string {
   const resolved = input ?? process.env['HARNESS_DB_PATH'];
@@ -67,15 +190,70 @@ export function resolveDbPath(input?: string): string {
   return resolved;
 }
 
-// ─── Name-to-ID resolution ──────────────────────────────────────────
+export function resolveWorkspaceId(
+  connection: DatabaseSync,
+  input: { workspaceId?: string; workspaceName?: string },
+): string {
+  if (input.workspaceId) {
+    return input.workspaceId;
+  }
 
-interface IdRow {
-  id: string;
+  if (input.workspaceName) {
+    const rows = selectAll<IdRow>(
+      connection,
+      `SELECT id, name
+       FROM workspaces
+       WHERE name = ?
+       ORDER BY created_at DESC`,
+      [input.workspaceName],
+    );
+
+    if (rows.length === 0) {
+      throw new AgenticToolError(
+        `No workspace found with name "${input.workspaceName}".`,
+        buildWorkspaceResolutionHelp(connection),
+        'harness_orchestrator',
+      );
+    }
+
+    if (rows.length > 1) {
+      throw new AgenticToolError(
+        `Workspace name "${input.workspaceName}" is ambiguous.`,
+        `Pass workspaceId explicitly. Matching workspaces: ${rows.map((row) => `"${row.name}" (${row.id})`).join(', ')}.`,
+        'harness_orchestrator',
+      );
+    }
+
+    return rows[0].id;
+  }
+
+  const workspaces = selectAll<IdRow>(
+    connection,
+    `SELECT id, name FROM workspaces ORDER BY created_at DESC`,
+  );
+
+  if (workspaces.length === 0) {
+    throw new AgenticToolError(
+      'No workspace found. Cannot resolve workspaceId.',
+      'Call harness_init_workspace first to create a workspace.',
+      'harness_init_workspace',
+    );
+  }
+
+  if (workspaces.length > 1) {
+    throw new AgenticToolError(
+      'workspaceId is required because multiple workspaces exist.',
+      `Pass workspaceId explicitly. Available workspaces: ${workspaces.map((workspace) => `"${workspace.name}" (${workspace.id})`).join(', ')}.`,
+      'harness_orchestrator',
+    );
+  }
+
+  return workspaces[0].id;
 }
 
 export function resolveProjectId(
   connection: DatabaseSync,
-  input: { projectId?: string; projectName?: string },
+  input: { projectId?: string; projectName?: string; workspaceId?: string },
 ): string {
   if (input.projectId) return input.projectId;
 
@@ -86,28 +264,37 @@ export function resolveProjectId(
     );
   }
 
-  const row = selectOne<IdRow>(
+  const rows = selectAll<IdRow>(
     connection,
-    `SELECT id FROM projects WHERE name = ? LIMIT 1`,
-    [input.projectName],
+    `SELECT id, name, workspace_id
+     FROM projects
+     WHERE name = ?
+       AND (? IS NULL OR workspace_id = ?)
+     ORDER BY created_at DESC`,
+    [
+      input.projectName,
+      input.workspaceId ?? null,
+      input.workspaceId ?? null,
+    ],
   );
 
-  if (row === null) {
-    const allProjects = selectAll<{ id: string; name: string }>(
-      connection,
-      `SELECT id, name FROM projects ORDER BY name`,
-    );
-
+  if (rows.length === 0) {
     throw new AgenticToolError(
       `No project found with name "${input.projectName}".`,
-      allProjects.length > 0
-        ? `Available projects: ${allProjects.map((p) => `"${p.name}" (${p.id})`).join(', ')}. Use one of these names or IDs.`
-        : 'No projects exist yet. Call harness_create_campaign first to create a project.',
+      buildProjectResolutionHelp(connection, input.workspaceId),
       'harness_create_campaign',
     );
   }
 
-  return row.id;
+  if (rows.length > 1) {
+    throw new AgenticToolError(
+      `Project name "${input.projectName}" is ambiguous.`,
+      `Pass projectId explicitly${input.workspaceId ? '' : ' or provide workspaceId to narrow the search'}. Matching projects: ${rows.map((row) => `"${row.name}" (${row.id})`).join(', ')}.`,
+      'harness_inspector',
+    );
+  }
+
+  return rows[0].id;
 }
 
 export function resolveCampaignId(
@@ -124,32 +311,34 @@ export function resolveCampaignId(
     );
   }
 
-  const row = selectOne<IdRow>(
+  const rows = selectAll<IdRow>(
     connection,
-    `SELECT id FROM campaigns WHERE project_id = ? AND name = ? LIMIT 1`,
+    `SELECT id, name
+     FROM campaigns
+     WHERE project_id = ?
+       AND name = ?
+     ORDER BY created_at DESC`,
     [projectId, input.campaignName],
   );
 
-  if (row === null) {
-    const allCampaigns = selectAll<{ id: string; name: string }>(
-      connection,
-      `SELECT id, name FROM campaigns WHERE project_id = ? ORDER BY name`,
-      [projectId],
-    );
-
+  if (rows.length === 0) {
     throw new AgenticToolError(
       `No campaign found with name "${input.campaignName}" in project ${projectId}.`,
-      allCampaigns.length > 0
-        ? `Available campaigns: ${allCampaigns.map((c) => `"${c.name}" (${c.id})`).join(', ')}. Use one of these names or IDs.`
-        : 'No campaigns exist for this project. Call harness_create_campaign first.',
+      buildCampaignResolutionHelp(connection, projectId),
       'harness_create_campaign',
     );
   }
 
-  return row.id;
-}
+  if (rows.length > 1) {
+    throw new AgenticToolError(
+      `Campaign name "${input.campaignName}" is ambiguous in project ${projectId}.`,
+      `Pass campaignId explicitly. Matching campaigns: ${rows.map((row) => `"${row.name}" (${row.id})`).join(', ')}.`,
+      'harness_inspector',
+    );
+  }
 
-// ─── _meta orchestration hints ──────────────────────────────────────
+  return rows[0].id;
+}
 
 export interface AgenticMeta {
   nextTools: string[];
@@ -171,8 +360,6 @@ export function buildMeta(
   };
 }
 
-// ─── Instructional errors ───────────────────────────────────────────
-
 export class AgenticToolError extends Error {
   public readonly recovery: string;
   public readonly suggestedTool?: string;
@@ -191,4 +378,81 @@ export class AgenticToolError extends Error {
       ...(this.suggestedTool ? { suggestedTool: this.suggestedTool } : {}),
     };
   }
+}
+
+function resolveSessionDbPath(
+  context: Record<string, unknown>,
+  beginInput: Record<string, unknown>,
+): string {
+  const contextPath = extractOptionalStringField(context, 'dbPath');
+  const beginPath = extractOptionalStringField(beginInput, 'dbPath');
+  return resolveDbPath(contextPath ?? beginPath);
+}
+
+function extractStringField(
+  source: Record<string, unknown>,
+  key: string,
+): string {
+  const value = source[key];
+
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Missing required string field "${key}" in active session payload.`);
+  }
+
+  return value;
+}
+
+function extractOptionalStringField(
+  source: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = source[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function buildWorkspaceResolutionHelp(connection: DatabaseSync): string {
+  const rows = selectAll<IdRow>(
+    connection,
+    `SELECT id, name FROM workspaces ORDER BY created_at DESC`,
+  );
+
+  return rows.length > 0
+    ? `Available workspaces: ${rows.map((row) => `"${row.name}" (${row.id})`).join(', ')}.`
+    : 'No workspaces exist yet. Call harness_init_workspace first.';
+}
+
+function buildProjectResolutionHelp(
+  connection: DatabaseSync,
+  workspaceId?: string,
+): string {
+  const rows = selectAll<IdRow>(
+    connection,
+    `SELECT id, name
+     FROM projects
+     WHERE (? IS NULL OR workspace_id = ?)
+     ORDER BY created_at DESC`,
+    [workspaceId ?? null, workspaceId ?? null],
+  );
+
+  return rows.length > 0
+    ? `Available projects: ${rows.map((row) => `"${row.name}" (${row.id})`).join(', ')}.`
+    : 'No projects exist yet. Call harness_create_campaign first to create a project.';
+}
+
+function buildCampaignResolutionHelp(
+  connection: DatabaseSync,
+  projectId: string,
+): string {
+  const rows = selectAll<IdRow>(
+    connection,
+    `SELECT id, name
+     FROM campaigns
+     WHERE project_id = ?
+     ORDER BY created_at DESC`,
+    [projectId],
+  );
+
+  return rows.length > 0
+    ? `Available campaigns: ${rows.map((row) => `"${row.name}" (${row.id})`).join(', ')}.`
+    : 'No campaigns exist for this project. Call harness_create_campaign first.';
 }

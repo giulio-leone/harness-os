@@ -303,33 +303,16 @@ export function claimSpecificIssueLease(
   ).toISOString();
   const leaseId = randomUUID();
 
-  runStatement(
-    connection,
-    `INSERT INTO leases (
-       id,
-       workspace_id,
-       project_id,
-       campaign_id,
-       issue_id,
-       agent_id,
-       status,
-       acquired_at,
-       expires_at,
-       released_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      leaseId,
-      input.workspaceId,
-      input.projectId,
-      input.campaignId ?? issue.campaignId ?? null,
-      input.issueId,
-      input.agentId,
-      'active',
-      acquiredAt,
-      expiresAt,
-      null,
-    ],
-  );
+  insertActiveLease(connection, {
+    leaseId,
+    workspaceId: input.workspaceId,
+    projectId: input.projectId,
+    campaignId: input.campaignId ?? issue.campaignId,
+    issueId: input.issueId,
+    agentId: input.agentId,
+    acquiredAt,
+    expiresAt,
+  });
 
   return {
     id: leaseId,
@@ -379,7 +362,12 @@ export function claimOrResumeLease(
 
   const resumableLease =
     input.preferredIssueId !== undefined
-      ? findActiveLeaseForIssue(connection, input.preferredIssueId, now)
+      ? findActiveLeaseForIssue(
+          connection,
+          input.preferredIssueId,
+          now,
+          input.agentId,
+        )
       : findActiveLeaseForAgent(connection, input.projectId, input.agentId, now);
 
   if (resumableLease !== null) {
@@ -404,43 +392,22 @@ export function claimOrResumeLease(
       ? loadClaimableIssue(connection, input.preferredIssueId)
       : selectNextReadyIssue(connection, input.projectId, input.campaignId);
 
-  if (findAnyActiveLeaseForIssue(connection, issue.id) !== null) {
-    throw new Error(`Issue ${issue.id} already has an active lease`);
-  }
-
   const acquiredAt = now;
   const expiresAt = new Date(
     Date.parse(acquiredAt) + input.leaseTtlSeconds * 1000,
   ).toISOString();
   const leaseId = randomUUID();
 
-  runStatement(
-    connection,
-    `INSERT INTO leases (
-       id,
-       workspace_id,
-       project_id,
-       campaign_id,
-       issue_id,
-       agent_id,
-       status,
-       acquired_at,
-       expires_at,
-       released_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      leaseId,
-      input.workspaceId,
-      input.projectId,
-      input.campaignId ?? issue.campaignId ?? null,
-      issue.id,
-      input.agentId,
-      'active',
-      acquiredAt,
-      expiresAt,
-      null,
-    ],
-  );
+  insertActiveLease(connection, {
+    leaseId,
+    workspaceId: input.workspaceId,
+    projectId: input.projectId,
+    campaignId: input.campaignId ?? issue.campaignId,
+    issueId: issue.id,
+    agentId: input.agentId,
+    acquiredAt,
+    expiresAt,
+  });
 
   return {
     issue,
@@ -677,6 +644,7 @@ function findActiveLeaseForIssue(
   connection: DatabaseSync,
   issueId: string,
   now: string,
+  agentId?: string,
 ): LeaseRecord | null {
   const row = selectOne<RawLeaseRow>(
     connection,
@@ -691,43 +659,15 @@ function findActiveLeaseForIssue(
        acquired_at,
        expires_at,
        released_at
-     FROM leases
-     WHERE issue_id = ?
-       AND status = 'active'
-       AND released_at IS NULL
-       AND expires_at > ?
-     ORDER BY acquired_at DESC
-     LIMIT 1`,
-    [issueId, now],
-  );
-
-  return row === null ? null : mapLeaseRow(row);
-}
-
-function findAnyActiveLeaseForIssue(
-  connection: DatabaseSync,
-  issueId: string,
-): LeaseRecord | null {
-  const row = selectOne<RawLeaseRow>(
-    connection,
-    `SELECT
-       id,
-       workspace_id,
-       project_id,
-       campaign_id,
-       issue_id,
-       agent_id,
-       status,
-       acquired_at,
-       expires_at,
-       released_at
-     FROM leases
-     WHERE issue_id = ?
-       AND status = 'active'
-       AND released_at IS NULL
-     ORDER BY acquired_at DESC
-     LIMIT 1`,
-    [issueId],
+      FROM leases
+      WHERE issue_id = ?
+        AND (? IS NULL OR agent_id = ?)
+        AND status = 'active'
+        AND released_at IS NULL
+        AND expires_at > ?
+      ORDER BY acquired_at DESC
+      LIMIT 1`,
+    [issueId, agentId ?? null, agentId ?? null, now],
   );
 
   return row === null ? null : mapLeaseRow(row);
@@ -845,4 +785,69 @@ function upsertBlocker(
   if (!blockers.has(blocker.issueId)) {
     blockers.set(blocker.issueId, blocker);
   }
+}
+
+function insertActiveLease(
+  connection: DatabaseSync,
+  input: {
+    leaseId: string;
+    workspaceId: string;
+    projectId: string;
+    campaignId?: string;
+    issueId: string;
+    agentId: string;
+    acquiredAt: string;
+    expiresAt: string;
+  },
+): void {
+  try {
+    runStatement(
+      connection,
+      `INSERT INTO leases (
+         id,
+         workspace_id,
+         project_id,
+         campaign_id,
+         issue_id,
+         agent_id,
+         status,
+         acquired_at,
+         expires_at,
+         released_at
+       ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)`,
+      [
+        input.leaseId,
+        input.workspaceId,
+        input.projectId,
+        input.campaignId ?? null,
+        input.issueId,
+        input.agentId,
+        input.acquiredAt,
+        input.expiresAt,
+      ],
+    );
+  } catch (error) {
+    if (isActiveLeaseConstraintError(error)) {
+      throw new Error(`Issue ${input.issueId} already has an active lease`);
+    }
+
+    throw error;
+  }
+}
+
+function isActiveLeaseConstraintError(error: unknown): boolean {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error['code'] === 'SQLITE_CONSTRAINT_UNIQUE'
+  ) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes('idx_leases_unique_active_issue') ||
+    message.includes('UNIQUE constraint failed: leases.issue_id')
+  );
 }

@@ -3,7 +3,7 @@ import type {
   MemoryKind,
   MemoryScope,
   PublicMemoryRecord,
-} from 'mem0-mcp';
+} from '../contracts/memory-contracts.js';
 import type { SessionMemoryContext } from '../contracts/session-contracts.js';
 
 export interface LoadMem0ContextInput {

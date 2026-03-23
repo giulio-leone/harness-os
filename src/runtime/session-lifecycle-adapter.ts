@@ -1,15 +1,33 @@
 import { z } from 'zod';
 
+import type {
+  IncrementalSessionInput,
+  SessionCloseInput,
+  SessionContext,
+} from '../contracts/session-contracts.js';
 import { resolveDbPath } from './harness-agentic-helpers.js';
 import { sessionLifecycleCommandSchema, type SessionLifecycleCommand } from './session-lifecycle-cli.schemas.js';
 import { SessionLifecycleInspector } from './session-lifecycle-inspector.js';
 import { SessionOrchestrator } from './session-orchestrator.js';
+import type { SessionAdvanceResult } from './session-orchestrator.js';
 
 export class SessionLifecycleAdapter {
   constructor(
     private readonly orchestrator: SessionOrchestrator,
     private readonly inspector = new SessionLifecycleInspector(),
   ) {}
+
+  async advanceSession(
+    context: SessionContext,
+    closeInput: SessionCloseInput,
+    nextInput: IncrementalSessionInput,
+  ): Promise<SessionAdvanceResult> {
+    return this.orchestrator.advanceSession(
+      { ...context, dbPath: resolveDbPath(context.dbPath) },
+      closeInput,
+      { ...nextInput, dbPath: resolveDbPath(nextInput.dbPath) },
+    );
+  }
 
   async execute(rawCommand: unknown): Promise<Record<string, unknown>> {
     const command = sessionLifecycleCommandSchema.parse(rawCommand);

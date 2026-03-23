@@ -18,7 +18,7 @@ import type {
   MemorySearchResult,
   MemoryStoreInput,
   PublicMemoryRecord,
-} from 'mem0-mcp';
+} from '../contracts/memory-contracts.js';
 import {
   SessionLifecycleAdapter,
   SessionLifecycleMcpServer,
@@ -99,19 +99,53 @@ function createTempDir(prefix: string): string {
 }
 
 function seedProject(dbPath: string): void {
+  seedWorkspaceAndProject(dbPath, {
+    workspaceId: 'ws-1',
+    workspaceName: 'Test Workspace',
+    projectId: 'proj-1',
+    projectKey: 'test-project',
+    projectName: 'Test Project',
+  });
+}
+
+function seedWorkspaceAndProject(
+  dbPath: string,
+  input: {
+    workspaceId: string;
+    workspaceName: string;
+    projectId: string;
+    projectKey: string;
+    projectName: string;
+  },
+): void {
   const db = openHarnessDatabase({ dbPath });
   try {
     runStatement(
       db.connection,
       `INSERT INTO workspaces (id, name, kind, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?)`,
-      ['ws-1', 'Test Workspace', 'global', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'],
+      [
+        input.workspaceId,
+        input.workspaceName,
+        'global',
+        '2026-01-01T00:00:00Z',
+        '2026-01-01T00:00:00Z',
+      ],
     );
     runStatement(
       db.connection,
       `INSERT INTO projects (id, workspace_id, key, name, domain, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['proj-1', 'ws-1', 'test-project', 'Test Project', 'test', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'],
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.projectId,
+        input.workspaceId,
+        input.projectKey,
+        input.projectName,
+        'test',
+        'active',
+        '2026-01-01T00:00:00Z',
+        '2026-01-01T00:00:00Z',
+      ],
     );
   } finally {
     db.close();
@@ -191,6 +225,40 @@ test('harness_inspector: get_context returns init_workspace hint when no workspa
   }
 });
 
+test('harness_inspector: get_context asks for explicit workspace when multiple workspaces exist', async () => {
+  const tempDir = createTempDir('inspector-ctx-ambiguous-workspace-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedWorkspaceAndProject(dbPath, {
+      workspaceId: 'ws-1',
+      workspaceName: 'Workspace One',
+      projectId: 'proj-1',
+      projectKey: 'project-one',
+      projectName: 'Project One',
+    });
+    seedWorkspaceAndProject(dbPath, {
+      workspaceId: 'ws-2',
+      workspaceName: 'Workspace Two',
+      projectId: 'proj-2',
+      projectKey: 'project-two',
+      projectName: 'Project Two',
+    });
+
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_inspector')!;
+    const result = (await tool.handler({
+      action: 'get_context',
+      dbPath,
+    })) as Record<string, unknown>;
+
+    assert.equal(result.action, 'clarify_scope');
+    const meta = result._meta as { nextTools: string[] };
+    assert.ok(meta.nextTools.includes('harness_inspector'));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('harness_inspector: next_action returns correct NBA directive', async () => {
   const tempDir = createTempDir('inspector-nba-');
   const dbPath = join(tempDir, 'harness.sqlite');
@@ -224,6 +292,64 @@ test('harness_inspector: next_action returns idle when queue is empty', async ()
     const result = (await tool.handler({ action: 'next_action', dbPath })) as Record<string, unknown>;
 
     assert.equal(result.action, 'idle');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_inspector: next_action asks for explicit project when scope is ambiguous', async () => {
+  const tempDir = createTempDir('inspector-nba-ambiguous-project-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedWorkspaceAndProject(dbPath, {
+      workspaceId: 'ws-1',
+      workspaceName: 'Workspace One',
+      projectId: 'proj-1',
+      projectKey: 'shared-project-1',
+      projectName: 'Shared Project',
+    });
+    seedWorkspaceAndProject(dbPath, {
+      workspaceId: 'ws-2',
+      workspaceName: 'Workspace Two',
+      projectId: 'proj-2',
+      projectKey: 'shared-project-2',
+      projectName: 'Shared Project',
+    });
+    seedIssue(dbPath, 'issue-one', 'ready');
+
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      runStatement(
+        db.connection,
+        `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          'issue-two',
+          'proj-2',
+          null,
+          null,
+          'Task for issue-two',
+          'high',
+          'ready',
+          'M',
+          '[]',
+          'Do the other work.',
+        ],
+      );
+    } finally {
+      db.close();
+    }
+
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_inspector')!;
+    const result = (await tool.handler({
+      action: 'next_action',
+      dbPath,
+      projectName: 'Shared Project',
+    })) as Record<string, unknown>;
+
+    assert.equal(result.action, 'clarify_scope');
+    assert.match(String(result.message ?? ''), /projectId/i);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

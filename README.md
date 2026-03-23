@@ -9,26 +9,30 @@ This repository now focuses on the harness core itself:
 - SQLite schema and state-layer placeholders
 - session orchestration and inspection
 
-The extracted source-of-truth repositories now live alongside this repo:
+The package is designed to work outside this repository:
 
-- `../mcp-hot-reload` for adaptive JSON-RPC stdio transport plus generic MCP hot reload
-- `../mem0-mcp` for the dedicated `mem0` MCP server, file-backed adapter, schemas, and Ollama embeddings
-
-`agent-harness-core` consumes those packages as local dependencies instead of keeping duplicate implementations.
+- SQLite is the canonical store for leases, checkpoints, events, and task state
+- `mem0-mcp` is an optional peer dependency and is lazy-loaded only when a command actually needs derived memory
+- if `mem0-mcp` is absent or disabled, the CLI and MCP surfaces continue in a "derived memory unavailable" mode without corrupting canonical state
+- automatic legacy schema upgrades were removed from the runtime; old databases must be upgraded explicitly with the repo-native `harness-schema-migration` skill
 
 ### Environment
 
-When the session lifecycle CLI/MCP surfaces are configured with `mem0`, they still honor:
+When the session lifecycle CLI/MCP surfaces are configured with `mem0`, they honor:
 
 - `MEM0_STORE_PATH` (default: `~/.copilot/mem0`)
 - `OLLAMA_BASE_URL` (default: `http://127.0.0.1:11434`)
 - `MEM0_EMBED_MODEL` (default: `qwen3-embedding:latest`)
+- `AGENT_HARNESS_DISABLE_DEFAULT_MEM0=1` to force the runtime to skip lazy `mem0-mcp` loading entirely
 
 ### Commands
 
 - `npm run build && npm run scheduler:daemon`
 - `npm run build && npm run session:lifecycle`
 - `npm run build && npm run session:lifecycle:mcp`
+- installed package bins:
+  - `agent-harness-session-lifecycle`
+  - `agent-harness-session-lifecycle-mcp`
 
 ### Session lifecycle MCP planning tools
 
@@ -66,9 +70,9 @@ What the first bridge does:
 - provides an explicit `beginRecoverySession()` path that replaces stale leases with a fresh recovery lease
 - writes canonical checkpoints into SQLite plus structured checkpoint payload events
 - promotes eligible `pending` issues to `ready` when dependency chains are satisfied
-- reads mem0 context on begin or recovery at task scope
-- writes derived mem0 summaries only on significant checkpoints or close
-- links stored mem0 records back to SQLite through `memory_links`
+- reads `mem0` context on begin or recovery when an adapter is available
+- writes derived `mem0` summaries only after canonical SQLite commits succeed
+- links stored `mem0` records back to SQLite through `memory_links`
 
 The public runtime flow is:
 1. `beginIncrementalSession()`
@@ -81,6 +85,7 @@ The public runtime flow is:
 The same lifecycle core is now exposed through:
 - `SessionLifecycleAdapter` for in-process host integration
 - `src/bin/session-lifecycle.ts` for JSON-driven CLI execution
+- `src/bin/session-lifecycle-mcp.ts` for the MCP server surface
 
 The CLI accepts a JSON command on stdin (or via `--input <path>`) with one of these actions:
 - `begin_incremental`
@@ -110,10 +115,11 @@ Example usage:
 - `npm run build && npm run session:lifecycle < examples/session-lifecycle/inspect-overview.json`
 - `npm run build && npm run session:lifecycle < examples/session-lifecycle/promote-queue.json`
 - `npm run build && npm run session:lifecycle:mcp`
+- `AGENT_HARNESS_DISABLE_DEFAULT_MEM0=1 npm run build && npm run session:lifecycle < examples/session-lifecycle/inspect-overview.json`
 
 The intended boundary stays unchanged:
 - SQLite is canonical for task, lease, checkpoint, and event state
-- mem0 remains derived support memory only
+- `mem0` remains derived support memory only
 - project skills should not write canonical state directly
 
 ## Repo-native skill sources
@@ -121,6 +127,7 @@ The intended boundary stays unchanged:
 This repository now also publishes repo-native skill sources under `.github/skills/`:
 - `session-lifecycle` for the verified operational lease/checkpoint/inspection/promotion protocol
 - `prompt-contract-bindings` for the reusable local-prompt/global-harness publication pattern
+- `harness-schema-migration` for one-shot upgrades of pre-v2 harness SQLite databases now that runtime backward compatibility has been removed
 
 There is no dedicated skill reload mechanism in this repository. Global availability comes from validating the files on disk and syncing the approved copies into `~/.copilot/skills` according to `~/.copilot/SYNC_MANIFEST.yaml`.
 

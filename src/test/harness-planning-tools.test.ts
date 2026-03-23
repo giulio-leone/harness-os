@@ -105,6 +105,35 @@ test('createHarnessCampaign isolates projects by workspace and is idempotent wit
   }
 });
 
+test('createHarnessCampaign requires workspaceId when multiple workspaces exist', () => {
+  const tempDir = createTempDir('harness-planning-ambiguous-workspace-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    initHarnessWorkspace({
+      dbPath,
+      workspaceName: 'Workspace One',
+    });
+    initHarnessWorkspace({
+      dbPath,
+      workspaceName: 'Workspace Two',
+    });
+
+    assert.throws(
+      () =>
+        createHarnessCampaign({
+          dbPath,
+          projectName: 'Shared Project',
+          campaignName: 'Campaign Ambiguous',
+          objective: 'Force explicit scope selection',
+        }),
+      /workspaceId is required/i,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('planHarnessIssues stores validated backward dependencies', () => {
   const tempDir = createTempDir('harness-plan-issues-');
   const dbPath = join(tempDir, 'harness.sqlite');
@@ -196,6 +225,57 @@ test('planHarnessIssues stores validated backward dependencies', () => {
           ],
         }),
       /can depend only on earlier issues/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('planHarnessIssues rejects ambiguous projectName across workspaces without workspaceId', () => {
+  const tempDir = createTempDir('harness-plan-ambiguous-project-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const workspaceOne = initHarnessWorkspace({
+      dbPath,
+      workspaceName: 'Workspace One',
+    }) as unknown as WorkspaceResult;
+    const workspaceTwo = initHarnessWorkspace({
+      dbPath,
+      workspaceName: 'Workspace Two',
+    }) as unknown as WorkspaceResult;
+
+    const firstCampaign = createHarnessCampaign({
+      dbPath,
+      workspaceId: workspaceOne.workspaceId,
+      projectName: 'Shared Project',
+      campaignName: 'Campaign One',
+      objective: 'Plan queue one',
+    }) as unknown as CampaignResult;
+    createHarnessCampaign({
+      dbPath,
+      workspaceId: workspaceTwo.workspaceId,
+      projectName: 'Shared Project',
+      campaignName: 'Campaign Two',
+      objective: 'Plan queue two',
+    });
+
+    assert.throws(
+      () =>
+        planHarnessIssues({
+          dbPath,
+          projectName: 'Shared Project',
+          campaignId: firstCampaign.campaignId,
+          milestoneDescription: 'Ambiguous project resolution',
+          issues: [
+            {
+              task: 'Do the work',
+              priority: 'high',
+              size: 'S',
+            },
+          ],
+        }),
+      /workspaceId is required|matches multiple projects|is ambiguous/i,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

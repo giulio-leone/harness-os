@@ -16,6 +16,7 @@ import {
   resolveCampaignId,
   resolveDbPath,
   resolveProjectId,
+  resolveWorkspaceId,
 } from './harness-agentic-helpers.js';
 
 const issuePriorityOrder = ['critical', 'high', 'medium', 'low'] as const;
@@ -42,6 +43,7 @@ export const harnessCreateCampaignInputSchema = z
 export const harnessPlanIssuesInputSchema = z
   .object({
     dbPath: z.string().min(1).optional(),
+    workspaceId: z.string().min(1).optional(),
     projectId: z.string().min(1).optional(),
     projectName: z.string().min(1).optional(),
     campaignId: z.string().min(1).optional(),
@@ -92,10 +94,6 @@ interface RollbackIssueRow {
   workspace_id: string;
 }
 
-interface WorkspaceRow {
-  id: string;
-}
-
 // ─── Tool Implementations ───────────────────────────────────────────
 
 export function initHarnessWorkspace(
@@ -144,23 +142,9 @@ export function createHarnessCampaign(
   try {
     const result = runInTransaction(database.connection, () => {
       const now = new Date().toISOString();
-
-      // Auto-resolve workspaceId if not provided
-      let workspaceId = input.workspaceId;
-      if (!workspaceId) {
-        const ws = selectOne<WorkspaceRow>(
-          database.connection,
-          `SELECT id FROM workspaces LIMIT 1`,
-        );
-        if (ws === null) {
-          throw new AgenticToolError(
-            'No workspace found. Cannot auto-resolve workspaceId.',
-            'Call harness_init_workspace first to create a workspace.',
-            'harness_init_workspace',
-          );
-        }
-        workspaceId = ws.id;
-      }
+      const workspaceId = resolveWorkspaceId(database.connection, {
+        workspaceId: input.workspaceId,
+      });
 
       let project = selectOne<ProjectRow>(
         database.connection,
@@ -251,6 +235,7 @@ export function planHarnessIssues(
     const projectId = resolveProjectId(database.connection, {
       projectId: input.projectId,
       projectName: input.projectName,
+      workspaceId: input.workspaceId,
     });
     const campaignId = resolveCampaignId(database.connection, projectId, {
       campaignId: input.campaignId,

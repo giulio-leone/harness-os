@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import type {
@@ -13,7 +14,7 @@ import type {
   MemorySearchResult,
   MemoryStoreInput,
   PublicMemoryRecord,
-} from 'mem0-mcp';
+} from '../contracts/memory-contracts.js';
 import {
   SessionLifecycleAdapter,
   SessionLifecycleMcpServer,
@@ -77,6 +78,12 @@ class InMemoryMem0Adapter implements Mem0Adapter {
   async deleteMemory(): Promise<void> {}
   async listWorkspaces(): Promise<string[]> { return []; }
   async listProjects(): Promise<string[]> { return []; }
+}
+
+class FailingStoreMem0Adapter extends InMemoryMem0Adapter {
+  override async storeMemory(_input: MemoryStoreInput): Promise<PublicMemoryRecord> {
+    throw new Error('simulated mem0 store failure');
+  }
 }
 
 test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', async () => {
@@ -253,6 +260,179 @@ test('reconciliation marks stale work as needs_recovery and blocks fresh claims'
         'checkpoint_payload',
         'reconciliation_blocked',
       ]);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('beginIncrementalSession rolls back canonical state when lease claim fails', async () => {
+  const tempDir = createTempDir('claim-rollback-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-rollback',
+      task: 'Verify transactional rollback on claim failure',
+      status: 'ready',
+      nextBestAction: 'Attempt a conflicting claim.',
+    });
+    seedRun(dbPath, 'run-existing', 'in_progress');
+    seedLease(dbPath, 'lease-existing', 'issue-rollback', 'active');
+    seedCheckpoint(
+      dbPath,
+      'checkpoint-existing',
+      'run-existing',
+      'issue-rollback',
+      'claim',
+      new Date().toISOString(),
+    );
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+
+    await assert.rejects(
+      () =>
+        orchestrator.beginIncrementalSession({
+          sessionId: 'run-candidate',
+          dbPath,
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          progressPath: '/tmp/progress.md',
+          featureListPath: '/tmp/features.json',
+          planPath: '/tmp/plan.md',
+          syncManifestPath: '/tmp/manifest.yaml',
+          mem0Enabled: false,
+          agentId: 'agent-candidate',
+          preferredIssueId: 'issue-rollback',
+        }),
+      /already has an active lease/i,
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const issue = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-rollback'],
+      );
+      const runs = selectAll<{ id: string }>(
+        inspected.connection,
+        'SELECT id FROM runs WHERE id = ?',
+        ['run-candidate'],
+      );
+      const activeLeases = selectAll<{ agent_id: string }>(
+        inspected.connection,
+        `SELECT agent_id
+         FROM leases
+         WHERE issue_id = ?
+           AND status = 'active'
+           AND released_at IS NULL`,
+        ['issue-rollback'],
+      );
+
+      assert.equal(issue?.status, 'ready');
+      assert.equal(runs.length, 0);
+      assert.deepEqual(activeLeases.map((lease) => lease.agent_id), ['agent-old']);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('checkpoint keeps canonical state valid when mem0 persistence fails', async () => {
+  const tempDir = createTempDir('mem0-derived-failure-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-mem0-failure',
+      task: 'Keep canonical state despite mem0 failure',
+      status: 'ready',
+      nextBestAction: 'Checkpoint with derived memory enabled.',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new FailingStoreMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+
+    const started = await orchestrator.beginIncrementalSession({
+      sessionId: 'run-mem0-failure',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      progressPath: '/tmp/progress.md',
+      featureListPath: '/tmp/features.json',
+      planPath: '/tmp/plan.md',
+      syncManifestPath: '/tmp/manifest.yaml',
+      mem0Enabled: true,
+      agentId: 'agent-mem0-failure',
+      preferredIssueId: 'issue-mem0-failure',
+    });
+    const checkpoint = await orchestrator.checkpoint(started, {
+      title: 'blocked',
+      summary: 'Persist canonical state even if mem0 storage fails.',
+      taskStatus: 'blocked',
+      nextStep: 'Retry after mem0 recovers.',
+      persistToMem0: true,
+      memoryKind: 'summary',
+      memoryContent: 'Derived memory payload',
+    });
+
+    assert.match(
+      checkpoint.mem0WriteSkippedReason ?? '',
+      /simulated mem0 store failure/i,
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const issue = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-mem0-failure'],
+      );
+      const latestCheckpoint = selectOne<{
+        task_status: string;
+        next_step: string;
+      }>(
+        inspected.connection,
+        `SELECT task_status, next_step
+         FROM checkpoints
+         WHERE issue_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        ['issue-mem0-failure'],
+      );
+      const skippedEvents = selectAll<{ kind: string }>(
+        inspected.connection,
+        `SELECT kind
+         FROM events
+         WHERE issue_id = ?
+           AND kind = 'mem0_write_skipped'`,
+        ['issue-mem0-failure'],
+      );
+      const memoryLinks = selectAll<{ id: string }>(
+        inspected.connection,
+        'SELECT id FROM memory_links WHERE issue_id = ?',
+        ['issue-mem0-failure'],
+      );
+
+      assert.equal(issue?.status, 'blocked');
+      assert.equal(latestCheckpoint?.task_status, 'blocked');
+      assert.equal(latestCheckpoint?.next_step, 'Retry after mem0 recovers.');
+      assert.equal(skippedEvents.length, 1);
+      assert.equal(memoryLinks.length, 0);
     } finally {
       inspected.close();
     }
@@ -528,6 +708,111 @@ test('advance_session closes cleanly when no next ready issue exists', async () 
   }
 });
 
+test('harness_session resolves persisted session tokens after restart', async () => {
+  const tempDir = createTempDir('token-restart-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-token',
+      task: 'Recover token after restart',
+      status: 'ready',
+      nextBestAction: 'Begin through one server and continue in another.',
+    });
+
+    const server1 = new SessionLifecycleMcpServer(
+      new SessionLifecycleAdapter(
+        new SessionOrchestrator({
+          mem0Adapter: new InMemoryMem0Adapter(),
+          defaultCheckpointFreshnessSeconds: 3600,
+        }),
+      ),
+    );
+    const tools1 = (server1 as unknown as {
+      tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
+    }).tools;
+    const beginTool = tools1.get('harness_session');
+
+    assert.ok(beginTool);
+
+    const started = (await beginTool.handler({
+      action: 'begin',
+      sessionId: 'run-token',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      progressPath: '/tmp/progress.md',
+      featureListPath: '/tmp/features.json',
+      planPath: '/tmp/plan.md',
+      syncManifestPath: '/tmp/manifest.yaml',
+      mem0Enabled: false,
+      agentId: 'agent-token',
+      preferredIssueId: 'issue-token',
+    })) as { sessionToken: string };
+
+    const server2 = new SessionLifecycleMcpServer(
+      new SessionLifecycleAdapter(
+        new SessionOrchestrator({
+          mem0Adapter: new InMemoryMem0Adapter(),
+          defaultCheckpointFreshnessSeconds: 3600,
+        }),
+      ),
+    );
+    const tools2 = (server2 as unknown as {
+      tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
+    }).tools;
+    const sessionTool = tools2.get('harness_session');
+
+    assert.ok(sessionTool);
+
+    const checkpointed = (await sessionTool.handler({
+      action: 'checkpoint',
+      dbPath,
+      sessionToken: started.sessionToken,
+      input: {
+        title: 'checkpoint',
+        summary: 'Resolved persisted token from SQLite.',
+        taskStatus: 'in_progress',
+        nextStep: 'Close from the restarted server.',
+      },
+    })) as { result: { context: { issueId: string } } };
+    const closed = (await sessionTool.handler({
+      action: 'close',
+      dbPath,
+      sessionToken: started.sessionToken,
+      closeInput: {
+        title: 'close',
+        summary: 'Closed after restart.',
+        taskStatus: 'done',
+        nextStep: 'Stop.',
+      },
+    })) as { result: { context: { issueId: string } } };
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const activeSession = selectOne<{
+        status: string;
+        closed_at: string | null;
+      }>(
+        inspected.connection,
+        'SELECT status, closed_at FROM active_sessions WHERE token = ?',
+        [started.sessionToken],
+      );
+
+      assert.equal(checkpointed.result.context.issueId, 'issue-token');
+      assert.equal(closed.result.context.issueId, 'issue-token');
+      assert.equal(activeSession?.status, 'closed');
+      assert.notEqual(activeSession?.closed_at, null);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('CLI supports lifecycle commands and read-only inspection commands', async () => {
   const tempDir = createTempDir('cli-surface-');
   const dbPath = join(tempDir, 'harness.sqlite');
@@ -700,6 +985,315 @@ test('CLI supports promote_queue for eligible pending issues', async () => {
   }
 });
 
+test('legacy schema snapshots require explicit migration and the skill upgrades them to schema v2', async () => {
+  const tempDir = createTempDir('legacy-migration-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  const legacy = new DatabaseSync(dbPath);
+
+  try {
+    legacy.exec(LEGACY_SCHEMA_V1);
+    legacy.exec(`
+      INSERT INTO workspaces (id, name, kind, created_at, updated_at)
+      VALUES ('workspace-legacy', 'Legacy Workspace', 'global', '2026-03-21T00:00:00.000Z', '2026-03-21T00:00:00.000Z');
+      INSERT INTO projects (id, workspace_id, key, name, domain, status, created_at, updated_at)
+      VALUES ('project-legacy', 'workspace-legacy', 'legacy-project', 'Legacy Project', 'test', 'active', '2026-03-21T00:00:00.000Z', '2026-03-21T00:00:00.000Z');
+      INSERT INTO campaigns (id, project_id, name, objective, created_at)
+      VALUES ('campaign-legacy', 'project-legacy', 'Legacy Campaign', 'Migrate the schema', '2026-03-21T00:00:00.000Z');
+      INSERT INTO runs (id, workspace_id, project_id, campaign_id, session_type, host, status, agent_id, started_at, notes)
+      VALUES ('run-legacy', 'workspace-legacy', 'project-legacy', 'campaign-legacy', 'incremental', 'host-legacy', 'in_progress', 'agent-legacy', '2026-03-21T00:00:00.000Z', '{}');
+      INSERT INTO milestones (id, project_id, description, priority, status, depends_on)
+      VALUES ('milestone-legacy', 'project-legacy', 'Legacy milestone', 'high', 'review', '[]');
+      INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, size, status, depends_on, next_best_action)
+      VALUES ('issue-legacy', 'project-legacy', 'campaign-legacy', 'milestone-legacy', 'Legacy issue', 'high', 'M', 'review', '[]', 'Inspect migrated checkpoint');
+      INSERT INTO checkpoints (id, run_id, issue_id, title, summary, created_at)
+      VALUES ('checkpoint-legacy', 'run-legacy', 'issue-legacy', 'Legacy checkpoint', 'Thin checkpoint row', '2026-03-21T00:05:00.000Z');
+      INSERT INTO events (id, run_id, issue_id, kind, payload, created_at)
+      VALUES (
+        'event-legacy',
+        'run-legacy',
+        'issue-legacy',
+        'checkpoint_payload',
+        '{"checkpointId":"checkpoint-legacy","taskStatus":"blocked","nextStep":"Inspect migrated checkpoint","artifactIds":["artifact-legacy"]}',
+        '2026-03-21T00:05:00.000Z'
+      );
+      INSERT INTO artifacts (id, issue_id, kind, path, created_at)
+      VALUES ('artifact-legacy', 'issue-legacy', 'screenshot', '/tmp/legacy-artifact.png', '2026-03-21T00:05:00.000Z');
+      INSERT INTO memory_links (id, issue_id, checkpoint_id, memory_kind, memory_id, scope_json, created_at)
+      VALUES (
+        'memory-link-legacy',
+        'issue-legacy',
+        'checkpoint-legacy',
+        'summary',
+        'memory-legacy',
+        '{"workspace":"workspace-legacy","project":"project-legacy","campaign":"campaign-legacy","task":"issue-legacy","run":"run-legacy"}',
+        '2026-03-21T00:05:00.000Z'
+      );
+      INSERT INTO sync_state (project_id, status, manifest_json, updated_at)
+      VALUES ('project-legacy', 'ok', '{"manifest":"legacy"}', '2026-03-21T00:06:00.000Z');
+    `);
+  } finally {
+    legacy.close();
+  }
+
+  assert.throws(
+    () => openHarnessDatabase({ dbPath }),
+    /harness-schema-migration/i,
+  );
+
+  const migrationResult = await runSchemaMigrationSkill(dbPath);
+  assert.equal(migrationResult.status, 'migrated');
+
+  const migrated = openHarnessDatabase({ dbPath });
+  try {
+    const version = migrated.connection
+      .prepare('PRAGMA user_version')
+      .get() as { user_version: number };
+    const campaign = selectOne<{
+      status: string;
+      scope_json: string;
+      updated_at: string;
+    }>(
+      migrated.connection,
+      `SELECT status, scope_json, updated_at
+       FROM campaigns
+       WHERE id = ?`,
+      ['campaign-legacy'],
+    );
+    const issue = selectOne<{ status: string }>(
+      migrated.connection,
+      'SELECT status FROM issues WHERE id = ?',
+      ['issue-legacy'],
+    );
+    const milestone = selectOne<{ status: string }>(
+      migrated.connection,
+      'SELECT status FROM milestones WHERE id = ?',
+      ['milestone-legacy'],
+    );
+    const checkpoint = selectOne<{
+      task_status: string;
+      next_step: string;
+      artifact_ids_json: string;
+    }>(
+      migrated.connection,
+      `SELECT task_status, next_step, artifact_ids_json
+       FROM checkpoints
+       WHERE id = ?`,
+      ['checkpoint-legacy'],
+    );
+    const artifact = selectOne<{
+      workspace_id: string;
+      project_id: string;
+      campaign_id: string | null;
+      metadata_json: string;
+    }>(
+      migrated.connection,
+      `SELECT workspace_id, project_id, campaign_id, metadata_json
+       FROM artifacts
+       WHERE id = ?`,
+      ['artifact-legacy'],
+    );
+    const memoryLink = selectOne<{
+      workspace_id: string;
+      project_id: string;
+      campaign_id: string | null;
+      memory_ref: string;
+      summary: string;
+    }>(
+      migrated.connection,
+      `SELECT workspace_id, project_id, campaign_id, memory_ref, summary
+       FROM memory_links
+       WHERE id = ?`,
+      ['memory-link-legacy'],
+    );
+    const syncState = selectOne<{
+      family: string;
+      last_runtime_sync_at: string | null;
+      status: string;
+      notes: string | null;
+    }>(
+      migrated.connection,
+      `SELECT family, last_runtime_sync_at, status, notes
+       FROM sync_state
+       WHERE family = ?`,
+      ['project:project-legacy'],
+    );
+    const activeSessionsTable = selectOne<{ name: string }>(
+      migrated.connection,
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'table'
+         AND name = 'active_sessions'`,
+    );
+    const uniqueLeaseIndex = selectOne<{ name: string }>(
+      migrated.connection,
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'index'
+         AND name = 'idx_leases_unique_active_issue'`,
+    );
+
+    assert.equal(version.user_version, 2);
+    assert.equal(campaign?.status, 'active');
+    assert.equal(campaign?.scope_json, '{}');
+    assert.equal(campaign?.updated_at, '2026-03-21T00:00:00.000Z');
+    assert.equal(issue?.status, 'ready');
+    assert.equal(milestone?.status, 'ready');
+    assert.equal(checkpoint?.task_status, 'blocked');
+    assert.equal(checkpoint?.next_step, 'Inspect migrated checkpoint');
+    assert.equal(checkpoint?.artifact_ids_json, '["artifact-legacy"]');
+    assert.equal(artifact?.workspace_id, 'workspace-legacy');
+    assert.equal(artifact?.project_id, 'project-legacy');
+    assert.equal(artifact?.campaign_id, 'campaign-legacy');
+    assert.equal(artifact?.metadata_json, '{}');
+    assert.equal(memoryLink?.workspace_id, 'workspace-legacy');
+    assert.equal(memoryLink?.project_id, 'project-legacy');
+    assert.equal(memoryLink?.campaign_id, 'campaign-legacy');
+    assert.equal(memoryLink?.memory_ref, 'memory-legacy');
+    assert.equal(memoryLink?.summary, 'Thin checkpoint row');
+    assert.equal(syncState?.family, 'project:project-legacy');
+    assert.equal(syncState?.last_runtime_sync_at, '2026-03-21T00:06:00.000Z');
+    assert.equal(syncState?.status, 'ok');
+    assert.equal(syncState?.notes, '{"manifest":"legacy"}');
+    assert.equal(activeSessionsTable?.name, 'active_sessions');
+    assert.equal(uniqueLeaseIndex?.name, 'idx_leases_unique_active_issue');
+  } finally {
+    migrated.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI inspection and promotion commands work with default mem0 loader disabled', async () => {
+  const tempDir = createTempDir('cli-no-mem0-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-cli-nomem0',
+      task: 'Inspect without mem0',
+      status: 'ready',
+      nextBestAction: 'Exercise read-only commands.',
+    });
+
+    const overview = await runCliCommand(
+      tempDir,
+      {
+        action: 'inspect_overview',
+        input: {
+          dbPath,
+          projectId: 'project-1',
+        },
+      },
+      { AGENT_HARNESS_DISABLE_DEFAULT_MEM0: '1' },
+    );
+    const issue = await runCliCommand(
+      tempDir,
+      {
+        action: 'inspect_issue',
+        input: {
+          dbPath,
+          issueId: 'issue-cli-nomem0',
+        },
+      },
+      { AGENT_HARNESS_DISABLE_DEFAULT_MEM0: '1' },
+    );
+    const promoted = await runCliCommand(
+      tempDir,
+      {
+        action: 'promote_queue',
+        input: {
+          dbPath,
+          projectId: 'project-1',
+        },
+      },
+      { AGENT_HARNESS_DISABLE_DEFAULT_MEM0: '1' },
+    );
+
+    assert.equal(overview.action, 'inspect_overview');
+    assert.equal(overview.result.counts.readyIssues, 1);
+    assert.equal(issue.result.issue.id, 'issue-cli-nomem0');
+    assert.deepEqual(promoted.result.promotedIssueIds, []);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('two CLI begin processes cannot create two active leases for the same issue', async () => {
+  const tempDir = createTempDir('cli-lease-race-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-race',
+      task: 'Race on one preferred issue',
+      status: 'ready',
+      nextBestAction: 'Only one process may claim this.',
+    });
+
+    const command = (sessionId: string, agentId: string) => ({
+      action: 'begin_incremental',
+      input: {
+        sessionId,
+        dbPath,
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        progressPath: '/tmp/progress.md',
+        featureListPath: '/tmp/features.json',
+        planPath: '/tmp/plan.md',
+        syncManifestPath: '/tmp/manifest.yaml',
+        mem0Enabled: false,
+        agentId,
+        preferredIssueId: 'issue-race',
+      },
+    });
+
+    const [first, second] = await Promise.all([
+      runCliCommandRaw(
+        tempDir,
+        command('run-race-1', 'agent-race-1'),
+        { AGENT_HARNESS_DISABLE_DEFAULT_MEM0: '1' },
+      ),
+      runCliCommandRaw(
+        tempDir,
+        command('run-race-2', 'agent-race-2'),
+        { AGENT_HARNESS_DISABLE_DEFAULT_MEM0: '1' },
+      ),
+    ]);
+
+    const successes = [first, second].filter((result) => result.code === 0);
+    const failures = [first, second].filter((result) => result.code !== 0);
+
+    assert.equal(successes.length, 1);
+    assert.equal(failures.length, 1);
+    assert.match(
+      failures[0]?.stderr ?? '',
+      /(already has an active lease|No ready issues are available|database is locked|not claimable from status in_progress)/i,
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const activeLeases = selectAll<{ agent_id: string }>(
+        inspected.connection,
+        `SELECT agent_id
+         FROM leases
+         WHERE issue_id = ?
+           AND status = 'active'
+           AND released_at IS NULL`,
+        ['issue-race'],
+      );
+
+      assert.equal(activeLeases.length, 1);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 function createTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
@@ -837,21 +1431,34 @@ function seedCheckpoint(
   runId: string,
   issueId: string,
   title: string,
+  createdAt: string = '2026-03-21T00:05:00.000Z',
 ): void {
   const database = openHarnessDatabase({ dbPath });
 
   try {
     runStatement(
       database.connection,
-      `INSERT INTO checkpoints (id, run_id, issue_id, title, summary, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO checkpoints (
+         id,
+         run_id,
+         issue_id,
+         title,
+         summary,
+         task_status,
+         next_step,
+         artifact_ids_json,
+         created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         checkpointId,
         runId,
         issueId,
         title,
         'Old checkpoint evidence',
-        '2026-03-21T00:05:00.000Z',
+        'in_progress',
+        'Inspect stale work.',
+        '[]',
+        createdAt,
       ],
     );
   } finally {
@@ -862,18 +1469,34 @@ function seedCheckpoint(
 async function runCliCommand(
   tempDir: string,
   command: Record<string, unknown>,
+  extraEnv: Record<string, string> = {},
 ): Promise<any> {
+  const result = await runCliCommandRaw(tempDir, command, extraEnv);
+
+  if (result.code !== 0) {
+    throw new Error(result.stderr || `CLI exited with code ${result.code}`);
+  }
+
+  return JSON.parse(result.stdout);
+}
+
+async function runCliCommandRaw(
+  tempDir: string,
+  command: Record<string, unknown>,
+  extraEnv: Record<string, string> = {},
+): Promise<{ code: number; stdout: string; stderr: string }> {
   const cliPath = join(process.cwd(), 'dist/bin/session-lifecycle.js');
   const storePath = join(tempDir, 'mem0');
 
   return new Promise((resolve, reject) => {
-    const child = spawn('node', [cliPath], {
+    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', cliPath], {
       cwd: process.cwd(),
       env: {
         ...process.env,
         MEM0_STORE_PATH: storePath,
         OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
         MEM0_EMBED_MODEL: 'qwen3-embedding:latest',
+        ...extraEnv,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -889,18 +1512,178 @@ async function runCliCommand(
     });
     child.on('error', reject);
     child.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(stderr || `CLI exited with code ${code}`));
-        return;
-      }
-
-      resolve(JSON.parse(stdout));
+      resolve({
+        code: code ?? 0,
+        stdout,
+        stderr,
+      });
     });
 
     child.stdin.write(JSON.stringify(command));
     child.stdin.end();
   });
 }
+
+async function runSchemaMigrationSkill(
+  dbPath: string,
+): Promise<Record<string, unknown>> {
+  const scriptPath = join(
+    process.cwd(),
+    '.github/skills/harness-schema-migration/scripts/migrate_harness_db.py',
+  );
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('python3', [scriptPath, '--db', dbPath], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if ((code ?? 0) !== 0) {
+        reject(new Error(stderr || `Migration script exited with code ${code}`));
+        return;
+      }
+
+      resolve(JSON.parse(stdout) as Record<string, unknown>);
+    });
+  });
+}
+
+const LEGACY_SCHEMA_V1 = `
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS workspaces (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL DEFAULT 'global',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  domain TEXT NOT NULL DEFAULT 'test',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(workspace_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS campaigns (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  objective TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(project_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS runs (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL,
+  session_type TEXT NOT NULL DEFAULT 'incremental',
+  host TEXT,
+  status TEXT NOT NULL DEFAULT 'in_progress',
+  agent_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  notes TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS milestones (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  description TEXT NOT NULL,
+  priority TEXT NOT NULL,
+  status TEXT NOT NULL,
+  depends_on TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS issues (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL,
+  milestone_id TEXT REFERENCES milestones(id) ON DELETE SET NULL,
+  task TEXT NOT NULL,
+  priority TEXT NOT NULL,
+  size TEXT NOT NULL,
+  status TEXT NOT NULL,
+  depends_on TEXT NOT NULL DEFAULT '[]',
+  next_best_action TEXT
+);
+
+CREATE TABLE IF NOT EXISTS leases (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL,
+  issue_id TEXT REFERENCES issues(id) ON DELETE SET NULL,
+  agent_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  acquired_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  released_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,
+  run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+  issue_id TEXT REFERENCES issues(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY,
+  issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  path TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_links (
+  id TEXT PRIMARY KEY,
+  issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+  checkpoint_id TEXT REFERENCES checkpoints(id) ON DELETE SET NULL,
+  memory_kind TEXT NOT NULL,
+  memory_id TEXT NOT NULL,
+  scope_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  manifest_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`;
 
 function matchesScope(
   storedScope: any,

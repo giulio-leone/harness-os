@@ -1,5 +1,7 @@
 export * from './contracts/plan.schema.js';
+export * from './contracts/memory-contracts.js';
 export * from './contracts/session-contracts.js';
+export * from './contracts/task-domain.js';
 export * from './db/checkpoint-writer.js';
 export * from './db/lease-manager.js';
 export * from './db/store.js';

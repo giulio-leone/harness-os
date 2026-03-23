@@ -1,4 +1,10 @@
-import type { MemoryKind, MemoryScope, MemorySearchResult } from 'mem0-mcp';
+import type {
+  MemoryKind,
+  MemoryScope,
+  MemorySearchResult,
+} from './memory-contracts.js';
+import type { TaskStatus } from './task-domain.js';
+export type { TaskStatus } from './task-domain.js';
 
 export interface InitializerSessionInput {
   sessionId: string;
@@ -60,15 +66,6 @@ export interface IncrementalSessionOutput {
   cleanHandoff: boolean;
   updatedArtifacts: string[];
 }
-
-export type TaskStatus =
-  | 'pending'
-  | 'ready'
-  | 'in_progress'
-  | 'blocked'
-  | 'needs_recovery'
-  | 'done'
-  | 'failed';
 
 export interface SessionMemoryContext {
   enabled: boolean;

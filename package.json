@@ -1,9 +1,27 @@
 {
   "name": "agent-harness-core",
-  "version": "0.1.0",
-  "description": "Reusable long-running agent harness core for Copilot-style runtimes.",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "version": "0.2.0",
+  "description": "Reusable long-running agent harness core with SQLite-backed lifecycle orchestration and optional derived memory integrations.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./db/sqlite.schema.sql": "./dist/db/sqlite.schema.sql",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "bin": {
+    "agent-harness-session-lifecycle": "./dist/bin/session-lifecycle.js",
+    "agent-harness-session-lifecycle-mcp": "./dist/bin/session-lifecycle-mcp.js"
+  },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').copyFileSync('src/db/sqlite.schema.sql','dist/db/sqlite.schema.sql')\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -23,13 +41,26 @@
     "sqlite",
     "zod"
   ],
-  "author": "",
-  "license": "MIT",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/giulio-leone/agent-harness-core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/giulio-leone/agent-harness-core/issues"
+  },
+  "homepage": "https://github.com/giulio-leone/agent-harness-core#readme",
+  "license": "BUSL-1.1",
   "type": "module",
   "dependencies": {
-    "mem0-mcp": "file:../mem0-mcp",
     "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "mem0-mcp": "*"
+  },
+  "peerDependenciesMeta": {
+    "mem0-mcp": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

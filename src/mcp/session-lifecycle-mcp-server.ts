@@ -16,6 +16,7 @@ import {
 import {
   AgenticToolError,
   buildMeta,
+  resolveWorkspaceId,
   resolveDbPath,
   resolveProjectId,
   resolveCampaignId,
@@ -176,7 +177,7 @@ RECOVERY:
 
 RULES:
 - dbPath is optional: set HARNESS_DB_PATH env var to avoid passing it every call.
-- Tools accept human-readable names (projectName, campaignName) instead of UUIDs.
+- Tools accept human-readable names (projectName, campaignName) instead of UUIDs, but ambiguous scope must be resolved explicitly with workspaceId or projectId.
 - Always pass the short \`sessionToken\` returned by begin to checkpoint/close/advance, NOT the heavy context.
 - Every response includes _meta.nextTools and _meta.hint telling you what to do next.`;
 
@@ -299,6 +300,7 @@ export class SessionLifecycleMcpServer {
               description: 'The inspection action to perform.',
             },
             dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
+            workspaceId: { type: 'string', description: 'Workspace UUID used to disambiguate project resolution.' },
             projectId: { type: 'string', description: 'Project UUID (or use projectName instead).' },
             projectName: { type: 'string', description: 'Human-readable project name (alternative to projectId).' },
             campaignId: { type: 'string' },
@@ -313,6 +315,7 @@ export class SessionLifecycleMcpServer {
           const parsed = z.object({
             action: z.enum(['get_context', 'next_action', 'overview', 'issue']),
             dbPath: z.string().optional(),
+            workspaceId: z.string().optional(),
             projectId: z.string().optional(),
             projectName: z.string().optional(),
             campaignId: z.string().optional(),
@@ -324,11 +327,18 @@ export class SessionLifecycleMcpServer {
 
           switch (parsed.action) {
             case 'get_context':
-              return getHarnessContext(parsed.dbPath);
+              return getHarnessContext({
+                dbPath: parsed.dbPath,
+                workspaceId: parsed.workspaceId,
+                projectId: parsed.projectId,
+                projectName: parsed.projectName,
+                campaignId: parsed.campaignId,
+              });
 
             case 'next_action':
               return getNextAction({
                 dbPath: parsed.dbPath,
+                workspaceId: parsed.workspaceId,
                 projectId: parsed.projectId,
                 projectName: parsed.projectName,
               });
@@ -340,12 +350,13 @@ export class SessionLifecycleMcpServer {
                 const projectId = resolveProjectId(db.connection, {
                   projectId: parsed.projectId,
                   projectName: parsed.projectName,
+                  workspaceId: parsed.workspaceId,
                 });
                 const result = await this.adapter.execute({
                   action: 'inspect_overview',
                   input: { dbPath, projectId, campaignId: parsed.campaignId, runLimit: parsed.runLimit },
-                }) as Record<string, unknown>;
-                const counts = result['counts'] as Record<string, number> | undefined;
+                }) as { result: Record<string, unknown> };
+                const counts = result.result['counts'] as Record<string, number> | undefined;
                 const readyCount = counts?.['readyIssues'] ?? 0;
                 const recoveryCount = counts?.['recoveryIssues'] ?? 0;
 
@@ -385,8 +396,8 @@ export class SessionLifecycleMcpServer {
               const result = await this.adapter.execute({
                 action: 'inspect_issue',
                 input: { ...input, dbPath },
-              }) as Record<string, unknown>;
-              const issue = result['issue'] as Record<string, unknown> | undefined;
+              }) as { result: Record<string, unknown> };
+              const issue = result.result['issue'] as Record<string, unknown> | undefined;
               const status = issue?.['status'] as string | undefined;
 
               let hint = 'Issue details loaded.';
@@ -495,8 +506,8 @@ export class SessionLifecycleMcpServer {
                 const result = await this.adapter.execute({
                   action: 'promote_queue',
                   input: { dbPath, projectId, campaignId: pArgs.campaignId },
-                }) as Record<string, unknown>;
-                const promotedIds = (result['promotedIssueIds'] as string[] | undefined) ?? [];
+                }) as { result: { promotedIssueIds?: string[] } };
+                const promotedIds = result.result.promotedIssueIds ?? [];
 
                 return {
                   ...result,
@@ -540,6 +551,7 @@ export class SessionLifecycleMcpServer {
             recoverySummary: { type: 'string', description: 'For "begin_recovery": summary of the recovery context.' },
             recoveryNextStep: { type: 'string', description: 'For "begin_recovery": next step after recovery.' },
             // checkpoint / close / advance
+            dbPath: { type: 'string', description: 'Optional for checkpoint/close/advance when resolving a persisted sessionToken after restart.' },
             sessionToken: { type: 'string', description: 'For checkpoint/close/advance: the token returned by begin.' },
             input: {
               ...checkpointInputJsonSchema,
@@ -567,7 +579,7 @@ export class SessionLifecycleMcpServer {
               })) as { context: SessionContext };
               const sessionToken = this.tokenStore.store(
                 result.context as unknown as Record<string, unknown>,
-                input as Record<string, unknown>,
+                { ...input, dbPath } as Record<string, unknown>,
               );
               return {
                 ...result,
@@ -588,7 +600,7 @@ export class SessionLifecycleMcpServer {
               })) as { context: SessionContext };
               const sessionToken = this.tokenStore.store(
                 result.context as unknown as Record<string, unknown>,
-                input as Record<string, unknown>,
+                { ...input, dbPath } as Record<string, unknown>,
               );
               return {
                 ...result,
@@ -603,25 +615,29 @@ export class SessionLifecycleMcpServer {
             case 'checkpoint': {
               const cpParsed = z
                 .object({
+                  dbPath: z.string().optional(),
                   sessionToken: z.string(),
                   input: sessionCheckpointInputSchema,
                 })
                 .passthrough()
                 .parse(args);
 
-              const session = this.tokenStore.resolve(cpParsed.sessionToken);
-              const context = session.context as unknown as SessionContext;
-              const dbPath = resolveDbPath(context.dbPath);
-              const result = (await this.adapter.execute({
-                action: 'checkpoint',
-                context: { ...context, dbPath },
+               const session = this.tokenStore.resolve(
+                 cpParsed.sessionToken,
+                 cpParsed.dbPath,
+               );
+               const context = session.context as unknown as SessionContext;
+               const dbPath = resolveDbPath(context.dbPath ?? cpParsed.dbPath);
+               const result = (await this.adapter.execute({
+                 action: 'checkpoint',
+                 context: { ...context, dbPath },
                 input: cpParsed.input,
               })) as { result: { checkpoint: { id: string } } };
 
-              this.tokenStore.updateContext(cpParsed.sessionToken, {
-                currentCheckpointId: result.result.checkpoint.id,
-                currentTaskStatus: cpParsed.input.taskStatus,
-              });
+               this.tokenStore.updateContext(cpParsed.sessionToken, {
+                 currentCheckpointId: result.result.checkpoint.id,
+                 currentTaskStatus: cpParsed.input.taskStatus,
+               }, dbPath);
 
               return {
                 ...result,
@@ -635,35 +651,40 @@ export class SessionLifecycleMcpServer {
             case 'close': {
               const clParsed = z
                 .object({
+                  dbPath: z.string().optional(),
                   sessionToken: z.string(),
                   closeInput: sessionCloseInputSchema,
                 })
                 .passthrough()
                 .parse(args);
 
-              const session = this.tokenStore.resolve(clParsed.sessionToken);
-              const context = session.context as unknown as SessionContext;
-              const dbPath = resolveDbPath(context.dbPath);
+               const session = this.tokenStore.resolve(
+                 clParsed.sessionToken,
+                 clParsed.dbPath,
+               );
+               const context = session.context as unknown as SessionContext;
+               const dbPath = resolveDbPath(context.dbPath ?? clParsed.dbPath);
 
-              const result = (await this.adapter.execute({
-                action: 'close',
-                context: { ...context, dbPath },
-                input: clParsed.closeInput,
-              })) as Record<string, unknown>;
+               const executed = (await this.adapter.execute({
+                 action: 'close',
+                 context: { ...context, dbPath },
+                 input: clParsed.closeInput,
+               })) as { result: Record<string, unknown> };
 
-              this.tokenStore.remove(clParsed.sessionToken);
+               this.tokenStore.remove(clParsed.sessionToken, dbPath);
 
-              const promotedIds = (result['promotedIssueIds'] as string[] | undefined) ?? [];
-              const hint =
-                promotedIds.length > 0
-                  ? `Session closed. ${promotedIds.length} dependent task(s) promoted. Call harness_session(action: "begin") to pick up next.`
-                  : 'Session closed. No more ready tasks. Call harness_inspector(action: "next_action") to check queue status.';
+               const promotedIds =
+                 (executed.result['promotedIssueIds'] as string[] | undefined) ?? [];
+               const hint =
+                 promotedIds.length > 0
+                   ? `Session closed. ${promotedIds.length} dependent task(s) promoted. Call harness_session(action: "begin") to pick up next.`
+                   : 'Session closed. No more ready tasks. Call harness_inspector(action: "next_action") to check queue status.';
 
-              return {
-                ...result,
-                ...buildMeta(
-                  promotedIds.length > 0
-                    ? ['harness_session']
+               return {
+                 ...executed,
+                 ...buildMeta(
+                   promotedIds.length > 0
+                     ? ['harness_session']
                     : ['harness_inspector'],
                   hint,
                 ),
@@ -673,80 +694,64 @@ export class SessionLifecycleMcpServer {
             case 'advance': {
               const advParsed = z
                 .object({
+                  dbPath: z.string().optional(),
                   sessionToken: z.string(),
                   closeInput: sessionCloseInputSchema,
                 })
                 .passthrough()
                 .parse(args);
 
-              const session = this.tokenStore.resolve(advParsed.sessionToken);
-              const context = session.context as unknown as SessionContext;
-              const dbPath = resolveDbPath(context.dbPath);
+               const session = this.tokenStore.resolve(
+                 advParsed.sessionToken,
+                 advParsed.dbPath,
+               );
+               const context = session.context as unknown as SessionContext;
+               const dbPath = resolveDbPath(context.dbPath ?? advParsed.dbPath);
+               const nextBeginInput = buildNextIncrementalInput(session.beginInput, dbPath);
+               const advanced = await this.adapter.advanceSession(
+                 { ...context, dbPath },
+                 advParsed.closeInput,
+                 { ...nextBeginInput, dbPath },
+               );
 
-              // 1. Close current session
-              const closeResult = (await this.adapter.execute({
-                action: 'close',
-                context: { ...context, dbPath },
-                input: advParsed.closeInput,
-              })) as Record<string, unknown>;
+               this.tokenStore.remove(advParsed.sessionToken, dbPath);
 
-              // 2. Begin new session reusing original inputs
-              const nextBeginInput = buildNextIncrementalInput(session.beginInput, dbPath);
-              let beginResult: { context: SessionContext };
-              try {
-                beginResult = (await this.adapter.execute({
-                  action: 'begin_incremental',
-                  input: nextBeginInput,
-                })) as { context: SessionContext };
-              } catch (error) {
-                this.tokenStore.remove(advParsed.sessionToken);
+               if (!advanced.advanced || advanced.nextContext === undefined) {
+                 const promotedIds = advanced.closeResult.promotedIssueIds ?? [];
+                 const hint =
+                   promotedIds.length > 0
+                     ? `Session closed. ${promotedIds.length} task(s) promoted, but none claimable yet. Call harness_session(action: "begin") to retry.`
+                     : 'Session closed. No ready tasks to advance into. Call harness_inspector(action: "next_action") for guidance.';
 
-                if (
-                  error instanceof Error &&
-                  error.message.startsWith('No ready issues are available for project ')
-                ) {
-                  const promotedIds =
-                    (closeResult['promotedIssueIds'] as string[] | undefined) ?? [];
-                  const hint =
-                    promotedIds.length > 0
-                      ? `Session closed. ${promotedIds.length} task(s) promoted, but none claimable yet. Call harness_session(action: "begin") to retry.`
-                      : 'Session closed. No ready tasks to advance into. Call harness_inspector(action: "next_action") for guidance.';
+                 return {
+                   advanced: false,
+                   result: advanced.closeResult,
+                   stopReason: advanced.stopReason,
+                   ...buildMeta(
+                     promotedIds.length > 0
+                       ? ['harness_session']
+                       : ['harness_inspector'],
+                     hint,
+                   ),
+                 };
+               }
 
-                  return {
-                    ...closeResult,
-                    advanced: false,
-                    ...buildMeta(
-                      promotedIds.length > 0
-                        ? ['harness_session']
-                        : ['harness_inspector'],
-                      hint,
-                    ),
-                  };
-                }
+               const newToken = this.tokenStore.store(
+                 advanced.nextContext as unknown as Record<string, unknown>,
+                 nextBeginInput as Record<string, unknown>,
+               );
 
-                throw new AgenticToolError(
-                  `Current session closed, but advance could not start the next task: ${getErrorMessage(error)}`,
-                  'The current task is already closed. Call harness_inspector(action: "overview") to inspect queue state.',
-                  'harness_inspector',
-                );
-              }
-
-              this.tokenStore.remove(advParsed.sessionToken);
-
-              const newToken = this.tokenStore.store(
-                beginResult.context as unknown as Record<string, unknown>,
-                session.beginInput,
-              );
-
-              return {
-                ...beginResult,
-                sessionToken: newToken,
-                ...buildMeta(
-                  ['harness_session'],
-                  'Advanced to next session! Do the work, then call harness_session(action: "checkpoint") or harness_session(action: "advance").',
-                ),
-              };
-            }
+               return {
+                 advanced: true,
+                 context: advanced.nextContext,
+                 closeResult: advanced.closeResult,
+                 sessionToken: newToken,
+                 ...buildMeta(
+                   ['harness_session'],
+                   'Advanced to next session! Do the work, then call harness_session(action: "checkpoint") or harness_session(action: "advance").',
+                 ),
+               };
+             }
           }
         },
       },
@@ -979,6 +984,7 @@ interface ProjectInfoRow {
   name: string;
   key: string;
   status: string;
+  workspace_id: string;
 }
 
 interface CampaignInfoRow {
@@ -1006,8 +1012,14 @@ interface ExpiredLeaseRow {
   expires_at: string;
 }
 
-function getHarnessContext(dbPathInput?: string): Record<string, unknown> {
-  const dbPath = resolveDbPath(dbPathInput);
+function getHarnessContext(input: {
+  dbPath?: string;
+  workspaceId?: string;
+  projectId?: string;
+  projectName?: string;
+  campaignId?: string;
+}): Record<string, unknown> {
+  const dbPath = resolveDbPath(input.dbPath);
   const database = openHarnessDatabase({ dbPath });
 
   try {
@@ -1019,6 +1031,7 @@ function getHarnessContext(dbPathInput?: string): Record<string, unknown> {
     if (workspaces.length === 0) {
       return {
         workspace: null,
+        action: 'setup_required',
         projects: [],
         campaigns: [],
         queue: {},
@@ -1029,10 +1042,47 @@ function getHarnessContext(dbPathInput?: string): Record<string, unknown> {
       };
     }
 
-    const workspace = workspaces[0];
+    if (!input.projectId && !input.projectName && !input.workspaceId && workspaces.length > 1) {
+      return {
+        action: 'clarify_scope',
+        workspace: null,
+        workspaces: workspaces.map((workspace) => ({
+          id: workspace.id,
+          name: workspace.name,
+        })),
+        projects: [],
+        campaigns: [],
+        queue: {},
+        ...buildMeta(
+          ['harness_inspector'],
+          'Multiple workspaces found. Pass workspaceId to get_context to inspect a specific scope.',
+        ),
+      };
+    }
+
+    const resolvedProject =
+      input.projectId || input.projectName
+        ? resolveProjectSummary(database.connection, {
+            projectId: input.projectId,
+            projectName: input.projectName,
+            workspaceId: input.workspaceId,
+          })
+        : null;
+    const workspace =
+      resolvedProject !== null
+        ? loadWorkspaceSummary(database.connection, resolvedProject.workspace_id)
+        : loadWorkspaceSummary(
+            database.connection,
+            resolveWorkspaceId(database.connection, {
+              workspaceId: input.workspaceId,
+            }),
+          );
     const projects = selectAll<ProjectInfoRow>(
       database.connection,
-      `SELECT id, name, key, status FROM projects WHERE workspace_id = ? ORDER BY created_at DESC`,
+      `SELECT id, name, key, status, workspace_id
+       FROM projects
+       WHERE workspace_id = ?
+       ORDER BY created_at DESC`,
       [workspace.id],
     );
 
@@ -1049,17 +1099,54 @@ function getHarnessContext(dbPathInput?: string): Record<string, unknown> {
       };
     }
 
-    const project = projects[0];
+    if (resolvedProject === null && projects.length > 1) {
+      return {
+        action: 'clarify_scope',
+        workspace: { id: workspace.id, name: workspace.name },
+        projects: projects.map((project) => ({
+          id: project.id,
+          name: project.name,
+          key: project.key,
+          status: project.status,
+        })),
+        campaigns: [],
+        queue: {},
+        ...buildMeta(
+          ['harness_inspector'],
+          'Multiple projects found. Pass projectId or projectName to get_context to inspect one project deterministically.',
+        ),
+      };
+    }
+
+    const project = resolvedProject ?? projects[0];
     const campaigns = selectAll<CampaignInfoRow>(
       database.connection,
       `SELECT id, name, objective, status FROM campaigns WHERE project_id = ? ORDER BY created_at DESC`,
       [project.id],
     );
+    const activeCampaign =
+      input.campaignId !== undefined
+        ? campaigns.find((campaign) => campaign.id === input.campaignId) ?? null
+        : campaigns.length === 1
+          ? campaigns[0]
+          : null;
+
+    if (input.campaignId !== undefined && activeCampaign === null) {
+      throw new AgenticToolError(
+        `Campaign ${input.campaignId} does not exist in project ${project.id}.`,
+        `Pass a valid campaignId. Available campaigns: ${campaigns.map((campaign) => `"${campaign.name}" (${campaign.id})`).join(', ')}.`,
+        'harness_inspector',
+      );
+    }
 
     const statusCounts = selectAll<StatusCountRow>(
       database.connection,
-      `SELECT status, COUNT(*) as cnt FROM issues WHERE project_id = ? GROUP BY status`,
-      [project.id],
+      `SELECT status, COUNT(*) as cnt
+       FROM issues
+       WHERE project_id = ?
+         AND (? IS NULL OR campaign_id = ?)
+       GROUP BY status`,
+      [project.id, activeCampaign?.id ?? null, activeCampaign?.id ?? null],
     );
 
     const queue: Record<string, number> = {};
@@ -1091,8 +1178,18 @@ function getHarnessContext(dbPathInput?: string): Record<string, unknown> {
     return {
       workspace: { id: workspace.id, name: workspace.name },
       project: { id: project.id, name: project.name, key: project.key },
-      activeCampaign: campaigns.length > 0
-        ? { id: campaigns[0].id, name: campaigns[0].name, objective: campaigns[0].objective }
+      campaigns: campaigns.map((campaign) => ({
+        id: campaign.id,
+        name: campaign.name,
+        objective: campaign.objective,
+        status: campaign.status,
+      })),
+      activeCampaign: activeCampaign
+        ? {
+            id: activeCampaign.id,
+            name: activeCampaign.name,
+            objective: activeCampaign.objective,
+          }
         : null,
       queue,
       ...buildMeta(nextTools, hint),
@@ -1104,6 +1201,7 @@ function getHarnessContext(dbPathInput?: string): Record<string, unknown> {
 
 function getNextAction(input: {
   dbPath?: string;
+  workspaceId?: string;
   projectId?: string;
   projectName?: string;
 }): Record<string, unknown> {
@@ -1111,14 +1209,26 @@ function getNextAction(input: {
   const database = openHarnessDatabase({ dbPath });
 
   try {
-    // If no project specified, pick the first active one
+    const workspaceId =
+      input.workspaceId !== undefined
+        ? resolveWorkspaceId(database.connection, {
+            workspaceId: input.workspaceId,
+          })
+        : undefined;
+
     let projectId = input.projectId;
     if (!projectId && !input.projectName) {
-      const firstProject = selectOne<{ id: string }>(
+      const activeProjects = selectAll<ProjectInfoRow>(
         database.connection,
-        `SELECT id FROM projects WHERE status = 'active' ORDER BY created_at DESC LIMIT 1`,
+        `SELECT id, name, key, status, workspace_id
+         FROM projects
+         WHERE status = 'active'
+           AND (? IS NULL OR workspace_id = ?)
+         ORDER BY created_at DESC`,
+        [workspaceId ?? null, workspaceId ?? null],
       );
-      if (firstProject === null) {
+
+      if (activeProjects.length === 0) {
         return {
           action: 'setup_required',
           tool: 'harness_orchestrator',
@@ -1126,18 +1236,75 @@ function getNextAction(input: {
           ...buildMeta(['harness_orchestrator'], 'No projects exist. Call harness_orchestrator(action: "create_campaign") to get started.'),
         };
       }
-      projectId = firstProject.id;
+
+      if (activeProjects.length > 1) {
+        return {
+          action: 'clarify_scope',
+          reason: 'Multiple active projects found. Pass projectId or projectName before calling next_action.',
+          projects: activeProjects.map((project) => ({
+            id: project.id,
+            name: project.name,
+            key: project.key,
+            status: project.status,
+          })),
+          ...buildMeta(
+            ['harness_inspector'],
+            'Multiple active projects found. Pass projectId or projectName to next_action.',
+          ),
+        };
+      }
+
+      projectId = activeProjects[0].id;
     } else if (!projectId && input.projectName) {
-      projectId = resolveProjectId(database.connection, { projectName: input.projectName });
+      try {
+        projectId = resolveProjectId(database.connection, {
+          projectName: input.projectName,
+          workspaceId,
+        });
+      } catch (error) {
+        if (
+          error instanceof AgenticToolError &&
+          /ambiguous/i.test(error.message)
+        ) {
+          const projects = selectAll<ProjectInfoRow>(
+            database.connection,
+            `SELECT id, name, key, status, workspace_id
+             FROM projects
+             WHERE name = ?
+               AND status = 'active'
+               AND (? IS NULL OR workspace_id = ?)
+             ORDER BY created_at DESC`,
+            [input.projectName, workspaceId ?? null, workspaceId ?? null],
+          );
+
+          return {
+            action: 'clarify_scope',
+            reason: error.message,
+            message: 'Pass projectId explicitly to disambiguate next_action.',
+            projects: projects.map((project) => ({
+              id: project.id,
+              name: project.name,
+              key: project.key,
+              status: project.status,
+            })),
+            ...buildMeta(
+              ['harness_inspector'],
+              'Multiple matching projects found. Pass projectId to next_action.',
+            ),
+          };
+        }
+
+        throw error;
+      }
     }
 
     const now = new Date().toISOString();
 
     // Priority 1: Expired leases
-    const expiredLeases = selectAll<ExpiredLeaseRow>(
-      database.connection,
-      `SELECT id, issue_id, expires_at FROM leases
-       WHERE project_id = ? AND status = 'active' AND expires_at < ?
+      const expiredLeases = selectAll<ExpiredLeaseRow>(
+        database.connection,
+        `SELECT id, issue_id, expires_at FROM leases
+        WHERE project_id = ? AND status = 'active' AND expires_at < ?
        ORDER BY expires_at ASC LIMIT 1`,
       [projectId!, now],
     );
@@ -1219,6 +1386,59 @@ function getNextAction(input: {
   } finally {
     database.close();
   }
+}
+
+function resolveProjectSummary(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    projectId?: string;
+    projectName?: string;
+    workspaceId?: string;
+  },
+): ProjectInfoRow {
+  const projectId = resolveProjectId(connection, input);
+  const project = selectOne<ProjectInfoRow>(
+    connection,
+    `SELECT id, name, key, status, workspace_id
+     FROM projects
+     WHERE id = ?
+     LIMIT 1`,
+    [projectId],
+  );
+
+  if (project === null) {
+    throw new AgenticToolError(
+      `Project ${projectId} does not exist.`,
+      'Pass a valid projectId or projectName.',
+      'harness_inspector',
+    );
+  }
+
+  return project;
+}
+
+function loadWorkspaceSummary(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  workspaceId: string,
+): WorkspaceInfoRow {
+  const workspace = selectOne<WorkspaceInfoRow>(
+    connection,
+    `SELECT id, name
+     FROM workspaces
+     WHERE id = ?
+     LIMIT 1`,
+    [workspaceId],
+  );
+
+  if (workspace === null) {
+    throw new AgenticToolError(
+      `Workspace ${workspaceId} does not exist.`,
+      'Pass a valid workspaceId or call harness_orchestrator(action: "init_workspace") first.',
+      'harness_orchestrator',
+    );
+  }
+
+  return workspace;
 }
 
 // ─── Utilities ──────────────────────────────────────────────────────

@@ -1,27 +1,10 @@
 import { z } from 'zod';
-
-import { storedMemoryRecordSchema } from 'mem0-mcp';
-
-export const taskStatusSchema = z.enum([
-  'pending',
-  'ready',
-  'in_progress',
-  'blocked',
-  'needs_recovery',
-  'done',
-  'failed',
-]);
-
-export const publicMemoryRecordSchema = storedMemoryRecordSchema.omit({
-  embedding: true,
-});
-
-export const memorySearchResultSchema = z
-  .object({
-    memory: publicMemoryRecordSchema,
-    score: z.number(),
-  })
-  .strict();
+import {
+  memoryKindSchema,
+  memorySearchResultSchema,
+  publicMemoryRecordSchema,
+} from '../contracts/memory-contracts.js';
+import { taskStatusSchema } from '../contracts/task-domain.js';
 
 export const sessionMemoryContextSchema = z
   .object({
@@ -100,9 +83,7 @@ export const sessionCheckpointInputSchema = z
     nextStep: z.string().min(1),
     artifactIds: z.array(z.string().min(1)).optional(),
     persistToMem0: z.boolean().optional(),
-    memoryKind: z
-      .enum(['decision', 'preference', 'summary', 'artifact_context', 'note'])
-      .optional(),
+    memoryKind: memoryKindSchema.optional(),
     memoryContent: z.string().min(1).optional(),
     metadata: z.record(z.string(), z.string()).optional(),
   })

@@ -82,9 +82,28 @@ export function writeCheckpoint(
 
   runStatement(
     connection,
-    `INSERT INTO checkpoints (id, run_id, issue_id, title, summary, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, input.runId, input.issueId ?? null, input.title, input.summary, createdAt],
+    `INSERT INTO checkpoints (
+       id,
+       run_id,
+       issue_id,
+       title,
+       summary,
+       task_status,
+       next_step,
+       artifact_ids_json,
+       created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      input.runId,
+      input.issueId ?? null,
+      input.title,
+      input.summary,
+      input.taskStatus,
+      input.nextStep,
+      JSON.stringify(artifactIds),
+      createdAt,
+    ],
   );
 
   const event = appendRunEvent(connection, {
