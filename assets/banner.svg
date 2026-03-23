@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#0F172A" />
@@ -14,11 +14,6 @@
       <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.2"/>
       <stop offset="100%" stop-color="#06B6D4" stop-opacity="0.3"/>
     </linearGradient>
-    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#ffffff" />
-      <stop offset="50%" stop-color="#E0E7FF" />
-      <stop offset="100%" stop-color="#ffffff" />
-    </linearGradient>
     <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" stop-color="#818CF8" />
       <stop offset="50%" stop-color="#A78BFA" />
@@ -30,23 +25,19 @@
     <filter id="blur2">
       <feGaussianBlur stdDeviation="30" />
     </filter>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&amp;display=swap');
-      .title { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 90px; fill: url(#textGrad); text-anchor: middle; letter-spacing: -2px; }
-      .accent { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 90px; fill: url(#accentGrad); text-anchor: middle; letter-spacing: -2px; }
-      .subtitle { font-family: 'Inter', sans-serif; font-weight: 400; font-size: 26px; fill: #94A3B8; text-anchor: middle; letter-spacing: 2px; }
-      .tag { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 16px; fill: #818CF8; text-anchor: middle; letter-spacing: 4px; text-transform: uppercase; }
-    </style>
   </defs>
   
-  <rect width="1200" height="400" fill="url(#bg)" />
+  <rect width="1200" height="420" fill="url(#bg)" />
   
   <circle cx="150" cy="80" r="280" fill="url(#glow1)" filter="url(#blur1)" />
-  <circle cx="1050" cy="320" r="300" fill="url(#glow2)" filter="url(#blur1)" />
-  <circle cx="600" cy="200" r="150" fill="url(#glow1)" filter="url(#blur2)" opacity="0.3" />
+  <circle cx="1050" cy="340" r="300" fill="url(#glow2)" filter="url(#blur1)" />
+  <circle cx="600" cy="210" r="150" fill="url(#glow1)" filter="url(#blur2)" opacity="0.3" />
   
-  <text x="600" y="155" class="tag">THE OPERATING SYSTEM FOR AI AGENTS</text>
-  <text x="490" y="245" class="title">Harness</text>
-  <text x="680" y="245" class="accent">OS</text>
-  <text x="600" y="300" class="subtitle">Canonical State · Lifecycle Orchestration · Multi-Host Integration</text>
+  <text x="600" y="130" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-weight="600" font-size="16" fill="#818CF8" letter-spacing="4" text-transform="uppercase">THE OPERATING SYSTEM FOR AI AGENTS</text>
+
+  <text x="600" y="230" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-weight="800" font-size="96" fill="#ffffff" letter-spacing="-2">HarnessOS</text>
+
+  <text x="600" y="290" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-weight="400" font-size="24" fill="#94A3B8" letter-spacing="1">Canonical State · Lifecycle Orchestration · Multi-Host Integration</text>
+
+  <text x="600" y="345" text-anchor="middle" font-family="Inter, Helvetica, Arial, sans-serif" font-weight="600" font-size="20" fill="url(#accentGrad)" font-style="italic" letter-spacing="1">"Harness is all you need"</text>
 </svg>

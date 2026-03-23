@@ -4,11 +4,13 @@
   # HarnessOS
 
   <p><strong>The operating system for autonomous AI agents.</strong></p>
+  <p><em>"Harness is all you need"</em></p>
 
   [![Version](https://img.shields.io/npm/v/harness-os?style=for-the-badge&color=6366F1)](https://www.npmjs.com/package/harness-os)
   [![License](https://img.shields.io/badge/License-BUSL--1.1-8B5CF6?style=for-the-badge)](LICENSE)
   [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-3178C6?style=for-the-badge&logo=typescript&logoColor=white)]()
-  [![Developer](https://img.shields.io/badge/Developer-Giulio%20Leone-EC4899?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/giulioleone-ai/)
+  [![Website](https://img.shields.io/badge/Website-giulioleone.com-06B6D4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://www.giulioleone.com)
+  [![LinkedIn](https://img.shields.io/badge/LinkedIn-Giulio%20Leone-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/giulioleone-ai/)
 
   <p align="center">
     <a href="#-what-is-a-harness">What is a Harness?</a> •
@@ -150,6 +152,7 @@ We welcome contributions to make HarnessOS even better! Please read our [Contrib
   <p>AI Architect & Software Engineer</p>
 
   [![LinkedIn](https://img.shields.io/badge/Connect%20on-LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/giulioleone-ai/)
+  [![Website](https://img.shields.io/badge/Visit-giulioleone.com-06B6D4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://www.giulioleone.com)
   
   <p><em>Built with passion to push the boundaries of automated intelligence, self-repairing agentic systems, and highly reliable execution state machines. Have questions, ideas, or feedback? I'd love to connect!</em></p>
 </div>
