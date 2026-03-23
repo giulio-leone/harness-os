@@ -1,6 +1,6 @@
 {
   "name": "agent-harness-core",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Reusable long-running agent harness core with SQLite-backed lifecycle orchestration and optional derived memory integrations.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
