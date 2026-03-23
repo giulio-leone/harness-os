@@ -1,175 +1,135 @@
-# agent-harness-core
+<div align="center">
+  <img src="assets/banner.svg" alt="Agent Harness Core Banner" width="100%" />
 
-Reusable long-running agent harness core.
+  # ⚙️ Agent Harness Core
 
-This repository now focuses on the harness core itself:
-- Zod plan contract
-- session contracts
-- skill-policy registry
-- SQLite schema and state-layer placeholders
-- session orchestration and inspection
+  <p><strong>A reusable, robust, and highly scalable long-running agent harness core built for autonomous task execution.</strong></p>
 
-The package is designed to work outside this repository:
+  [![Version](https://img.shields.io/npm/v/agent-harness-core?style=for-the-badge&color=3B82F6)](https://www.npmjs.com/package/agent-harness-core)
+  [![License](https://img.shields.io/badge/License-BUSL--1.1-8B5CF6?style=for-the-badge)](LICENSE)
+  [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-3178C6?style=for-the-badge&logo=typescript&logoColor=white)]()
+  [![Developer](https://img.shields.io/badge/Developer-Giulio%20Leone-EC4899?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/giulioleone-ai/)
 
-- SQLite is the canonical store for leases, checkpoints, events, and task state
-- `mem0-mcp` is an optional peer dependency and is lazy-loaded only when a command actually needs derived memory
-- if `mem0-mcp` is absent or disabled, the CLI and MCP surfaces continue in a "derived memory unavailable" mode without corrupting canonical state
-- automatic legacy schema upgrades were removed from the runtime; old databases must be upgraded explicitly with the repo-native `harness-schema-migration` skill
+  <p align="center">
+    <a href="#-key-features">Key Features</a> •
+    <a href="#-getting-started">Getting Started</a> •
+    <a href="#-architecture">Architecture</a> •
+    <a href="#%EF%B8%8F-developer">Developer</a>
+  </p>
+</div>
 
-### Environment
+---
 
-When the session lifecycle CLI/MCP surfaces are configured with `mem0`, they honor:
+## 🚀 Overview
 
-- `MEM0_STORE_PATH` (default: `~/.copilot/mem0`)
-- `OLLAMA_BASE_URL` (default: `http://127.0.0.1:11434`)
-- `MEM0_EMBED_MODEL` (default: `qwen3-embedding:latest`)
-- `AGENT_HARNESS_DISABLE_DEFAULT_MEM0=1` to force the runtime to skip lazy `mem0-mcp` loading entirely
+**Agent Harness Core** provides the foundational execution framework for advanced autonomous agents. It focuses strictly on robust lifecycle management, leaving LLM inference and tool implementation to the consumer.
 
-### Commands
+### What it handles:
+- **Zod Plan Contracts:** Strongly typed schema validation for robust planning.
+- **Session Contracts:** Standardized agent execution lifecycles.
+- **Skill-Policy Registry:** Dynamic management of agent capabilities and operational rules.
+- **Canonical SQLite Store:** Robust, ACID-compliant state layer for leases, checkpoints, events, and task states.
+- **Session Orchestration:** High-level inspection, queue promotion, and task lifecycle management.
 
-- `npm run build && npm run scheduler:daemon`
-- `npm run build && npm run session:lifecycle`
-- `npm run build && npm run session:lifecycle:mcp`
-- installed package bins:
-  - `agent-harness-session-lifecycle`
-  - `agent-harness-session-lifecycle-mcp`
+---
 
-### Session lifecycle MCP planning tools
+## ⚡ Key Features
 
-`session-lifecycle-mcp` now exposes additional harness-planning tools for local workspace bootstrapping:
+### 🗄️ Canonical SQLite State
+SQLite acts as the absolute source of truth for:
+- **Leases:** Task-scoped locks to prevent concurrent race conditions.
+- **Checkpoints:** Snapshot history of agent progress.
+- **Events:** Immutable transaction logs.
+- **Task State:** Workflow queues and resolutions.
 
-- `harness_init_workspace`
-- `harness_create_campaign`
-- `harness_plan_issues`
-- `harness_rollback_issue`
+### 🧠 Optional Memory Derivation
+- Integrating `mem0-mcp` provides advanced semantic memory and context extraction.
+- **Lazy Loading:** Derived memory is loaded *only* when needed to conserve resources.
+- **Failsafe Operations:** If `mem0-mcp` is unavailable, the harness gracefully degrades without corrupting the canonical SQLite tasks.
 
-These helpers now run with transactional writes so partial lifecycle mutations are rolled back on failure.
+### ⏱️ Reusable Scheduler Injector
+A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-daemon.ts`), supporting full 5-field cron expressions to safely trigger work without duplications.
 
-### Scheduler injector
+---
 
-`src/bin/scheduler-daemon.ts` is a cron-aware, idempotent injector for scheduled harness work. It reads:
+## 💻 Getting Started
 
-- `HARNESS_DB_PATH`
-- `HARNESS_CRON_PATH`
+### 1️⃣ Installation
 
-Each run evaluates standard 5-field cron expressions, injects only due jobs, and records per-minute injections so repeated invocations do not duplicate the same scheduled task.
-
-## Session lifecycle bridge
-
-The repository now also includes a first runnable session bridge for the `session-lifecycle` contract:
-- `src/runtime/session-orchestrator.ts`
-- `src/runtime/mem0-session-bridge.ts`
-- `src/runtime/session-lifecycle-adapter.ts`
-- `src/bin/session-lifecycle.ts`
-- `src/db/lease-manager.ts`
-- `src/db/checkpoint-writer.ts`
-
-What the first bridge does:
-- claims or resumes a task-scoped lease from SQLite
-- runs reconciliation before every new claim and promotes stale work to `needs_recovery`
-- provides an explicit `beginRecoverySession()` path that replaces stale leases with a fresh recovery lease
-- writes canonical checkpoints into SQLite plus structured checkpoint payload events
-- promotes eligible `pending` issues to `ready` when dependency chains are satisfied
-- reads `mem0` context on begin or recovery when an adapter is available
-- writes derived `mem0` summaries only after canonical SQLite commits succeed
-- links stored `mem0` records back to SQLite through `memory_links`
-
-The public runtime flow is:
-1. `beginIncrementalSession()`
-2. `beginRecoverySession()` when a task is explicitly resolved from `needs_recovery`
-3. `checkpoint()`
-4. `close()`
-
-### Thin runtime adapter and CLI
-
-The same lifecycle core is now exposed through:
-- `SessionLifecycleAdapter` for in-process host integration
-- `src/bin/session-lifecycle.ts` for JSON-driven CLI execution
-- `src/bin/session-lifecycle-mcp.ts` for the MCP server surface
-
-The CLI accepts a JSON command on stdin (or via `--input <path>`) with one of these actions:
-- `begin_incremental`
-- `begin_recovery`
-- `checkpoint`
-- `close`
-- `inspect_overview`
-- `inspect_issue`
-- `promote_queue`
-
-Commands:
-- `npm run session:lifecycle:dev`
-- `npm run build && npm run session:lifecycle`
-- `npm test`
-
-Example fixtures live under `examples/session-lifecycle/`:
-- `begin-incremental.json`
-- `begin-recovery.json`
-- `checkpoint.json`
-- `close.json`
-- `inspect-overview.json`
-- `inspect-issue.json`
-- `promote-queue.json`
-- `consumer-workspace-template/` for a portable consumer bootstrap that can be copied outside the repo and re-pointed with `HARNESS_CORE`
-
-Example usage:
-- `npm run build && npm run session:lifecycle < examples/session-lifecycle/inspect-overview.json`
-- `npm run build && npm run session:lifecycle < examples/session-lifecycle/promote-queue.json`
-- `npm run build && npm run session:lifecycle:mcp`
-- `AGENT_HARNESS_DISABLE_DEFAULT_MEM0=1 npm run build && npm run session:lifecycle < examples/session-lifecycle/inspect-overview.json`
-
-The intended boundary stays unchanged:
-- SQLite is canonical for task, lease, checkpoint, and event state
-- `mem0` remains derived support memory only
-- project skills should not write canonical state directly
-
-## Repo-native skill sources
-
-This repository now also publishes repo-native skill sources under `.github/skills/`:
-- `session-lifecycle` for the verified operational lease/checkpoint/inspection/promotion protocol
-- `prompt-contract-bindings` for the reusable local-prompt/global-harness publication pattern
-- `harness-schema-migration` for one-shot upgrades of pre-v2 harness SQLite databases now that runtime backward compatibility has been removed
-
-There is no dedicated skill reload mechanism in this repository. Global availability comes from validating the files on disk and syncing the approved copies into `~/.copilot/skills` according to `~/.copilot/SYNC_MANIFEST.yaml`.
-
-
-### Proving global skill reuse
-
-Run the deterministic consumer proof with explicit paths:
+You can pull this into your own project or clone it to run the lifecycle endpoints.
 
 ```bash
-python3 examples/skill-reuse/prove-global-skill-reuse.py \
-  --runtime-skills ~/.copilot/skills \
-  --consumer-workspace /absolute/path/to/consumer-workspace \
-  --output /absolute/path/to/consumer-workspace/.harness/runtime/global-skill-reuse-proof.json
+git clone https://github.com/giulio-leone/agent-harness-core.git
+cd agent-harness-core
+npm install
+npm run build
 ```
 
-This validates repo-native skill source parity, runtime mirror parity, the updated `SYNC_MANIFEST` routing, and a real consumer `init.sh` bootstrap without claiming any skill reload mechanism.
+### 2️⃣ Environment Variables
 
-## Consumer workspace bootstrap template
+Configure your harness behavior by setting these standard variables:
 
-A reusable consumer bootstrap now lives under `examples/consumer-workspace-template/`.
+| Variable | Default Value | Description |
+|----------|---------------|-------------|
+| `MEM0_STORE_PATH` | `~/.copilot/mem0` | Path to Mem0 semantic storage |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | URL to the Ollama embedding API |
+| `MEM0_EMBED_MODEL` | `qwen3-embedding:latest` | The model used for extracting memory |
+| `AGENT_HARNESS_DISABLE_DEFAULT_MEM0`| N/A | Set to `1` to disable lazy loaded mem0 entirely |
 
-It packages the portable workspace shell that was previously only proven in a live consumer workspace:
-- `init.sh`, `AGENTS.MD`, `harness-project.json`, `progress.md`, and `feature_list.json`
-- generic prompt/schema/workflow placeholders under `.harness/`
-- a template live catalog plus preview-first wrappers for dry-run, live claim, and queue promotion
-
-It intentionally does **not** include personal assets, live runtime snapshots, or smoke proof artifacts. Copy the directory into a new workspace, set `HARNESS_CORE=/absolute/path/to/agent-harness-core` if needed, customize the template files, and then run:
+### 3️⃣ Running Commands
 
 ```bash
-bash init.sh
-python3 .harness/seed-live-catalog.py --reset
-bash .harness/run-live-dry-run.sh
-bash .harness/run-live-claim.sh
+# Start the cron-aware scheduler
+npm run build && npm run scheduler:daemon
+
+# Run the standard CLI session lifecycle
+npm run build && npm run session:lifecycle
+
+# Start the MCP (Model Context Protocol) Server for lifecycle orchestration
+npm run build && npm run session:lifecycle:mcp
 ```
 
+*(For detailed examples and JSON payload usage, see the `examples/session-lifecycle/` directory.)*
 
-## License
+---
 
-This project is licensed under the **Business Source License 1.1 (BSL)**.
+## 🧩 Architecture
 
-**You may use this software for non-commercial and non-production purposes (e.g., development, testing, research, and personal projects) free of charge.**
+For an in-depth look at how the harness works, refer to the [Architecture Documentation](docs/architecture.md).
 
-**Commercial and production use is strictly prohibited without prior written authorization.**
+The typical execution flow:
+1. `beginIncrementalSession()` - Claims a pending task.
+2. `beginRecoverySession()` - Resolves and overrides a stuck or failed task.
+3. `checkpoint()` - Writes immediate progress to SQLite.
+4. `close()` - Releases the lease and promotes task resolution.
 
-On March 22, 2030 (the Change Date), this license automatically converts to the **Apache License, Version 2.0**.
+---
+
+## 🤝 Contributing
+
+We welcome contributions to make the Agent Harness even better! Please read our [Contributing Guidelines](CONTRIBUTING.md) to get started with setting up the project and submitting pull requests.
+
+---
+
+## 👨‍💻 Developer & Creator
+
+<div align="center">
+  <h3><strong>Giulio Leone</strong></h3>
+  <p>AI Architect & Software Engineer</p>
+
+  [![LinkedIn](https://img.shields.io/badge/Connect%20on-LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/giulioleone-ai/)
+  
+  <p><em>Built with passion to push the boundaries of automated intelligence, self-repairing agentic systems, and highly reliable execution state machines. Have questions, ideas, or feedback? I'd love to connect!</em></p>
+</div>
+
+---
+
+## 📄 License
+
+This project is generously licensed under the **Business Source License 1.1 (BSL)**.
+
+You may use this software for **non-commercial** and **non-production** purposes (e.g., development, testing, research, and personal projects) **free of charge**.
+
+> ⚠️ Commercial and production use is strictly prohibited without prior written authorization.
+
+*On March 22, 2030, this license automatically converts to the **Apache License, Version 2.0**.*

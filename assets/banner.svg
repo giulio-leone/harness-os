@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="50%" stop-color="#1E293B" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.2"/>
+      <stop offset="50%" stop-color="#8B5CF6" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#EC4899" stop-opacity="0.2"/>
+    </linearGradient>
+    <filter id="blur">
+      <feGaussianBlur stdDeviation="40" />
+    </filter>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&amp;display=swap');
+      .title { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 84px; fill: #ffffff; text-anchor: middle; letter-spacing: -1px; }
+      .subtitle { font-family: 'Inter', sans-serif; font-weight: 400; font-size: 30px; fill: #94A3B8; text-anchor: middle; }
+    </style>
+  </defs>
+  
+  <rect width="1200" height="400" fill="url(#bg)" />
+  
+  <circle cx="200" cy="50" r="250" fill="url(#glow)" filter="url(#blur)" />
+  <circle cx="1000" cy="350" r="300" fill="url(#glow)" filter="url(#blur)" />
+  
+  <text x="600" y="210" class="title">Agent Harness Core</text>
+  <text x="600" y="270" class="subtitle">Long-running Agent Runtime with Canonical State &amp; Orchestration</text>
+</svg>

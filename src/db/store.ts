@@ -7,7 +7,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const CURRENT_SCHEMA_VERSION = 2;
-const MIGRATION_SKILL_NAME = 'harness-schema-migration';
 const REQUIRED_TABLES = [
   'campaigns',
   'runs',
@@ -97,8 +96,8 @@ export function ensureHarnessSchema(
     if (hasUserTables(connection)) {
       throw new Error(
         'This SQLite database is not a current agent-harness database. ' +
-          'Automatic legacy upgrades were removed from the runtime. ' +
-          `Run the "${MIGRATION_SKILL_NAME}" skill before reopening this database.`,
+          `Only schema v${CURRENT_SCHEMA_VERSION} databases are supported by this runtime. ` +
+          'Create a fresh harness database before reopening this path.',
       );
     }
 
@@ -111,9 +110,9 @@ export function ensureHarnessSchema(
 
   if (version === 0) {
     throw new Error(
-      'Detected an unversioned or legacy harness database. ' +
-        'Automatic runtime migration has been removed. ' +
-        `Run the "${MIGRATION_SKILL_NAME}" skill to upgrade it to schema v${CURRENT_SCHEMA_VERSION}.`,
+      'Detected an unversioned harness database. ' +
+        `Only schema v${CURRENT_SCHEMA_VERSION} databases are supported by this runtime. ` +
+        'Recreate the harness database from scratch.',
     );
   }
 
@@ -126,7 +125,7 @@ export function ensureHarnessSchema(
   if (version < CURRENT_SCHEMA_VERSION) {
     throw new Error(
       `Harness schema version ${version} is no longer supported by this runtime. ` +
-        `Run the "${MIGRATION_SKILL_NAME}" skill to upgrade it to schema v${CURRENT_SCHEMA_VERSION}.`,
+        `Recreate the database with schema v${CURRENT_SCHEMA_VERSION}.`,
     );
   }
 
@@ -161,7 +160,7 @@ function validateCurrentSchema(connection: DatabaseSync): void {
 
   throw new Error(
     `Harness schema v${CURRENT_SCHEMA_VERSION} is incomplete or corrupted (${missingParts.join(', ')}). ` +
-      `Run the "${MIGRATION_SKILL_NAME}" skill or restore a clean schema-v${CURRENT_SCHEMA_VERSION} database.`,
+      `Restore or recreate a clean schema-v${CURRENT_SCHEMA_VERSION} database.`,
   );
 }
 

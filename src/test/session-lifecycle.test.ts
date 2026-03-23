@@ -985,51 +985,17 @@ test('CLI supports promote_queue for eligible pending issues', async () => {
   }
 });
 
-test('legacy schema snapshots require explicit migration and the skill upgrades them to schema v2', async () => {
-  const tempDir = createTempDir('legacy-migration-');
+test('runtime rejects unsupported pre-v2 harness schemas', () => {
+  const tempDir = createTempDir('legacy-schema-');
   const dbPath = join(tempDir, 'harness.sqlite');
   const legacy = new DatabaseSync(dbPath);
 
   try {
-    legacy.exec(LEGACY_SCHEMA_V1);
     legacy.exec(`
-      INSERT INTO workspaces (id, name, kind, created_at, updated_at)
-      VALUES ('workspace-legacy', 'Legacy Workspace', 'global', '2026-03-21T00:00:00.000Z', '2026-03-21T00:00:00.000Z');
-      INSERT INTO projects (id, workspace_id, key, name, domain, status, created_at, updated_at)
-      VALUES ('project-legacy', 'workspace-legacy', 'legacy-project', 'Legacy Project', 'test', 'active', '2026-03-21T00:00:00.000Z', '2026-03-21T00:00:00.000Z');
-      INSERT INTO campaigns (id, project_id, name, objective, created_at)
-      VALUES ('campaign-legacy', 'project-legacy', 'Legacy Campaign', 'Migrate the schema', '2026-03-21T00:00:00.000Z');
-      INSERT INTO runs (id, workspace_id, project_id, campaign_id, session_type, host, status, agent_id, started_at, notes)
-      VALUES ('run-legacy', 'workspace-legacy', 'project-legacy', 'campaign-legacy', 'incremental', 'host-legacy', 'in_progress', 'agent-legacy', '2026-03-21T00:00:00.000Z', '{}');
-      INSERT INTO milestones (id, project_id, description, priority, status, depends_on)
-      VALUES ('milestone-legacy', 'project-legacy', 'Legacy milestone', 'high', 'review', '[]');
-      INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, size, status, depends_on, next_best_action)
-      VALUES ('issue-legacy', 'project-legacy', 'campaign-legacy', 'milestone-legacy', 'Legacy issue', 'high', 'M', 'review', '[]', 'Inspect migrated checkpoint');
-      INSERT INTO checkpoints (id, run_id, issue_id, title, summary, created_at)
-      VALUES ('checkpoint-legacy', 'run-legacy', 'issue-legacy', 'Legacy checkpoint', 'Thin checkpoint row', '2026-03-21T00:05:00.000Z');
-      INSERT INTO events (id, run_id, issue_id, kind, payload, created_at)
-      VALUES (
-        'event-legacy',
-        'run-legacy',
-        'issue-legacy',
-        'checkpoint_payload',
-        '{"checkpointId":"checkpoint-legacy","taskStatus":"blocked","nextStep":"Inspect migrated checkpoint","artifactIds":["artifact-legacy"]}',
-        '2026-03-21T00:05:00.000Z'
+      CREATE TABLE runs (
+        id TEXT PRIMARY KEY
       );
-      INSERT INTO artifacts (id, issue_id, kind, path, created_at)
-      VALUES ('artifact-legacy', 'issue-legacy', 'screenshot', '/tmp/legacy-artifact.png', '2026-03-21T00:05:00.000Z');
-      INSERT INTO memory_links (id, issue_id, checkpoint_id, memory_kind, memory_id, scope_json, created_at)
-      VALUES (
-        'memory-link-legacy',
-        'issue-legacy',
-        'checkpoint-legacy',
-        'summary',
-        'memory-legacy',
-        '{"workspace":"workspace-legacy","project":"project-legacy","campaign":"campaign-legacy","task":"issue-legacy","run":"run-legacy"}',
-        '2026-03-21T00:05:00.000Z'
-      );
-      INSERT INTO sync_state (project_id, status, manifest_json, updated_at)
-      VALUES ('project-legacy', 'ok', '{"manifest":"legacy"}', '2026-03-21T00:06:00.000Z');
+      PRAGMA user_version = 1;
     `);
   } finally {
     legacy.close();
@@ -1037,129 +1003,10 @@ test('legacy schema snapshots require explicit migration and the skill upgrades 
 
   assert.throws(
     () => openHarnessDatabase({ dbPath }),
-    /harness-schema-migration/i,
+    /schema version 1 is no longer supported|schema v2/i,
   );
 
-  const migrationResult = await runSchemaMigrationSkill(dbPath);
-  assert.equal(migrationResult.status, 'migrated');
-
-  const migrated = openHarnessDatabase({ dbPath });
-  try {
-    const version = migrated.connection
-      .prepare('PRAGMA user_version')
-      .get() as { user_version: number };
-    const campaign = selectOne<{
-      status: string;
-      scope_json: string;
-      updated_at: string;
-    }>(
-      migrated.connection,
-      `SELECT status, scope_json, updated_at
-       FROM campaigns
-       WHERE id = ?`,
-      ['campaign-legacy'],
-    );
-    const issue = selectOne<{ status: string }>(
-      migrated.connection,
-      'SELECT status FROM issues WHERE id = ?',
-      ['issue-legacy'],
-    );
-    const milestone = selectOne<{ status: string }>(
-      migrated.connection,
-      'SELECT status FROM milestones WHERE id = ?',
-      ['milestone-legacy'],
-    );
-    const checkpoint = selectOne<{
-      task_status: string;
-      next_step: string;
-      artifact_ids_json: string;
-    }>(
-      migrated.connection,
-      `SELECT task_status, next_step, artifact_ids_json
-       FROM checkpoints
-       WHERE id = ?`,
-      ['checkpoint-legacy'],
-    );
-    const artifact = selectOne<{
-      workspace_id: string;
-      project_id: string;
-      campaign_id: string | null;
-      metadata_json: string;
-    }>(
-      migrated.connection,
-      `SELECT workspace_id, project_id, campaign_id, metadata_json
-       FROM artifacts
-       WHERE id = ?`,
-      ['artifact-legacy'],
-    );
-    const memoryLink = selectOne<{
-      workspace_id: string;
-      project_id: string;
-      campaign_id: string | null;
-      memory_ref: string;
-      summary: string;
-    }>(
-      migrated.connection,
-      `SELECT workspace_id, project_id, campaign_id, memory_ref, summary
-       FROM memory_links
-       WHERE id = ?`,
-      ['memory-link-legacy'],
-    );
-    const syncState = selectOne<{
-      family: string;
-      last_runtime_sync_at: string | null;
-      status: string;
-      notes: string | null;
-    }>(
-      migrated.connection,
-      `SELECT family, last_runtime_sync_at, status, notes
-       FROM sync_state
-       WHERE family = ?`,
-      ['project:project-legacy'],
-    );
-    const activeSessionsTable = selectOne<{ name: string }>(
-      migrated.connection,
-      `SELECT name
-       FROM sqlite_master
-       WHERE type = 'table'
-         AND name = 'active_sessions'`,
-    );
-    const uniqueLeaseIndex = selectOne<{ name: string }>(
-      migrated.connection,
-      `SELECT name
-       FROM sqlite_master
-       WHERE type = 'index'
-         AND name = 'idx_leases_unique_active_issue'`,
-    );
-
-    assert.equal(version.user_version, 2);
-    assert.equal(campaign?.status, 'active');
-    assert.equal(campaign?.scope_json, '{}');
-    assert.equal(campaign?.updated_at, '2026-03-21T00:00:00.000Z');
-    assert.equal(issue?.status, 'ready');
-    assert.equal(milestone?.status, 'ready');
-    assert.equal(checkpoint?.task_status, 'blocked');
-    assert.equal(checkpoint?.next_step, 'Inspect migrated checkpoint');
-    assert.equal(checkpoint?.artifact_ids_json, '["artifact-legacy"]');
-    assert.equal(artifact?.workspace_id, 'workspace-legacy');
-    assert.equal(artifact?.project_id, 'project-legacy');
-    assert.equal(artifact?.campaign_id, 'campaign-legacy');
-    assert.equal(artifact?.metadata_json, '{}');
-    assert.equal(memoryLink?.workspace_id, 'workspace-legacy');
-    assert.equal(memoryLink?.project_id, 'project-legacy');
-    assert.equal(memoryLink?.campaign_id, 'campaign-legacy');
-    assert.equal(memoryLink?.memory_ref, 'memory-legacy');
-    assert.equal(memoryLink?.summary, 'Thin checkpoint row');
-    assert.equal(syncState?.family, 'project:project-legacy');
-    assert.equal(syncState?.last_runtime_sync_at, '2026-03-21T00:06:00.000Z');
-    assert.equal(syncState?.status, 'ok');
-    assert.equal(syncState?.notes, '{"manifest":"legacy"}');
-    assert.equal(activeSessionsTable?.name, 'active_sessions');
-    assert.equal(uniqueLeaseIndex?.name, 'idx_leases_unique_active_issue');
-  } finally {
-    migrated.close();
-    rmSync(tempDir, { recursive: true, force: true });
-  }
+  rmSync(tempDir, { recursive: true, force: true });
 });
 
 test('CLI inspection and promotion commands work with default mem0 loader disabled', async () => {
@@ -1523,167 +1370,6 @@ async function runCliCommandRaw(
     child.stdin.end();
   });
 }
-
-async function runSchemaMigrationSkill(
-  dbPath: string,
-): Promise<Record<string, unknown>> {
-  const scriptPath = join(
-    process.cwd(),
-    '.github/skills/harness-schema-migration/scripts/migrate_harness_db.py',
-  );
-
-  return new Promise((resolve, reject) => {
-    const child = spawn('python3', [scriptPath, '--db', dbPath], {
-      cwd: process.cwd(),
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if ((code ?? 0) !== 0) {
-        reject(new Error(stderr || `Migration script exited with code ${code}`));
-        return;
-      }
-
-      resolve(JSON.parse(stdout) as Record<string, unknown>);
-    });
-  });
-}
-
-const LEGACY_SCHEMA_V1 = `
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS workspaces (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  kind TEXT NOT NULL DEFAULT 'global',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS projects (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  key TEXT NOT NULL,
-  name TEXT NOT NULL,
-  domain TEXT NOT NULL DEFAULT 'test',
-  status TEXT NOT NULL DEFAULT 'active',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE(workspace_id, name)
-);
-
-CREATE TABLE IF NOT EXISTS campaigns (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  objective TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  UNIQUE(project_id, name)
-);
-
-CREATE TABLE IF NOT EXISTS runs (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL,
-  session_type TEXT NOT NULL DEFAULT 'incremental',
-  host TEXT,
-  status TEXT NOT NULL DEFAULT 'in_progress',
-  agent_id TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  finished_at TEXT,
-  notes TEXT NOT NULL DEFAULT '{}'
-);
-
-CREATE TABLE IF NOT EXISTS milestones (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  description TEXT NOT NULL,
-  priority TEXT NOT NULL,
-  status TEXT NOT NULL,
-  depends_on TEXT NOT NULL DEFAULT '[]'
-);
-
-CREATE TABLE IF NOT EXISTS issues (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL,
-  milestone_id TEXT REFERENCES milestones(id) ON DELETE SET NULL,
-  task TEXT NOT NULL,
-  priority TEXT NOT NULL,
-  size TEXT NOT NULL,
-  status TEXT NOT NULL,
-  depends_on TEXT NOT NULL DEFAULT '[]',
-  next_best_action TEXT
-);
-
-CREATE TABLE IF NOT EXISTS leases (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL,
-  issue_id TEXT REFERENCES issues(id) ON DELETE SET NULL,
-  agent_id TEXT NOT NULL,
-  status TEXT NOT NULL,
-  acquired_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  released_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS checkpoints (
-  id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-  issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS events (
-  id TEXT PRIMARY KEY,
-  run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
-  issue_id TEXT REFERENCES issues(id) ON DELETE SET NULL,
-  kind TEXT NOT NULL,
-  payload TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS artifacts (
-  id TEXT PRIMARY KEY,
-  issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL,
-  path TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS memory_links (
-  id TEXT PRIMARY KEY,
-  issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-  checkpoint_id TEXT REFERENCES checkpoints(id) ON DELETE SET NULL,
-  memory_kind TEXT NOT NULL,
-  memory_id TEXT NOT NULL,
-  scope_json TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS sync_state (
-  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-  status TEXT NOT NULL,
-  manifest_json TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-`;
 
 function matchesScope(
   storedScope: any,
