@@ -54,7 +54,7 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-daemon.
 
 ## 💻 Getting Started
 
-### 1️⃣ Installation
+### 1️⃣ Installation & Multi-Host Setup
 
 You can pull this into your own project or clone it to run the lifecycle endpoints.
 
@@ -63,6 +63,16 @@ git clone https://github.com/giulio-leone/agent-harness-core.git
 cd agent-harness-core
 npm install
 npm run build
+```
+
+This harness is designed to work interactively with **any AI agent or IDE** (Copilot, Windsurf, Cursor, Gemini, etc.). You can register your environments dynamically:
+
+```bash
+# Interactively add/remove host workspaces (~/.gemini, ~/.cursor, etc.)
+npm run setup
+
+# Synchronize the latest harness skills securely to your registered hosts
+npm run sync
 ```
 
 ### 2️⃣ Environment Variables

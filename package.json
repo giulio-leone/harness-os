@@ -27,6 +27,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/**/*.test.js",
     "init": "bash scripts/init.sh",
+    "setup": "tsx scripts/setup-hosts.ts",
+    "sync": "tsx scripts/sync-skills.ts",
     "scheduler:daemon": "node dist/bin/scheduler-daemon.js",
     "session:lifecycle": "node dist/bin/session-lifecycle.js",
     "session:lifecycle:dev": "tsx src/bin/session-lifecycle.ts",
