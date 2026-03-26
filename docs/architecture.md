@@ -53,7 +53,7 @@ Uses `mem0-mcp` to process complex AI experiences down into vector spaces, retai
 
 ## 4. The Execution Flow
 
-1. **Plan Issues**: Using `harness_plan_issues`, top-level objectives are converted into manageable sub-tasks with dependency chains.
+1. **Plan Issues**: Using `harness_orchestrator(action: "plan_issues")`, top-level objectives are converted into manageable sub-tasks with dependency chains.
 2. **Begin Task**: An agent claims an unblocked task. A lease is atomically assigned, saving the target task from duplicates.
 3. **Checkpoint**: While working, an agent stores checkpoint metadata securely to the DB.
 4. **Close**: Task returns success/failure and its dependencies are subsequently unblocked or halted.

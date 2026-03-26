@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { z } from 'zod';
 
@@ -45,6 +48,18 @@ import {
   JsonRpcError,
   StdioJsonRpcTransport,
 } from './jsonrpc-stdio.js';
+
+const __mcpFilename = fileURLToPath(import.meta.url);
+const __mcpDirname = dirname(__mcpFilename);
+const PACKAGE_VERSION: string = (() => {
+  try {
+    const pkgPath = resolve(__mcpDirname, '..', '..', 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -276,7 +291,7 @@ export class SessionLifecycleMcpServer {
       },
       serverInfo: {
         name: 'agent-harness',
-        version: '0.3.0',
+        version: PACKAGE_VERSION,
       },
       instructions: HARNESS_INSTRUCTIONS,
     };

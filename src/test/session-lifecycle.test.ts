@@ -1003,7 +1003,7 @@ test('runtime rejects unsupported pre-v2 harness schemas', () => {
 
   assert.throws(
     () => openHarnessDatabase({ dbPath }),
-    /schema version 1 is no longer supported|schema v2/i,
+    /schema version 1 is too old for in-place migration|schema version 1 is no longer supported/i,
   );
 
   rmSync(tempDir, { recursive: true, force: true });
@@ -1257,6 +1257,87 @@ test('openHarnessDatabase rejects schema-v2 DB with missing critical index', () 
     assert.throws(
       () => openHarnessDatabase({ dbPath }),
       /index:idx_leases_unique_active_issue/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// ---------- Issue #5: schema migration path ----------
+
+test('openHarnessDatabase rejects unversioned DB as corrupted', () => {
+  const tempDir = createTempDir('schema-unversioned-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw.exec('PRAGMA journal_mode = WAL');
+      raw.exec('PRAGMA foreign_keys = OFF');
+      const schemaPath = join(
+        import.meta.dirname ?? '.',
+        '..', 'db', 'sqlite.schema.sql',
+      );
+      const schemaSql = readFileSync(schemaPath, 'utf8');
+      raw.exec(schemaSql);
+      // Deliberately leave user_version at 0
+    } finally {
+      raw.close();
+    }
+
+    assert.throws(
+      () => openHarnessDatabase({ dbPath }),
+      /unversioned harness database.*corrupted or pre-release/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('openHarnessDatabase rejects newer schema with upgrade hint', () => {
+  const tempDir = createTempDir('schema-future-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw.exec('PRAGMA journal_mode = WAL');
+      raw.exec('PRAGMA foreign_keys = OFF');
+      const schemaPath = join(
+        import.meta.dirname ?? '.',
+        '..', 'db', 'sqlite.schema.sql',
+      );
+      const schemaSql = readFileSync(schemaPath, 'utf8');
+      raw.exec(schemaSql);
+      raw.exec('PRAGMA user_version = 999');
+    } finally {
+      raw.close();
+    }
+
+    assert.throws(
+      () => openHarnessDatabase({ dbPath }),
+      /999 is newer than this runtime.*Upgrade the harness-os package/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('openHarnessDatabase distinguishes non-harness DB from corrupted harness DB', () => {
+  const tempDir = createTempDir('schema-foreign-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw.exec('CREATE TABLE random_table (id TEXT PRIMARY KEY)');
+    } finally {
+      raw.close();
+    }
+
+    assert.throws(
+      () => openHarnessDatabase({ dbPath }),
+      /not a current agent-harness database/,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

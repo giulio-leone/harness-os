@@ -62,8 +62,40 @@ async function menu() {
       newHost = path.join(os.homedir(), newHost.slice(2));
     }
     
-    // Ensure the path resolves to absolute
     newHost = path.resolve(newHost);
+
+    if (!path.isAbsolute(newHost)) {
+      console.log('❌ Path must be absolute.');
+      await menu();
+      return;
+    }
+
+    if (!fs.existsSync(newHost)) {
+      console.log(`⚠️  Directory does not exist: ${newHost}`);
+      const create = await ask('Create it now? [y/N]: ');
+      if (create.toLowerCase() === 'y') {
+        try {
+          fs.mkdirSync(newHost, { recursive: true });
+          console.log(`  Created ${newHost}`);
+        } catch (err: any) {
+          console.log(`❌ Cannot create directory: ${err.message}`);
+          await menu();
+          return;
+        }
+      } else {
+        console.log('  Skipped — host not added.');
+        await menu();
+        return;
+      }
+    }
+
+    try {
+      fs.accessSync(newHost, fs.constants.W_OK);
+    } catch {
+      console.log(`❌ No write permission to ${newHost}. Check filesystem permissions.`);
+      await menu();
+      return;
+    }
 
     if (!config.hosts.includes(newHost)) {
       config.hosts.push(newHost);

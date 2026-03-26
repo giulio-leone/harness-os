@@ -123,8 +123,8 @@ export function initHarnessWorkspace(
     return {
       ...result,
       ...buildMeta(
-        ['harness_create_campaign'],
-        `Workspace "${input.workspaceName}" created. Now call harness_create_campaign with workspaceId "${result.workspaceId}" to register a project and campaign.`,
+        ['harness_orchestrator'],
+        `Workspace "${input.workspaceName}" created. Now call harness_orchestrator(action: "create_campaign") with workspaceId "${result.workspaceId}" to register a project and campaign.`,
       ),
     };
   } finally {
@@ -212,8 +212,8 @@ export function createHarnessCampaign(
     return {
       ...result,
       ...buildMeta(
-        ['harness_plan_issues'],
-        `Project "${input.projectName}" and campaign "${input.campaignName}" ready. Now call harness_plan_issues with projectId "${result.projectId}" and campaignId "${result.campaignId}" to populate the task queue.`,
+        ['harness_orchestrator'],
+        `Project "${input.projectName}" and campaign "${input.campaignName}" ready. Now call harness_orchestrator(action: "plan_issues") with projectId "${result.projectId}" and campaignId "${result.campaignId}" to populate the task queue.`,
         { idempotent: true },
       ),
     };
@@ -307,8 +307,8 @@ export function planHarnessIssues(
     return {
       ...result,
       ...buildMeta(
-        ['promote_queue', 'begin_incremental_session'],
-        `${result.issueCount} issues injected into the queue as "pending". Call promote_queue to unlock tasks with no dependencies, then begin_incremental_session to start working.`,
+        ['harness_orchestrator', 'harness_session'],
+        `${result.issueCount} issues injected into the queue as "pending". Call harness_orchestrator(action: "promote_queue") to unlock tasks with no dependencies, then harness_session(action: "begin") to start working.`,
       ),
     };
   } finally {
@@ -404,8 +404,8 @@ export function rollbackHarnessIssue(
     return {
       ...result,
       ...buildMeta(
-        ['promote_queue', 'begin_incremental_session'],
-        `Issue ${input.issueId} rolled back from "${result.previousStatus}" to "pending". Call promote_queue to re-evaluate the queue, then begin_incremental_session to retry.`,
+        ['harness_orchestrator', 'harness_session'],
+        `Issue ${input.issueId} rolled back from "${result.previousStatus}" to "pending". Call harness_orchestrator(action: "promote_queue") to re-evaluate the queue, then harness_session(action: "begin") to retry.`,
       ),
     };
   } finally {

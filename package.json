@@ -14,10 +14,13 @@
   },
   "files": [
     "dist",
+    "!dist/test",
     "README.md",
     "LICENSE",
     "package.json",
-    ".github/skills"
+    ".github/skills",
+    "!.github/skills/**/__pycache__",
+    "!.github/skills/**/*.pyc"
   ],
   "bin": {
     "harness-session-lifecycle": "./dist/bin/session-lifecycle.js",

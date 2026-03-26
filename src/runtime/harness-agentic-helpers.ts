@@ -282,7 +282,7 @@ export function resolveProjectId(
     throw new AgenticToolError(
       `No project found with name "${input.projectName}".`,
       buildProjectResolutionHelp(connection, input.workspaceId),
-      'harness_create_campaign',
+      'harness_orchestrator',
     );
   }
 
@@ -325,7 +325,7 @@ export function resolveCampaignId(
     throw new AgenticToolError(
       `No campaign found with name "${input.campaignName}" in project ${projectId}.`,
       buildCampaignResolutionHelp(connection, projectId),
-      'harness_create_campaign',
+      'harness_orchestrator',
     );
   }
 
@@ -436,7 +436,7 @@ function buildProjectResolutionHelp(
 
   return rows.length > 0
     ? `Available projects: ${rows.map((row) => `"${row.name}" (${row.id})`).join(', ')}.`
-    : 'No projects exist yet. Call harness_create_campaign first to create a project.';
+    : 'No projects exist yet. Call harness_orchestrator(action: "create_campaign") first to create a project.';
 }
 
 function buildCampaignResolutionHelp(
@@ -454,5 +454,5 @@ function buildCampaignResolutionHelp(
 
   return rows.length > 0
     ? `Available campaigns: ${rows.map((row) => `"${row.name}" (${row.id})`).join(', ')}.`
-    : 'No campaigns exist for this project. Call harness_create_campaign first.';
+    : 'No campaigns exist for this project. Call harness_orchestrator(action: "create_campaign") first.';
 }

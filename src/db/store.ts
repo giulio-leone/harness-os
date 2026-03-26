@@ -7,6 +7,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const CURRENT_SCHEMA_VERSION = 2;
+const MINIMUM_SUPPORTED_VERSION = 2;
+
+type MigrationFn = (connection: DatabaseSync) => void;
+
+const MIGRATIONS: ReadonlyMap<number, MigrationFn> = new Map([
+  // [2, migrateV2ToV3],  // placeholder — add future migrations here
+]);
+
 const REQUIRED_TABLES = [
   'workspaces',
   'projects',
@@ -103,7 +111,7 @@ export function ensureHarnessSchema(
     if (hasUserTables(connection)) {
       throw new Error(
         'This SQLite database is not a current agent-harness database. ' +
-          `Only schema v${CURRENT_SCHEMA_VERSION} databases are supported by this runtime. ` +
+          `Only schema v${MINIMUM_SUPPORTED_VERSION}–v${CURRENT_SCHEMA_VERSION} databases are supported. ` +
           'Create a fresh harness database before reopening this path.',
       );
     }
@@ -117,26 +125,48 @@ export function ensureHarnessSchema(
 
   if (version === 0) {
     throw new Error(
-      'Detected an unversioned harness database. ' +
-        `Only schema v${CURRENT_SCHEMA_VERSION} databases are supported by this runtime. ` +
+      'Detected an unversioned harness database (corrupted or pre-release). ' +
+        `Only schema v${MINIMUM_SUPPORTED_VERSION}–v${CURRENT_SCHEMA_VERSION} are supported. ` +
         'Recreate the harness database from scratch.',
     );
   }
 
   if (version > CURRENT_SCHEMA_VERSION) {
     throw new Error(
-      `Harness schema version ${version} is newer than this runtime (${CURRENT_SCHEMA_VERSION}).`,
+      `Harness schema version ${version} is newer than this runtime ` +
+        `(supports up to v${CURRENT_SCHEMA_VERSION}). Upgrade the harness-os package.`,
+    );
+  }
+
+  if (version < MINIMUM_SUPPORTED_VERSION) {
+    throw new Error(
+      `Harness schema version ${version} is too old for in-place migration. ` +
+        `This runtime supports v${MINIMUM_SUPPORTED_VERSION}–v${CURRENT_SCHEMA_VERSION}. ` +
+        'Recreate the harness database from scratch.',
     );
   }
 
   if (version < CURRENT_SCHEMA_VERSION) {
-    throw new Error(
-      `Harness schema version ${version} is no longer supported by this runtime. ` +
-        `Recreate the database with schema v${CURRENT_SCHEMA_VERSION}.`,
-    );
+    applyMigrations(connection, version);
   }
 
   validateCurrentSchema(connection);
+}
+
+function applyMigrations(connection: DatabaseSync, fromVersion: number): void {
+  for (let v = fromVersion; v < CURRENT_SCHEMA_VERSION; v++) {
+    const migrate = MIGRATIONS.get(v);
+
+    if (migrate === undefined) {
+      throw new Error(
+        `No migration defined for v${v} → v${v + 1}. ` +
+          `Recreate the database with schema v${CURRENT_SCHEMA_VERSION}.`,
+      );
+    }
+
+    migrate(connection);
+    setUserVersion(connection, v + 1);
+  }
 }
 
 function validateCurrentSchema(connection: DatabaseSync): void {
