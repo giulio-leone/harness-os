@@ -41,6 +41,7 @@ import {
   selectAll,
   selectOne,
   runStatement,
+  runInTransaction,
 } from '../db/store.js';
 import {
   type JsonRpcErrorPayload,
@@ -1161,18 +1162,20 @@ export class SessionLifecycleMcpServer {
                   [projectId, campaignId],
                 );
                 if (!dryRun) {
-                  for (const lease of activeLeases) {
+                  runInTransaction(db.connection, () => {
+                    for (const lease of activeLeases) {
+                      runStatement(
+                        db.connection,
+                        `UPDATE leases SET status = 'released', released_at = ? WHERE id = ?`,
+                        [new Date().toISOString(), lease.id],
+                      );
+                    }
                     runStatement(
                       db.connection,
-                      `UPDATE leases SET status = 'released', released_at = ? WHERE id = ?`,
-                      [new Date().toISOString(), lease.id],
+                      `UPDATE campaigns SET status = 'archived' WHERE id = ?`,
+                      [campaignId],
                     );
-                  }
-                  runStatement(
-                    db.connection,
-                    `UPDATE campaigns SET status = 'archived' WHERE id = ?`,
-                    [campaignId],
-                  );
+                  });
                 }
                 return {
                   archived: !dryRun,
@@ -1210,15 +1213,17 @@ export class SessionLifecycleMcpServer {
                 );
 
                 if (!dryRun) {
-                  for (const s of expiredSessions) {
-                    runStatement(db.connection, `DELETE FROM active_sessions WHERE token = ?`, [s.token]);
-                  }
-                  for (const l of oldLeases) {
-                    runStatement(db.connection, `DELETE FROM leases WHERE id = ?`, [l.id]);
-                  }
-                  for (const e of oldEvents) {
-                    runStatement(db.connection, `DELETE FROM events WHERE id = ?`, [e.id]);
-                  }
+                  runInTransaction(db.connection, () => {
+                    for (const s of expiredSessions) {
+                      runStatement(db.connection, `DELETE FROM active_sessions WHERE token = ?`, [s.token]);
+                    }
+                    for (const l of oldLeases) {
+                      runStatement(db.connection, `DELETE FROM leases WHERE id = ?`, [l.id]);
+                    }
+                    for (const e of oldEvents) {
+                      runStatement(db.connection, `DELETE FROM events WHERE id = ?`, [e.id]);
+                    }
+                  });
                 }
 
                 return {

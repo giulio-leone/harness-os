@@ -264,6 +264,9 @@ function getUserVersion(connection: DatabaseSync): number {
 }
 
 function setUserVersion(connection: DatabaseSync, version: number): void {
+  if (!Number.isInteger(version) || version < 0) {
+    throw new Error(`Invalid schema version: ${version}`);
+  }
   connection.exec(`PRAGMA user_version = ${version}`);
 }
 
