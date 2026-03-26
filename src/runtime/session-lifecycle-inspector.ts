@@ -14,6 +14,12 @@ export interface InspectIssueInput {
   eventLimit?: number;
 }
 
+export interface InspectHealthInput {
+  dbPath: string;
+  projectId: string;
+  campaignId?: string;
+}
+
 interface IssueRow {
   id: string;
   task: string;
@@ -207,6 +213,98 @@ export class SessionLifecycleInspector {
         checkpoints: checkpoints.map(mapCheckpointRow),
         memoryLinks: memoryLinks.map(mapMemoryLinkRow),
         events: events.map(mapEventRow),
+      };
+    } finally {
+      database.close();
+    }
+  }
+
+  inspectHealth(input: InspectHealthInput): Record<string, unknown> {
+    const database = openHarnessDatabase({ dbPath: input.dbPath });
+    const now = new Date().toISOString();
+
+    try {
+      const campaignFilter = input.campaignId ?? null;
+
+      const queueCounts = selectAll<{ status: string; cnt: number }>(
+        database.connection,
+        `SELECT status, COUNT(*) AS cnt
+         FROM issues
+         WHERE project_id = ?
+           AND (? IS NULL OR campaign_id = ?)
+         GROUP BY status`,
+        [input.projectId, campaignFilter, campaignFilter],
+      );
+
+      const activeLeasesResult = selectAll<{
+        id: string;
+        issue_id: string | null;
+        agent_id: string;
+        acquired_at: string;
+        expires_at: string;
+        last_heartbeat_at: string | null;
+      }>(
+        database.connection,
+        `SELECT id, issue_id, agent_id, acquired_at, expires_at, last_heartbeat_at
+         FROM leases
+         WHERE project_id = ?
+           AND (? IS NULL OR campaign_id = ?)
+           AND status = 'active'
+           AND released_at IS NULL`,
+        [input.projectId, campaignFilter, campaignFilter],
+      );
+
+      const staleLeases = activeLeasesResult.filter(
+        (l) => l.expires_at <= now,
+      );
+
+      const latestCheckpoint = selectOne<{ created_at: string }>(
+        database.connection,
+        `SELECT c.created_at
+         FROM checkpoints c
+         JOIN issues i ON c.issue_id = i.id
+         WHERE i.project_id = ?
+           AND (? IS NULL OR i.campaign_id = ?)
+         ORDER BY c.created_at DESC
+         LIMIT 1`,
+        [input.projectId, campaignFilter, campaignFilter],
+      );
+
+      const activeSessionCount = selectOne<{ cnt: number }>(
+        database.connection,
+        `SELECT COUNT(*) AS cnt
+         FROM active_sessions
+         WHERE project_id = ?
+           AND (? IS NULL OR campaign_id = ?)
+           AND status = 'active'`,
+        [input.projectId, campaignFilter, campaignFilter],
+      );
+
+      const queue: Record<string, number> = {};
+      for (const row of queueCounts) {
+        queue[row.status] = row.cnt;
+      }
+      const totalIssues = queueCounts.reduce((sum, r) => sum + r.cnt, 0);
+
+      return {
+        projectId: input.projectId,
+        campaignId: input.campaignId ?? null,
+        timestamp: now,
+        queue: {
+          ...queue,
+          total: totalIssues,
+        },
+        leases: {
+          active: activeLeasesResult.length,
+          stale: staleLeases.length,
+          staleLeaseIds: staleLeases.map((l) => l.id),
+        },
+        checkpoints: {
+          lastCheckpointAt: latestCheckpoint?.created_at ?? null,
+        },
+        sessions: {
+          active: activeSessionCount?.cnt ?? 0,
+        },
       };
     } finally {
       database.close();

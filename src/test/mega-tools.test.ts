@@ -34,6 +34,18 @@ import {
 class StubMem0Adapter implements Mem0Adapter {
   private readonly memories: PublicMemoryRecord[] = [];
 
+  readonly metadata = {
+    adapterId: 'stub-test',
+    contractVersion: '1.0' as const,
+    capabilities: {
+      supportsRecall: true,
+      supportsUpdate: false,
+      supportsDelete: false,
+      supportsWorkspaceList: false,
+      supportsProjectList: false,
+    },
+  };
+
   async healthCheck(): Promise<HealthCheckResult> {
     return {
       ok: true,
@@ -744,10 +756,11 @@ test('harness_artifacts: save without path throws AgenticToolError', async () =>
 
 // ─── 5. Cross-tool integrity ────────────────────────────────────────
 
-test('cross-tool: only 4 tools are registered on the server', async () => {
+test('cross-tool: only 5 tools are registered on the server', async () => {
   const { internals } = createServer();
   const toolNames = [...internals.tools.keys()].sort();
   assert.deepEqual(toolNames, [
+    'harness_admin',
     'harness_artifacts',
     'harness_inspector',
     'harness_orchestrator',
@@ -757,7 +770,7 @@ test('cross-tool: only 4 tools are registered on the server', async () => {
 
 test('cross-tool: every tool handler rejects missing action param', async () => {
   const { internals } = createServer();
-  for (const name of ['harness_inspector', 'harness_orchestrator', 'harness_session', 'harness_artifacts']) {
+  for (const name of ['harness_inspector', 'harness_orchestrator', 'harness_session', 'harness_artifacts', 'harness_admin']) {
     const tool = internals.tools.get(name)!;
     await assert.rejects(
       () => tool.handler({}),

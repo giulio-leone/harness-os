@@ -276,8 +276,8 @@ export function planHarnessIssues(
 
         runStatement(
           database.connection,
-          `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+          `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
           [
             issue.id,
             projectId,
@@ -287,6 +287,7 @@ export function planHarnessIssues(
             issue.priority,
             issue.size,
             JSON.stringify(dependsOnIds),
+            new Date().toISOString(),
           ],
         );
       });

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 import { SessionLifecycleAdapter } from '../runtime/session-lifecycle-adapter.js';
+import { loadDefaultMem0Adapter } from '../runtime/default-mem0-loader.js';
 import {
   createHarnessCampaign,
   harnessCreateCampaignInputSchema,
@@ -161,17 +162,19 @@ function stripAction(args: unknown): unknown {
 
 const HARNESS_INSTRUCTIONS = `You are connected to the agent-harness lifecycle server — an Agentic OS for autonomous task execution.
 
-This server exposes 4 tools, each covering a specific domain. Use the "action" parameter to select the operation.
+This server exposes 5 tools, each covering a specific domain. Use the "action" parameter to select the operation.
 
 TOOLS:
-1. harness_inspector  — Read-only observation. Actions: get_context, next_action, overview, issue.
+1. harness_inspector  — Read-only observation. Actions: get_context, next_action, overview, issue, health.
 2. harness_orchestrator — Setup & queue management. Actions: init_workspace, create_campaign, plan_issues, promote_queue, rollback_issue.
-3. harness_session — Execution lifecycle. Actions: begin, begin_recovery, checkpoint, close, advance.
+3. harness_session — Execution lifecycle. Actions: begin, begin_recovery, checkpoint, close, advance, heartbeat.
 4. harness_artifacts — Persistent state registry. Actions: save, list.
+5. harness_admin — Maintenance & administration. Actions: reconcile, drain, archive, cleanup, mem0_snapshot, mem0_rollup.
 
 ORIENTATION (call first in any new session):
 - harness_inspector(action: "get_context") → see workspace, project, campaign, queue status
 - harness_inspector(action: "next_action") → get directive on exactly what to call next
+- harness_inspector(action: "health") → operational metrics (queue depth, stale leases, checkpoint freshness)
 
 SETUP (one-time, when no workspace/project exists):
 1. harness_orchestrator(action: "init_workspace")
@@ -183,17 +186,26 @@ EXECUTION LOOP (repeated):
 5. harness_session(action: "begin") → claims next ready task, returns sessionToken
 6. [Do the work described in the issued task]
 7. harness_session(action: "checkpoint") → save progress (pass sessionToken)
-8. harness_session(action: "advance") → close current + claim next task atomically (preferred)
-9. harness_session(action: "close") → close without advancing (alternative to step 8)
+8. harness_session(action: "heartbeat") → renew lease for long-running tasks (pass sessionToken)
+9. harness_session(action: "advance") → close current + claim next task atomically (preferred)
+10. harness_session(action: "close") → close without advancing (alternative to step 9)
 
 RECOVERY:
 - harness_orchestrator(action: "rollback_issue") → reset stuck issue to pending
 - harness_session(action: "begin_recovery") → claim a needs_recovery issue
 
+MAINTENANCE:
+- harness_admin(action: "reconcile") → force reconciliation of stale leases
+- harness_admin(action: "drain") → pause new claims for a campaign
+- harness_admin(action: "archive") → archive a completed campaign
+- harness_admin(action: "cleanup") → delete old sessions, leases, events past retention
+- harness_admin(action: "mem0_snapshot") → persist project/milestone summary to mem0
+- harness_admin(action: "mem0_rollup") → compact task-level memories into summary
+
 RULES:
 - dbPath is optional: set HARNESS_DB_PATH env var to avoid passing it every call.
 - Tools accept human-readable names (projectName, campaignName) instead of UUIDs, but ambiguous scope must be resolved explicitly with workspaceId or projectId.
-- Always pass the short \`sessionToken\` returned by begin to checkpoint/close/advance, NOT the heavy context.
+- Always pass the short \`sessionToken\` returned by begin to checkpoint/close/advance/heartbeat, NOT the heavy context.
 - Every response includes _meta.nextTools and _meta.hint telling you what to do next.`;
 
 export class SessionLifecycleMcpServer {
@@ -305,13 +317,13 @@ export class SessionLifecycleMcpServer {
       {
         name: 'harness_inspector',
         description:
-          'Read-only observation of the Harness state. Actions: get_context (workspace/project/queue status — call FIRST), next_action (NBA engine — tells you exactly what tool to call next), overview (task dashboard by project), issue (deep-dive into a specific issue).',
+          'Read-only observation of the Harness state. Actions: get_context (workspace/project/queue status — call FIRST), next_action (NBA engine — tells you exactly what tool to call next), overview (task dashboard by project), issue (deep-dive into a specific issue), health (operational metrics — queue depth, stale leases, checkpoint freshness).',
         inputSchema: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
-              enum: ['get_context', 'next_action', 'overview', 'issue'],
+              enum: ['get_context', 'next_action', 'overview', 'issue', 'health'],
               description: 'The inspection action to perform.',
             },
             dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
@@ -328,7 +340,7 @@ export class SessionLifecycleMcpServer {
         },
         handler: async (args) => {
           const parsed = z.object({
-            action: z.enum(['get_context', 'next_action', 'overview', 'issue']),
+            action: z.enum(['get_context', 'next_action', 'overview', 'issue', 'health']),
             dbPath: z.string().optional(),
             workspaceId: z.string().optional(),
             projectId: z.string().optional(),
@@ -426,6 +438,37 @@ export class SessionLifecycleMcpServer {
                 ...result,
                 ...buildMeta(['harness_session', 'harness_orchestrator'], hint),
               };
+            }
+
+            case 'health': {
+              const dbPath = resolveDbPath(parsed.dbPath);
+              const db = openHarnessDatabase({ dbPath });
+              try {
+                const projectId = resolveProjectId(db.connection, {
+                  projectId: parsed.projectId,
+                  projectName: parsed.projectName,
+                  workspaceId: parsed.workspaceId,
+                });
+                const inspector = new (await import('../runtime/session-lifecycle-inspector.js')).SessionLifecycleInspector();
+                const health = inspector.inspectHealth({
+                  dbPath,
+                  projectId,
+                  campaignId: parsed.campaignId,
+                });
+
+                const staleCount = (health['leases'] as Record<string, unknown>)?.['stale'] as number ?? 0;
+                let hint = 'Health metrics loaded.';
+                if (staleCount > 0) {
+                  hint = `${staleCount} stale lease(s) detected. Run harness_admin(action: "reconcile") or harness_orchestrator(action: "promote_queue").`;
+                }
+
+                return {
+                  ...health,
+                  ...buildMeta(['harness_admin', 'harness_orchestrator'], hint),
+                };
+              } finally {
+                db.close();
+              }
             }
           }
         },
@@ -552,13 +595,13 @@ export class SessionLifecycleMcpServer {
       {
         name: 'harness_session',
         description:
-          'Execution lifecycle for worker agents. Actions: begin (claim next ready task — returns sessionToken), begin_recovery (claim a needs_recovery task), checkpoint (save progress — pass sessionToken), close (mark task done/failed — pass sessionToken), advance (atomic close + begin next — pass sessionToken, preferred over close + begin).',
+          'Execution lifecycle for worker agents. Actions: begin (claim next ready task — returns sessionToken), begin_recovery (claim a needs_recovery task), checkpoint (save progress — pass sessionToken), close (mark task done/failed — pass sessionToken), advance (atomic close + begin next — pass sessionToken, preferred over close + begin), heartbeat (renew lease TTL for long-running tasks — pass sessionToken).',
         inputSchema: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
-              enum: ['begin', 'begin_recovery', 'checkpoint', 'close', 'advance'],
+              enum: ['begin', 'begin_recovery', 'checkpoint', 'close', 'advance', 'heartbeat'],
               description: 'The session lifecycle action to perform.',
             },
             // begin / begin_recovery
@@ -581,7 +624,7 @@ export class SessionLifecycleMcpServer {
         },
         handler: async (args) => {
           const parsed = z.object({
-            action: z.enum(['begin', 'begin_recovery', 'checkpoint', 'close', 'advance']),
+            action: z.enum(['begin', 'begin_recovery', 'checkpoint', 'close', 'advance', 'heartbeat']),
           }).passthrough().parse(args);
 
           switch (parsed.action) {
@@ -767,6 +810,44 @@ export class SessionLifecycleMcpServer {
                  ),
                };
              }
+
+            case 'heartbeat': {
+              const hbParsed = z
+                .object({
+                  dbPath: z.string().optional(),
+                  sessionToken: z.string(),
+                  leaseTtlSeconds: z.number().int().positive().optional(),
+                })
+                .passthrough()
+                .parse(args);
+
+              const session = this.tokenStore.resolve(
+                hbParsed.sessionToken,
+                hbParsed.dbPath,
+              );
+              const context = session.context as unknown as SessionContext;
+              const dbPath = resolveDbPath(context.dbPath ?? hbParsed.dbPath);
+              const db = openHarnessDatabase({ dbPath });
+              try {
+                const { renewLease } = await import('../db/lease-manager.js');
+                const extensionSeconds = hbParsed.leaseTtlSeconds ?? 3600;
+                const result = renewLease(
+                  db.connection,
+                  context.leaseId,
+                  extensionSeconds,
+                );
+                return {
+                  leaseId: context.leaseId,
+                  ...result,
+                  ...buildMeta(
+                    ['harness_session'],
+                    `Lease renewed for ${extensionSeconds}s. Continue working.`,
+                  ),
+                };
+              } finally {
+                db.close();
+              }
+            }
           }
         },
       },
@@ -924,6 +1005,363 @@ export class SessionLifecycleMcpServer {
                       ? `Found ${artifacts.length} artifact(s).`
                       : 'No artifacts found for the given filters.',
                   ),
+                };
+              }
+            }
+          } finally {
+            db.close();
+          }
+        },
+      },
+
+      // ── 5. harness_admin ──────────────────────────────────────────
+      {
+        name: 'harness_admin',
+        description:
+          'Maintenance and administration. Actions: reconcile (force reconciliation of stale leases), drain (pause new claims for a campaign), archive (close all done issues and release leases for a campaign), cleanup (delete expired sessions, old events, and released leases older than retention days), mem0_snapshot (persist a project/milestone summary to mem0), mem0_rollup (compact detailed task memories into a higher-level summary).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            action: {
+              type: 'string',
+              enum: ['reconcile', 'drain', 'archive', 'cleanup', 'mem0_snapshot', 'mem0_rollup'],
+              description: 'The admin action to perform.',
+            },
+            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
+            projectId: { type: 'string', description: 'Project UUID (or use projectName).' },
+            projectName: { type: 'string', description: 'Human-readable project name.' },
+            workspaceId: { type: 'string' },
+            campaignId: { type: 'string', description: 'Campaign UUID (or use campaignName).' },
+            campaignName: { type: 'string', description: 'Campaign name.' },
+            retentionDays: { type: 'integer', minimum: 1, description: 'For "cleanup": retention period in days (default 30).' },
+            checkpointFreshnessSeconds: { type: 'integer', minimum: 1, description: 'For "reconcile": freshness threshold (default 3600).' },
+            dryRun: { type: 'boolean', description: 'Preview what would happen without making changes.' },
+            // mem0_snapshot / mem0_rollup
+            content: { type: 'string', description: 'For "mem0_snapshot": the summary content to persist.' },
+            memoryKind: { type: 'string', enum: ['decision', 'preference', 'summary', 'artifact_context', 'note'], description: 'For mem0 actions: memory kind.' },
+            milestoneId: { type: 'string', description: 'For "mem0_rollup": milestone to roll up.' },
+          },
+          required: ['action'],
+        },
+        handler: async (args) => {
+          const parsed = z.object({
+            action: z.enum(['reconcile', 'drain', 'archive', 'cleanup', 'mem0_snapshot', 'mem0_rollup']),
+            dbPath: z.string().optional(),
+            projectId: z.string().optional(),
+            projectName: z.string().optional(),
+            workspaceId: z.string().optional(),
+            campaignId: z.string().optional(),
+            campaignName: z.string().optional(),
+            retentionDays: z.number().int().positive().optional(),
+            checkpointFreshnessSeconds: z.number().int().positive().optional(),
+            dryRun: z.boolean().optional(),
+            content: z.string().optional(),
+            memoryKind: z.enum(['decision', 'preference', 'summary', 'artifact_context', 'note']).optional(),
+            milestoneId: z.string().optional(),
+          }).parse(args);
+
+          const dbPath = resolveDbPath(parsed.dbPath);
+          const db = openHarnessDatabase({ dbPath });
+          try {
+            const projectId = resolveProjectId(db.connection, {
+              projectId: parsed.projectId,
+              projectName: parsed.projectName,
+              workspaceId: parsed.workspaceId,
+            });
+            const campaignId = parsed.campaignId
+              ? parsed.campaignId
+              : parsed.campaignName
+                ? resolveCampaignId(db.connection, projectId, { campaignName: parsed.campaignName })
+                : undefined;
+
+            switch (parsed.action) {
+              case 'reconcile': {
+                const { reconcileProjectState } = await import('../db/lease-manager.js');
+                const blockers = reconcileProjectState(db.connection, {
+                  projectId,
+                  campaignId,
+                  checkpointFreshnessSeconds: parsed.checkpointFreshnessSeconds ?? 3600,
+                });
+                return {
+                  reconciled: true,
+                  blockers: blockers.map((b) => ({
+                    issueId: b.issueId,
+                    leaseId: b.leaseId,
+                    reason: b.reason,
+                    summary: b.summary,
+                  })),
+                  ...buildMeta(
+                    blockers.length > 0
+                      ? ['harness_session', 'harness_inspector']
+                      : ['harness_inspector'],
+                    blockers.length > 0
+                      ? `Reconciliation found ${blockers.length} blocker(s). Use harness_session(action: "begin_recovery") to address them.`
+                      : 'Reconciliation complete — no blockers found.',
+                  ),
+                };
+              }
+
+              case 'drain': {
+                if (!campaignId) {
+                  throw new AgenticToolError(
+                    'campaignId or campaignName is required for drain.',
+                    'Specify which campaign to drain.',
+                    'harness_admin',
+                  );
+                }
+                const dryRun = parsed.dryRun ?? false;
+                const readyIssues = selectAll<{ id: string; task: string }>(
+                  db.connection,
+                  `SELECT id, task FROM issues WHERE project_id = ? AND campaign_id = ? AND status IN ('pending', 'ready')`,
+                  [projectId, campaignId],
+                );
+                if (!dryRun) {
+                  runStatement(
+                    db.connection,
+                    `UPDATE issues SET status = 'blocked' WHERE project_id = ? AND campaign_id = ? AND status IN ('pending', 'ready')`,
+                    [projectId, campaignId],
+                  );
+                  runStatement(
+                    db.connection,
+                    `UPDATE campaigns SET status = 'paused' WHERE id = ?`,
+                    [campaignId],
+                  );
+                }
+                return {
+                  drained: !dryRun,
+                  dryRun,
+                  affectedIssues: readyIssues.length,
+                  issues: readyIssues.map((i) => ({ id: i.id, task: i.task })),
+                  ...buildMeta(
+                    ['harness_admin', 'harness_inspector'],
+                    dryRun
+                      ? `Dry run: ${readyIssues.length} issue(s) would be blocked.`
+                      : `Campaign drained: ${readyIssues.length} issue(s) blocked, campaign paused.`,
+                  ),
+                };
+              }
+
+              case 'archive': {
+                if (!campaignId) {
+                  throw new AgenticToolError(
+                    'campaignId or campaignName is required for archive.',
+                    'Specify which campaign to archive.',
+                    'harness_admin',
+                  );
+                }
+                const dryRun = parsed.dryRun ?? false;
+                const doneIssues = selectAll<{ id: string }>(
+                  db.connection,
+                  `SELECT id FROM issues WHERE project_id = ? AND campaign_id = ? AND status IN ('done', 'failed')`,
+                  [projectId, campaignId],
+                );
+                const activeLeases = selectAll<{ id: string }>(
+                  db.connection,
+                  `SELECT id FROM leases WHERE project_id = ? AND campaign_id = ? AND status = 'active' AND released_at IS NULL`,
+                  [projectId, campaignId],
+                );
+                if (!dryRun) {
+                  for (const lease of activeLeases) {
+                    runStatement(
+                      db.connection,
+                      `UPDATE leases SET status = 'released', released_at = ? WHERE id = ?`,
+                      [new Date().toISOString(), lease.id],
+                    );
+                  }
+                  runStatement(
+                    db.connection,
+                    `UPDATE campaigns SET status = 'archived' WHERE id = ?`,
+                    [campaignId],
+                  );
+                }
+                return {
+                  archived: !dryRun,
+                  dryRun,
+                  doneIssues: doneIssues.length,
+                  releasedLeases: activeLeases.length,
+                  ...buildMeta(
+                    ['harness_inspector'],
+                    dryRun
+                      ? `Dry run: would archive campaign with ${doneIssues.length} completed issue(s) and release ${activeLeases.length} lease(s).`
+                      : `Campaign archived: ${activeLeases.length} lease(s) released.`,
+                  ),
+                };
+              }
+
+              case 'cleanup': {
+                const retentionDays = parsed.retentionDays ?? 30;
+                const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+                const dryRun = parsed.dryRun ?? false;
+
+                const expiredSessions = selectAll<{ token: string }>(
+                  db.connection,
+                  `SELECT token FROM active_sessions WHERE project_id = ? AND status = 'closed' AND closed_at < ?`,
+                  [projectId, cutoff],
+                );
+                const oldLeases = selectAll<{ id: string }>(
+                  db.connection,
+                  `SELECT id FROM leases WHERE project_id = ? AND status IN ('released', 'recovered') AND released_at < ?`,
+                  [projectId, cutoff],
+                );
+                const oldEvents = selectAll<{ id: string }>(
+                  db.connection,
+                  `SELECT e.id FROM events e JOIN issues i ON e.issue_id = i.id WHERE i.project_id = ? AND e.created_at < ?`,
+                  [projectId, cutoff],
+                );
+
+                if (!dryRun) {
+                  for (const s of expiredSessions) {
+                    runStatement(db.connection, `DELETE FROM active_sessions WHERE token = ?`, [s.token]);
+                  }
+                  for (const l of oldLeases) {
+                    runStatement(db.connection, `DELETE FROM leases WHERE id = ?`, [l.id]);
+                  }
+                  for (const e of oldEvents) {
+                    runStatement(db.connection, `DELETE FROM events WHERE id = ?`, [e.id]);
+                  }
+                }
+
+                return {
+                  cleaned: !dryRun,
+                  dryRun,
+                  retentionDays,
+                  deletedSessions: expiredSessions.length,
+                  deletedLeases: oldLeases.length,
+                  deletedEvents: oldEvents.length,
+                  ...buildMeta(
+                    ['harness_inspector'],
+                    dryRun
+                      ? `Dry run: would delete ${expiredSessions.length} session(s), ${oldLeases.length} lease(s), ${oldEvents.length} event(s) older than ${retentionDays}d.`
+                      : `Cleanup done: removed ${expiredSessions.length} session(s), ${oldLeases.length} lease(s), ${oldEvents.length} event(s).`,
+                  ),
+                };
+              }
+
+              case 'mem0_snapshot': {
+                if (!parsed.content) {
+                  throw new AgenticToolError(
+                    'content is required for mem0_snapshot.',
+                    'Provide the summary content to persist.',
+                    'harness_admin',
+                  );
+                }
+                const mem0 = await loadDefaultMem0Adapter();
+                if (!mem0) {
+                  return {
+                    stored: false,
+                    reason: 'mem0 adapter not available',
+                    ...buildMeta(['harness_admin'], 'mem0 is not configured. Set up mem0-mcp to enable memory persistence.'),
+                  };
+                }
+                const workspace = selectOne<{ id: string; name: string }>(
+                  db.connection,
+                  `SELECT w.id, w.name FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE p.id = ? LIMIT 1`,
+                  [projectId],
+                );
+                const project = selectOne<{ name: string }>(
+                  db.connection,
+                  `SELECT name FROM projects WHERE id = ? LIMIT 1`,
+                  [projectId],
+                );
+                const snapshotId = `snap-${randomUUID()}`;
+                const record = await mem0.storeMemory({
+                  kind: parsed.memoryKind ?? 'summary',
+                  content: parsed.content,
+                  scope: {
+                    workspace: workspace?.name ?? 'unknown',
+                    project: project?.name ?? 'unknown',
+                    campaign: campaignId ?? undefined,
+                  },
+                  provenance: {
+                    checkpointId: snapshotId,
+                    artifactIds: [],
+                    note: 'project-level snapshot via harness_admin',
+                  },
+                });
+                runStatement(
+                  db.connection,
+                  `INSERT INTO memory_links (id, workspace_id, project_id, campaign_id, issue_id, memory_kind, memory_ref, summary, created_at)
+                   VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+                  [randomUUID(), workspace?.id ?? '', projectId, campaignId ?? null, parsed.memoryKind ?? 'summary', record.id, parsed.content.slice(0, 200), new Date().toISOString()],
+                );
+                return {
+                  stored: true,
+                  memoryId: record.id,
+                  snapshotId,
+                  ...buildMeta(['harness_admin', 'harness_inspector'], 'Project snapshot persisted to mem0.'),
+                };
+              }
+
+              case 'mem0_rollup': {
+                const mem0 = await loadDefaultMem0Adapter();
+                if (!mem0) {
+                  return {
+                    rolledUp: false,
+                    reason: 'mem0 adapter not available',
+                    ...buildMeta(['harness_admin'], 'mem0 is not configured.'),
+                  };
+                }
+                const workspace = selectOne<{ id: string; name: string }>(
+                  db.connection,
+                  `SELECT w.id, w.name FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE p.id = ? LIMIT 1`,
+                  [projectId],
+                );
+                const project = selectOne<{ name: string }>(
+                  db.connection,
+                  `SELECT name FROM projects WHERE id = ? LIMIT 1`,
+                  [projectId],
+                );
+                const scopeFilter = campaignId
+                  ? `AND campaign_id = '${campaignId}'`
+                  : '';
+                const milestoneFilter = parsed.milestoneId
+                  ? `AND milestone_id = '${parsed.milestoneId}'`
+                  : '';
+                const detailedLinks = selectAll<{ memory_ref: string; summary: string; memory_kind: string }>(
+                  db.connection,
+                  `SELECT memory_ref, summary, memory_kind
+                   FROM memory_links
+                   WHERE project_id = ? ${scopeFilter} ${milestoneFilter}
+                   ORDER BY created_at ASC`,
+                  [projectId],
+                );
+                if (detailedLinks.length === 0) {
+                  return {
+                    rolledUp: false,
+                    reason: 'No memory links found to roll up.',
+                    ...buildMeta(['harness_inspector'], 'Nothing to roll up — no memory links in scope.'),
+                  };
+                }
+                const rollupContent = detailedLinks
+                  .map((l, i) => `[${i + 1}] (${l.memory_kind}) ${l.summary}`)
+                  .join('\n');
+                const rollupId = `rollup-${randomUUID()}`;
+                const record = await mem0.storeMemory({
+                  kind: 'summary',
+                  content: `Rollup of ${detailedLinks.length} memories:\n${rollupContent}`,
+                  scope: {
+                    workspace: workspace?.name ?? 'unknown',
+                    project: project?.name ?? 'unknown',
+                    campaign: campaignId ?? undefined,
+                  },
+                  provenance: {
+                    checkpointId: rollupId,
+                    note: `Rolled up ${detailedLinks.length} task-level memories`,
+                    artifactIds: detailedLinks.map((l) => l.memory_ref),
+                  },
+                });
+                runStatement(
+                  db.connection,
+                  `INSERT INTO memory_links (id, workspace_id, project_id, campaign_id, issue_id, memory_kind, memory_ref, summary, created_at)
+                   VALUES (?, ?, ?, ?, NULL, 'summary', ?, ?, ?)`,
+                  [randomUUID(), workspace?.id ?? '', projectId, campaignId ?? null, record.id, `Rollup of ${detailedLinks.length} memories`, new Date().toISOString()],
+                );
+                return {
+                  rolledUp: true,
+                  memoryId: record.id,
+                  rollupId,
+                  sourceCount: detailedLinks.length,
+                  ...buildMeta(['harness_inspector'], `Rolled up ${detailedLinks.length} memories into a single summary.`),
                 };
               }
             }

@@ -6,13 +6,13 @@ import { dirname, resolve } from 'node:path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 const MINIMUM_SUPPORTED_VERSION = 2;
 
 type MigrationFn = (connection: DatabaseSync) => void;
 
 const MIGRATIONS: ReadonlyMap<number, MigrationFn> = new Map([
-  // [2, migrateV2ToV3],  // placeholder — add future migrations here
+  [2, migrateV2ToV3],
 ]);
 
 const REQUIRED_TABLES = [
@@ -43,8 +43,8 @@ const REQUIRED_COLUMNS = {
   projects: ['workspace_id', 'key', 'name', 'domain', 'status', 'created_at', 'updated_at'],
   campaigns: ['status', 'scope_json', 'updated_at'],
   runs: ['workspace_id', 'project_id', 'session_type', 'host', 'status', 'started_at'],
-  issues: ['project_id', 'campaign_id', 'task', 'priority', 'status', 'size', 'depends_on'],
-  leases: ['workspace_id', 'project_id', 'issue_id', 'agent_id', 'status', 'acquired_at', 'expires_at'],
+  issues: ['project_id', 'campaign_id', 'task', 'priority', 'status', 'size', 'depends_on', 'created_at'],
+  leases: ['workspace_id', 'project_id', 'issue_id', 'agent_id', 'status', 'acquired_at', 'expires_at', 'last_heartbeat_at'],
   checkpoints: ['task_status', 'next_step', 'artifact_ids_json'],
   artifacts: ['workspace_id', 'project_id', 'campaign_id', 'issue_id', 'metadata_json'],
   memory_links: ['workspace_id', 'project_id', 'campaign_id', 'issue_id', 'memory_ref', 'summary'],
@@ -166,6 +166,15 @@ function applyMigrations(connection: DatabaseSync, fromVersion: number): void {
 
     migrate(connection);
     setUserVersion(connection, v + 1);
+  }
+}
+
+function migrateV2ToV3(connection: DatabaseSync): void {
+  if (hasTable(connection, 'leases') && !hasColumn(connection, 'leases', 'last_heartbeat_at')) {
+    connection.exec(`ALTER TABLE leases ADD COLUMN last_heartbeat_at TEXT`);
+  }
+  if (hasTable(connection, 'issues') && !hasColumn(connection, 'issues', 'created_at')) {
+    connection.exec(`ALTER TABLE issues ADD COLUMN created_at TEXT NOT NULL DEFAULT ''`);
   }
 }
 

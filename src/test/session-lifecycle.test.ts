@@ -28,6 +28,18 @@ import {
 class InMemoryMem0Adapter implements Mem0Adapter {
   private readonly memories: PublicMemoryRecord[] = [];
 
+  readonly metadata = {
+    adapterId: 'in-memory-test',
+    contractVersion: '1.0' as const,
+    capabilities: {
+      supportsRecall: true,
+      supportsUpdate: false,
+      supportsDelete: false,
+      supportsWorkspaceList: false,
+      supportsProjectList: false,
+    },
+  };
+
   async healthCheck(): Promise<HealthCheckResult> {
     return {
       ok: true,

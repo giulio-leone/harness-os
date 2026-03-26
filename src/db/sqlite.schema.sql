@@ -67,6 +67,7 @@ CREATE TABLE issues (
   size TEXT NOT NULL CHECK (size IN ('S', 'M', 'L', 'XL')),
   depends_on TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(depends_on)),
   next_best_action TEXT,
+  created_at TEXT NOT NULL DEFAULT '',
   FOREIGN KEY (project_id) REFERENCES projects(id),
   FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
   FOREIGN KEY (milestone_id) REFERENCES milestones(id)
@@ -82,6 +83,7 @@ CREATE TABLE leases (
   status TEXT NOT NULL CHECK (status IN ('active', 'released', 'needs_recovery', 'recovered')),
   acquired_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
+  last_heartbeat_at TEXT,
   released_at TEXT,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
   FOREIGN KEY (project_id) REFERENCES projects(id),

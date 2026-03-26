@@ -79,7 +79,30 @@ export interface MemorySearchInput {
   limit: number;
 }
 
+export interface AdapterMetadata {
+  /** Adapter implementation identifier (e.g. 'mem0-mcp', 'langchain-mem') */
+  readonly adapterId: string;
+  /** Semantic version of the adapter contract implemented */
+  readonly contractVersion: '1.0';
+  /** Adapter-specific capabilities */
+  readonly capabilities: {
+    readonly supportsRecall: boolean;
+    readonly supportsUpdate: boolean;
+    readonly supportsDelete: boolean;
+    readonly supportsWorkspaceList: boolean;
+    readonly supportsProjectList: boolean;
+  };
+}
+
+export interface AdapterError {
+  readonly code: 'connection_failed' | 'timeout' | 'auth_failed' | 'schema_mismatch' | 'internal';
+  readonly message: string;
+  readonly retryable: boolean;
+  readonly timestamp: string;
+}
+
 export interface Mem0Adapter {
+  readonly metadata: AdapterMetadata;
   healthCheck(): Promise<HealthCheckResult>;
   storeMemory(input: MemoryStoreInput): Promise<PublicMemoryRecord>;
   searchMemory(input: MemorySearchInput): Promise<MemorySearchResult[]>;
@@ -90,4 +113,6 @@ export interface Mem0Adapter {
   deleteMemory?(input: unknown): Promise<void>;
   listWorkspaces?(): Promise<string[]>;
   listProjects?(): Promise<string[]>;
+  /** Structured error reporting for telemetry */
+  getLastError?(): AdapterError | null;
 }

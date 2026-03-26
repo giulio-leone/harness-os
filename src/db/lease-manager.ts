@@ -14,6 +14,7 @@ export interface IssueRecord {
   size: string;
   dependsOn: string[];
   nextBestAction?: string;
+  createdAt: string;
 }
 
 export interface LeaseRecord {
@@ -76,6 +77,7 @@ interface RawIssueRow {
   size: string;
   depends_on: string;
   next_best_action: string | null;
+  created_at: string;
 }
 
 interface RawLeaseRow {
@@ -216,7 +218,8 @@ export function selectNextRecoveryIssue(
        status,
        size,
        depends_on,
-       next_best_action
+       next_best_action,
+       created_at
      FROM issues
      WHERE project_id = ?
        AND (? IS NULL OR campaign_id = ?)
@@ -454,6 +457,33 @@ export function releaseLease(
   );
 }
 
+export function renewLease(
+  connection: DatabaseSync,
+  leaseId: string,
+  extensionSeconds: number,
+  now = new Date().toISOString(),
+): { expiresAt: string; lastHeartbeatAt: string } {
+  const newExpiresAt = new Date(
+    Date.parse(now) + extensionSeconds * 1000,
+  ).toISOString();
+
+  const result = connection
+    .prepare(
+      `UPDATE leases
+       SET expires_at = ?, last_heartbeat_at = ?
+       WHERE id = ? AND status = 'active' AND released_at IS NULL`,
+    )
+    .run(newExpiresAt, now, leaseId) as { changes: number };
+
+  if (result.changes === 0) {
+    throw new Error(
+      `Cannot renew lease ${leaseId}: not found or not active.`,
+    );
+  }
+
+  return { expiresAt: newExpiresAt, lastHeartbeatAt: now };
+}
+
 export function loadIssue(
   connection: DatabaseSync,
   issueId: string | undefined,
@@ -474,7 +504,8 @@ export function loadIssue(
        status,
        size,
        depends_on,
-       next_best_action
+       next_best_action,
+       created_at
      FROM issues
      WHERE id = ?
      LIMIT 1`,
@@ -518,7 +549,8 @@ export function promoteEligiblePendingIssues(
        status,
        size,
        depends_on,
-       next_best_action
+       next_best_action,
+       created_at
      FROM issues
      WHERE project_id = ?
        AND (? IS NULL OR campaign_id = ?)
@@ -723,6 +755,10 @@ function selectNextReadyIssue(
   projectId: string,
   campaignId?: string,
 ): IssueRecord {
+  // Priority aging: issues waiting longer get boosted.
+  // Base score = priority rank (0-3). Every 24h of wait time subtracts 1 from the score.
+  // This prevents starvation of lower-priority tasks.
+  const now = new Date().toISOString();
   const rows = selectAll<RawIssueRow>(
     connection,
     `SELECT
@@ -735,20 +771,33 @@ function selectNextReadyIssue(
        status,
        size,
        depends_on,
-       next_best_action
+       next_best_action,
+       created_at
      FROM issues
      WHERE project_id = ?
        AND status = 'ready'
        AND (? IS NULL OR campaign_id = ?)
      ORDER BY
+       (CASE priority
+         WHEN 'critical' THEN 0
+         WHEN 'high' THEN 1
+         WHEN 'medium' THEN 2
+         ELSE 3
+       END) - CAST(
+         CASE WHEN created_at != '' AND created_at IS NOT NULL
+           THEN (julianday(?) - julianday(created_at))
+           ELSE 0
+         END AS INTEGER
+       ),
        CASE priority
          WHEN 'critical' THEN 0
          WHEN 'high' THEN 1
          WHEN 'medium' THEN 2
          ELSE 3
        END,
+       created_at ASC,
        id ASC`,
-    [projectId, campaignId ?? null, campaignId ?? null],
+    [projectId, campaignId ?? null, campaignId ?? null, now],
   );
 
   const issue = rows.map(mapIssueRow)[0];
@@ -772,6 +821,7 @@ function mapIssueRow(row: RawIssueRow): IssueRecord {
     size: row.size,
     dependsOn: parseDependsOn(row.depends_on),
     nextBestAction: normalizeNullable(row.next_best_action),
+    createdAt: row.created_at ?? '',
   };
 }
 
@@ -843,8 +893,9 @@ function insertActiveLease(
          status,
          acquired_at,
          expires_at,
+         last_heartbeat_at,
          released_at
-       ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL)`,
       [
         input.leaseId,
         input.workspaceId,
@@ -854,6 +905,7 @@ function insertActiveLease(
         input.agentId,
         input.acquiredAt,
         input.expiresAt,
+        input.acquiredAt,
       ],
     );
   } catch (error) {

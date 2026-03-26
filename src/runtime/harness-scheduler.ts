@@ -151,8 +151,8 @@ export function runHarnessScheduler(
         );
         runStatement(
           database.connection,
-          `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, '[]')`,
+          `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, '[]', ?)`,
           [
             issueId,
             project.id,
@@ -161,6 +161,7 @@ export function runHarnessScheduler(
             job.task,
             job.priority,
             job.size,
+            new Date().toISOString(),
           ],
         );
         runStatement(

@@ -35,7 +35,7 @@
     "init": "bash scripts/init.sh",
     "setup": "npx tsx src/bin/agent-harness-setup.ts",
     "sync": "npx tsx src/bin/agent-harness-sync.ts",
-    "scheduler:daemon": "node dist/bin/scheduler-daemon.js",
+    "scheduler:inject": "node dist/bin/scheduler-inject.js",
     "session:lifecycle": "node dist/bin/session-lifecycle.js",
     "session:lifecycle:dev": "tsx src/bin/session-lifecycle.ts",
     "session:lifecycle:mcp": "node dist/bin/session-lifecycle-mcp.js",
