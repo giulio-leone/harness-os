@@ -16,6 +16,10 @@ function collectRelativePaths(dir: string, base: string = dir): string[] {
 
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const fullPath = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) {
+      console.warn(`  ⚠ Skipping symlink: ${path.relative(base, fullPath)}`);
+      continue;
+    }
     if (entry.isDirectory()) {
       results.push(...collectRelativePaths(fullPath, base));
     } else {

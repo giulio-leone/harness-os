@@ -64,12 +64,6 @@ async function menu() {
     
     newHost = path.resolve(newHost);
 
-    if (!path.isAbsolute(newHost)) {
-      console.log('❌ Path must be absolute.');
-      await menu();
-      return;
-    }
-
     if (!fs.existsSync(newHost)) {
       console.log(`⚠️  Directory does not exist: ${newHost}`);
       const create = await ask('Create it now? [y/N]: ');
