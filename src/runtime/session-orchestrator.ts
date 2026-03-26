@@ -453,7 +453,7 @@ export class SessionOrchestrator {
 
     const recoveryIssue =
       input.preferredIssueId !== undefined
-        ? loadRecoveryIssue(connection, input.preferredIssueId)
+        ? loadRecoveryIssue(connection, input.preferredIssueId, input.projectId, input.campaignId)
         : selectNextRecoveryIssue(
             connection,
             input.projectId,

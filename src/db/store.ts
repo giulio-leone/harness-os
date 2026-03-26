@@ -8,6 +8,8 @@ const __dirname = dirname(__filename);
 
 const CURRENT_SCHEMA_VERSION = 2;
 const REQUIRED_TABLES = [
+  'workspaces',
+  'projects',
   'campaigns',
   'runs',
   'milestones',
@@ -29,7 +31,12 @@ const REQUIRED_INDEXES = [
   'idx_leases_unique_active_issue',
 ] as const;
 const REQUIRED_COLUMNS = {
+  workspaces: ['name', 'kind', 'created_at', 'updated_at'],
+  projects: ['workspace_id', 'key', 'name', 'domain', 'status', 'created_at', 'updated_at'],
   campaigns: ['status', 'scope_json', 'updated_at'],
+  runs: ['workspace_id', 'project_id', 'session_type', 'host', 'status', 'started_at'],
+  issues: ['project_id', 'campaign_id', 'task', 'priority', 'status', 'size', 'depends_on'],
+  leases: ['workspace_id', 'project_id', 'issue_id', 'agent_id', 'status', 'acquired_at', 'expires_at'],
   checkpoints: ['task_status', 'next_step', 'artifact_ids_json'],
   artifacts: ['workspace_id', 'project_id', 'campaign_id', 'issue_id', 'metadata_json'],
   memory_links: ['workspace_id', 'project_id', 'campaign_id', 'issue_id', 'memory_ref', 'summary'],

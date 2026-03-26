@@ -244,8 +244,22 @@ export function selectNextRecoveryIssue(
 export function loadRecoveryIssue(
   connection: DatabaseSync,
   issueId: string,
+  projectId?: string,
+  campaignId?: string,
 ): IssueRecord {
   const issue = loadIssue(connection, issueId);
+
+  if (projectId !== undefined && issue.projectId !== projectId) {
+    throw new Error(
+      `Issue ${issue.id} belongs to project ${issue.projectId}, not ${projectId}`,
+    );
+  }
+
+  if (campaignId !== undefined && issue.campaignId !== campaignId) {
+    throw new Error(
+      `Issue ${issue.id} belongs to campaign ${issue.campaignId ?? 'none'}, not ${campaignId}`,
+    );
+  }
 
   if (issue.status !== 'needs_recovery') {
     throw new Error(
@@ -368,7 +382,7 @@ export function claimOrResumeLease(
           now,
           input.agentId,
         )
-      : findActiveLeaseForAgent(connection, input.projectId, input.agentId, now);
+      : findActiveLeaseForAgent(connection, input.projectId, input.agentId, now, input.campaignId);
 
   if (resumableLease !== null) {
     const issue = loadIssue(connection, resumableLease.issueId);
@@ -389,7 +403,7 @@ export function claimOrResumeLease(
 
   const issue =
     input.preferredIssueId !== undefined
-      ? loadClaimableIssue(connection, input.preferredIssueId)
+      ? loadClaimableIssue(connection, input.preferredIssueId, input.projectId, input.campaignId)
       : selectNextReadyIssue(connection, input.projectId, input.campaignId);
 
   const acquiredAt = now;
@@ -612,6 +626,7 @@ function findActiveLeaseForAgent(
   projectId: string,
   agentId: string,
   now: string,
+  campaignId?: string,
 ): LeaseRecord | null {
   const row = selectOne<RawLeaseRow>(
     connection,
@@ -629,12 +644,13 @@ function findActiveLeaseForAgent(
      FROM leases
      WHERE project_id = ?
        AND agent_id = ?
+       AND (? IS NULL OR campaign_id = ?)
        AND status = 'active'
        AND released_at IS NULL
        AND expires_at > ?
      ORDER BY acquired_at DESC
      LIMIT 1`,
-    [projectId, agentId, now],
+    [projectId, agentId, campaignId ?? null, campaignId ?? null, now],
   );
 
   return row === null ? null : mapLeaseRow(row);
@@ -676,8 +692,22 @@ function findActiveLeaseForIssue(
 function loadClaimableIssue(
   connection: DatabaseSync,
   issueId: string,
+  projectId?: string,
+  campaignId?: string,
 ): IssueRecord {
   const issue = loadIssue(connection, issueId);
+
+  if (projectId !== undefined && issue.projectId !== projectId) {
+    throw new Error(
+      `Issue ${issue.id} belongs to project ${issue.projectId}, not ${projectId}`,
+    );
+  }
+
+  if (campaignId !== undefined && issue.campaignId !== campaignId) {
+    throw new Error(
+      `Issue ${issue.id} belongs to campaign ${issue.campaignId ?? 'none'}, not ${campaignId}`,
+    );
+  }
 
   if (issue.status !== 'ready' && issue.status !== 'pending') {
     throw new Error(

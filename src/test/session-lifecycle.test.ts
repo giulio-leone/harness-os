@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -1136,6 +1136,345 @@ test('two CLI begin processes cannot create two active leases for the same issue
     } finally {
       inspected.close();
     }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// ---------- Issue #4: schema validation coverage ----------
+
+test('openHarnessDatabase rejects schema-v2 DB with missing workspaces table', () => {
+  const tempDir = createTempDir('schema-no-workspaces-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw.exec('PRAGMA journal_mode = WAL');
+      raw.exec('PRAGMA foreign_keys = OFF');
+      const schemaPath = join(
+        import.meta.dirname ?? '.',
+        '..', 'db', 'sqlite.schema.sql',
+      );
+      const schemaSql = readFileSync(schemaPath, 'utf8');
+      raw.exec(schemaSql);
+      raw.exec(`PRAGMA user_version = 2`);
+      raw.exec('DROP TABLE workspaces');
+    } finally {
+      raw.close();
+    }
+
+    assert.throws(
+      () => openHarnessDatabase({ dbPath }),
+      /table:workspaces/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('openHarnessDatabase rejects schema-v2 DB with missing projects table', () => {
+  const tempDir = createTempDir('schema-no-projects-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw.exec('PRAGMA journal_mode = WAL');
+      raw.exec('PRAGMA foreign_keys = OFF');
+      const schemaPath = join(
+        import.meta.dirname ?? '.',
+        '..', 'db', 'sqlite.schema.sql',
+      );
+      const schemaSql = readFileSync(schemaPath, 'utf8');
+      raw.exec(schemaSql);
+      raw.exec(`PRAGMA user_version = 2`);
+      raw.exec('DROP TABLE projects');
+    } finally {
+      raw.close();
+    }
+
+    assert.throws(
+      () => openHarnessDatabase({ dbPath }),
+      /table:projects/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('openHarnessDatabase rejects schema-v2 DB with missing issues table', () => {
+  const tempDir = createTempDir('schema-no-issues-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw.exec('PRAGMA journal_mode = WAL');
+      raw.exec('PRAGMA foreign_keys = OFF');
+      const schemaPath = join(
+        import.meta.dirname ?? '.',
+        '..', 'db', 'sqlite.schema.sql',
+      );
+      const schemaSql = readFileSync(schemaPath, 'utf8');
+      raw.exec(schemaSql);
+      raw.exec(`PRAGMA user_version = 2`);
+      raw.exec('DROP TABLE issues');
+    } finally {
+      raw.close();
+    }
+
+    assert.throws(
+      () => openHarnessDatabase({ dbPath }),
+      /table:issues/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('openHarnessDatabase rejects schema-v2 DB with missing critical index', () => {
+  const tempDir = createTempDir('schema-no-idx-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw.exec('PRAGMA journal_mode = WAL');
+      raw.exec('PRAGMA foreign_keys = OFF');
+      const schemaPath = join(
+        import.meta.dirname ?? '.',
+        '..', 'db', 'sqlite.schema.sql',
+      );
+      const schemaSql = readFileSync(schemaPath, 'utf8');
+      raw.exec(schemaSql);
+      raw.exec(`PRAGMA user_version = 2`);
+      raw.exec('DROP INDEX idx_leases_unique_active_issue');
+    } finally {
+      raw.close();
+    }
+
+    assert.throws(
+      () => openHarnessDatabase({ dbPath }),
+      /index:idx_leases_unique_active_issue/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// ---------- Issue #3: campaign-scoped lease resume ----------
+
+test('begin with campaignId resumes only same-campaign lease', async () => {
+  const tempDir = createTempDir('campaign-scope-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+
+    const database = openHarnessDatabase({ dbPath });
+    try {
+      // Create campaign A and campaign B
+      runStatement(database.connection,
+        `INSERT INTO campaigns (id, project_id, name, objective, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ['camp-a', 'project-1', 'Campaign A', 'objective-a', 'active', '2026-03-21T00:00:00.000Z', '2026-03-21T00:00:00.000Z']);
+      runStatement(database.connection,
+        `INSERT INTO campaigns (id, project_id, name, objective, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ['camp-b', 'project-1', 'Campaign B', 'objective-b', 'active', '2026-03-21T00:00:00.000Z', '2026-03-21T00:00:00.000Z']);
+
+      // Issue in campaign A (ready) and campaign B (ready)
+      runStatement(database.connection,
+        `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['issue-camp-a', 'project-1', 'camp-a', null, 'Task A', 'high', 'ready', 'M', '[]', 'Start A']);
+      runStatement(database.connection,
+        `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['issue-camp-b', 'project-1', 'camp-b', null, 'Task B', 'high', 'ready', 'M', '[]', 'Start B']);
+    } finally {
+      database.close();
+    }
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+
+    // First begin for campaign A — claims issue-camp-a
+    const sessionA = await orchestrator.beginIncrementalSession({
+      sessionId: 'run-camp-a1',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      campaignId: 'camp-a',
+      agentId: 'test-agent',
+      host: 'host-1',
+      progressPath: '/tmp/progress.md',
+      featureListPath: '/tmp/features.json',
+      planPath: '/tmp/plan.md',
+      syncManifestPath: '/tmp/manifest.yaml',
+      mem0Enabled: false,
+    });
+    assert.equal(sessionA.issueId, 'issue-camp-a');
+    assert.equal(sessionA.claimMode, 'claim');
+
+    // Checkpoint to keep the lease fresh
+    await orchestrator.checkpoint(sessionA, {
+      title: 'WIP on A',
+      summary: 'Working on campaign A task.',
+      taskStatus: 'in_progress',
+      nextStep: 'Continue A',
+    });
+
+    // Begin for campaign B — should NOT resume campaign A's lease
+    const sessionB = await orchestrator.beginIncrementalSession({
+      sessionId: 'run-camp-b1',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      campaignId: 'camp-b',
+      agentId: 'test-agent',
+      host: 'host-1',
+      progressPath: '/tmp/progress.md',
+      featureListPath: '/tmp/features.json',
+      planPath: '/tmp/plan.md',
+      syncManifestPath: '/tmp/manifest.yaml',
+      mem0Enabled: false,
+    });
+
+    // Must claim campaign B's issue, not resume campaign A's
+    assert.equal(sessionB.issueId, 'issue-camp-b');
+    assert.equal(sessionB.claimMode, 'claim');
+
+    // Begin again for campaign A — should resume A's lease
+    const sessionA2 = await orchestrator.beginIncrementalSession({
+      sessionId: 'run-camp-a2',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      campaignId: 'camp-a',
+      agentId: 'test-agent',
+      host: 'host-1',
+      progressPath: '/tmp/progress.md',
+      featureListPath: '/tmp/features.json',
+      planPath: '/tmp/plan.md',
+      syncManifestPath: '/tmp/manifest.yaml',
+      mem0Enabled: false,
+    });
+
+    assert.equal(sessionA2.issueId, 'issue-camp-a');
+    assert.equal(sessionA2.claimMode, 'resume');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// ---------- Issue #2: scope-safe preferred issue claims ----------
+
+test('preferredIssueId from wrong project is rejected', async () => {
+  const tempDir = createTempDir('scope-preferred-proj-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+
+    const database = openHarnessDatabase({ dbPath });
+    try {
+      // Create project-2
+      runStatement(database.connection,
+        `INSERT INTO projects (id, workspace_id, key, name, domain, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['project-2', 'workspace-1', 'other-project', 'Other Project', 'other', 'active', '2026-03-21T00:00:00.000Z', '2026-03-21T00:00:00.000Z']);
+
+      // Ready issue in project-2
+      runStatement(database.connection,
+        `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['issue-proj2', 'project-2', null, null, 'Other project task', 'high', 'ready', 'M', '[]', 'Do it']);
+    } finally {
+      database.close();
+    }
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+
+    await assert.rejects(
+      () => orchestrator.beginIncrementalSession({
+        sessionId: 'run-cross-proj',
+        dbPath,
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        agentId: 'test-agent',
+        host: 'host-1',
+        preferredIssueId: 'issue-proj2',
+        progressPath: '/tmp/progress.md',
+        featureListPath: '/tmp/features.json',
+        planPath: '/tmp/plan.md',
+        syncManifestPath: '/tmp/manifest.yaml',
+        mem0Enabled: false,
+      }),
+      /belongs to project project-2, not project-1/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('preferredIssueId from wrong campaign is rejected', async () => {
+  const tempDir = createTempDir('scope-preferred-camp-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+
+    const database = openHarnessDatabase({ dbPath });
+    try {
+      // Create campaign X and campaign Y
+      runStatement(database.connection,
+        `INSERT INTO campaigns (id, project_id, name, objective, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ['camp-x', 'project-1', 'Campaign X', 'obj-x', 'active', '2026-03-21T00:00:00.000Z', '2026-03-21T00:00:00.000Z']);
+      runStatement(database.connection,
+        `INSERT INTO campaigns (id, project_id, name, objective, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ['camp-y', 'project-1', 'Campaign Y', 'obj-y', 'active', '2026-03-21T00:00:00.000Z', '2026-03-21T00:00:00.000Z']);
+
+      // Issue in campaign X
+      runStatement(database.connection,
+        `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['issue-camp-x', 'project-1', 'camp-x', null, 'Task X', 'high', 'ready', 'M', '[]', 'Do X']);
+    } finally {
+      database.close();
+    }
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+
+    await assert.rejects(
+      () => orchestrator.beginIncrementalSession({
+        sessionId: 'run-cross-camp',
+        dbPath,
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        campaignId: 'camp-y',
+        agentId: 'test-agent',
+        host: 'host-1',
+        preferredIssueId: 'issue-camp-x',
+        progressPath: '/tmp/progress.md',
+        featureListPath: '/tmp/features.json',
+        planPath: '/tmp/plan.md',
+        syncManifestPath: '/tmp/manifest.yaml',
+        mem0Enabled: false,
+      }),
+      /belongs to campaign camp-x, not camp-y/,
+    );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
