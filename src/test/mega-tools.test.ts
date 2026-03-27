@@ -87,6 +87,21 @@ class StubMem0Adapter implements Mem0Adapter {
   async listProjects(): Promise<string[]> { return []; }
 }
 
+class StrictHarnessAdminMem0Adapter extends StubMem0Adapter {
+  readonly storedInputs: MemoryStoreInput[] = [];
+
+  override async storeMemory(input: MemoryStoreInput): Promise<PublicMemoryRecord> {
+    assert.ok(input.metadata, 'harness_admin must pass metadata to mem0');
+    assert.equal(input.metadata['source'], 'harness_admin');
+    assert.ok(
+      input.metadata['action'] === 'mem0_snapshot' || input.metadata['action'] === 'mem0_rollup',
+      'harness_admin metadata.action must identify the admin operation',
+    );
+    this.storedInputs.push(input);
+    return super.storeMemory(input);
+  }
+}
+
 interface ServerInternals {
   tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
   tokenStore: { resolve(token: string): unknown };
@@ -95,13 +110,29 @@ interface ServerInternals {
 function createServer(): {
   server: SessionLifecycleMcpServer;
   internals: ServerInternals;
+}
+function createServer(input: {
+  adminMem0Loader?: () => Promise<Mem0Adapter | null>;
+}): {
+  server: SessionLifecycleMcpServer;
+  internals: ServerInternals;
+}
+function createServer(input: {
+  adminMem0Loader?: () => Promise<Mem0Adapter | null>;
+} = {}): {
+  server: SessionLifecycleMcpServer;
+  internals: ServerInternals;
 } {
   const orchestrator = new SessionOrchestrator({
     mem0Adapter: new StubMem0Adapter(),
     defaultCheckpointFreshnessSeconds: 3600,
   });
   const adapter = new SessionLifecycleAdapter(orchestrator);
-  const server = new SessionLifecycleMcpServer(adapter);
+  const server = new SessionLifecycleMcpServer(
+    adapter,
+    undefined,
+    input.adminMem0Loader,
+  );
   const internals = server as unknown as ServerInternals;
   return { server, internals };
 }
@@ -749,6 +780,102 @@ test('harness_artifacts: save without path throws AgenticToolError', async () =>
       () => tool.handler({ action: 'save', dbPath, projectId: 'proj-1', kind: 'test' }),
       /path is required/,
     );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_admin: mem0_snapshot persists project memory with explicit metadata', async () => {
+  const tempDir = createTempDir('admin-mem0-snapshot-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  const adminMem0 = new StrictHarnessAdminMem0Adapter();
+
+  try {
+    seedProject(dbPath);
+
+    const { internals } = createServer({
+      adminMem0Loader: async () => adminMem0,
+    });
+    const tool = internals.tools.get('harness_admin')!;
+    const result = (await tool.handler({
+      action: 'mem0_snapshot',
+      dbPath,
+      projectId: 'proj-1',
+      content: 'Persist the approved agentic-web roadmap snapshot.',
+    })) as { stored: boolean; memoryId: string };
+
+    assert.equal(result.stored, true);
+    assert.equal(result.memoryId, 'mem-1');
+    assert.equal(adminMem0.storedInputs.length, 1);
+    assert.deepEqual(adminMem0.storedInputs[0].metadata, {
+      source: 'harness_admin',
+      action: 'mem0_snapshot',
+      project_id: 'proj-1',
+    });
+
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      const links = selectAll<{ memory_ref: string; memory_kind: string }>(
+        db.connection,
+        'SELECT memory_ref, memory_kind FROM memory_links WHERE project_id = ? ORDER BY created_at DESC',
+        ['proj-1'],
+      );
+      assert.equal(links.length, 1);
+      assert.equal(links[0].memory_ref, 'mem-1');
+      assert.equal(links[0].memory_kind, 'summary');
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_admin: mem0_rollup persists rollup memory with explicit metadata', async () => {
+  const tempDir = createTempDir('admin-mem0-rollup-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  const adminMem0 = new StrictHarnessAdminMem0Adapter();
+
+  try {
+    seedProject(dbPath);
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      runStatement(
+        db.connection,
+        `INSERT INTO memory_links (id, workspace_id, project_id, campaign_id, issue_id, memory_kind, memory_ref, summary, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['link-1', 'ws-1', 'proj-1', null, null, 'summary', 'mem-existing-1', 'First summary', '2026-01-01T00:00:00Z'],
+      );
+      runStatement(
+        db.connection,
+        `INSERT INTO memory_links (id, workspace_id, project_id, campaign_id, issue_id, memory_kind, memory_ref, summary, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['link-2', 'ws-1', 'proj-1', null, null, 'decision', 'mem-existing-2', 'Second summary', '2026-01-01T00:00:01Z'],
+      );
+    } finally {
+      db.close();
+    }
+
+    const { internals } = createServer({
+      adminMem0Loader: async () => adminMem0,
+    });
+    const tool = internals.tools.get('harness_admin')!;
+    const result = (await tool.handler({
+      action: 'mem0_rollup',
+      dbPath,
+      projectId: 'proj-1',
+    })) as { rolledUp: boolean; memoryId: string; sourceCount: number };
+
+    assert.equal(result.rolledUp, true);
+    assert.equal(result.memoryId, 'mem-1');
+    assert.equal(result.sourceCount, 2);
+    assert.equal(adminMem0.storedInputs.length, 1);
+    assert.deepEqual(adminMem0.storedInputs[0].metadata, {
+      source: 'harness_admin',
+      action: 'mem0_rollup',
+      project_id: 'proj-1',
+      source_count: '2',
+    });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

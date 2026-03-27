@@ -72,6 +72,8 @@ interface ToolDefinition {
   handler: (args: unknown) => Promise<unknown>;
 }
 
+type Mem0AdapterLoader = typeof loadDefaultMem0Adapter;
+
 const initializeParamsSchema = z
   .object({
     protocolVersion: z.string().optional(),
@@ -217,6 +219,7 @@ export class SessionLifecycleMcpServer {
   constructor(
     private readonly adapter: SessionLifecycleAdapter,
     transport?: StdioJsonRpcTransport,
+    private readonly mem0AdapterLoader: Mem0AdapterLoader = loadDefaultMem0Adapter,
   ) {
     this.tools = new Map(
       this.buildTools().map((tool) => [tool.name, tool] as const),
@@ -1250,7 +1253,7 @@ export class SessionLifecycleMcpServer {
                     'harness_admin',
                   );
                 }
-                const mem0 = await loadDefaultMem0Adapter();
+                const mem0 = await this.mem0AdapterLoader();
                 if (!mem0) {
                   return {
                     stored: false,
@@ -1282,6 +1285,11 @@ export class SessionLifecycleMcpServer {
                     artifactIds: [],
                     note: 'project-level snapshot via harness_admin',
                   },
+                  metadata: buildHarnessAdminMemoryMetadata({
+                    action: 'mem0_snapshot',
+                    projectId,
+                    campaignId,
+                  }),
                 });
                 runStatement(
                   db.connection,
@@ -1298,7 +1306,7 @@ export class SessionLifecycleMcpServer {
               }
 
               case 'mem0_rollup': {
-                const mem0 = await loadDefaultMem0Adapter();
+                const mem0 = await this.mem0AdapterLoader();
                 if (!mem0) {
                   return {
                     rolledUp: false,
@@ -1354,6 +1362,13 @@ export class SessionLifecycleMcpServer {
                     note: `Rolled up ${detailedLinks.length} task-level memories`,
                     artifactIds: detailedLinks.map((l) => l.memory_ref),
                   },
+                  metadata: buildHarnessAdminMemoryMetadata({
+                    action: 'mem0_rollup',
+                    projectId,
+                    campaignId,
+                    milestoneId: parsed.milestoneId,
+                    sourceCount: `${detailedLinks.length}`,
+                  }),
                 });
                 runStatement(
                   db.connection,
@@ -1939,6 +1954,28 @@ function toJsonRpcErrorPayload(error: unknown): JsonRpcErrorPayload {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function buildHarnessAdminMemoryMetadata(input: {
+  action: 'mem0_snapshot' | 'mem0_rollup';
+  projectId: string;
+  campaignId?: string;
+  milestoneId?: string;
+  sourceCount?: string;
+}): Record<string, string> {
+  const entries = Object.entries({
+    source: 'harness_admin',
+    action: input.action,
+    project_id: input.projectId,
+    campaign_id: input.campaignId,
+    milestone_id: input.milestoneId,
+    source_count: input.sourceCount,
+  }).filter((entry): entry is [string, string] => {
+    const value = entry[1];
+    return typeof value === 'string' && value.length > 0;
+  });
+
+  return Object.fromEntries(entries);
 }
 
 function buildNextIncrementalInput(

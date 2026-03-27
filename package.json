@@ -1,6 +1,6 @@
 {
   "name": "harness-os",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The operating system for autonomous AI agents. SQLite-backed lifecycle orchestration, canonical state, and plug-and-play multi-host integration.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
