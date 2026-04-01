@@ -1,5 +1,5 @@
 /**
- * Stringent MCP-level tests for the 4 consolidated mega-tools.
+ * Stringent MCP-level tests for the 5 consolidated mega-tools.
  *
  * Tests exercise tools through the same handler surface the LLM uses,
  * verifying action dispatch, error handling, _meta hints, and DB state.
@@ -246,6 +246,40 @@ test('harness_inspector: get_context returns workspace, project, queue status', 
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('harness_inspector: capabilities returns tool catalog, bundled skills, and mem0 status', async () => {
+  const adminMem0 = new StrictHarnessAdminMem0Adapter();
+  const { internals } = createServer({
+    adminMem0Loader: async () => adminMem0,
+  });
+  const tool = internals.tools.get('harness_inspector')!;
+  const result = (await tool.handler({
+    action: 'capabilities',
+  })) as Record<string, unknown>;
+
+  const tools = result.tools as Array<Record<string, unknown>>;
+  const skills = result.skills as Array<Record<string, unknown>>;
+  const mem0 = result.mem0 as Record<string, unknown>;
+
+  assert.ok(tools.some((entry) => entry.name === 'harness_inspector'));
+  assert.ok(
+    tools.some(
+      (entry) =>
+        Array.isArray(entry.actions) &&
+        entry.actions.some(
+          (action) =>
+            typeof action === 'object' &&
+            action !== null &&
+            'action' in action &&
+            action['action'] === 'capabilities',
+        ),
+    ),
+  );
+  assert.ok(skills.some((entry) => entry.id === 'harness-lifecycle'));
+  assert.equal(mem0.configured, true);
+  assert.equal(mem0.available, true);
+  assert.equal(mem0.adapterId, 'stub-test');
 });
 
 test('harness_inspector: get_context returns init_workspace hint when no workspace exists', async () => {
@@ -812,6 +846,8 @@ test('harness_admin: mem0_snapshot persists project memory with explicit metadat
       action: 'mem0_snapshot',
       project_id: 'proj-1',
     });
+    assert.equal(adminMem0.storedInputs[0].scope.workspace, 'ws-1');
+    assert.equal(adminMem0.storedInputs[0].scope.project, 'proj-1');
 
     const db = openHarnessDatabase({ dbPath });
     try {
@@ -876,6 +912,78 @@ test('harness_admin: mem0_rollup persists rollup memory with explicit metadata',
       project_id: 'proj-1',
       source_count: '2',
     });
+    assert.equal(adminMem0.storedInputs[0].scope.workspace, 'ws-1');
+    assert.equal(adminMem0.storedInputs[0].scope.project, 'proj-1');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_admin: mem0_rollup filters by milestoneId via linked issues', async () => {
+  const tempDir = createTempDir('admin-mem0-rollup-milestone-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  const adminMem0 = new StrictHarnessAdminMem0Adapter();
+
+  try {
+    seedProject(dbPath);
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      runStatement(
+        db.connection,
+        `INSERT INTO milestones (id, project_id, description, priority, status)
+         VALUES (?, ?, ?, ?, ?)`,
+        ['milestone-a', 'proj-1', 'Milestone A', 'high', 'in_progress'],
+      );
+      runStatement(
+        db.connection,
+        `INSERT INTO milestones (id, project_id, description, priority, status)
+         VALUES (?, ?, ?, ?, ?)`,
+        ['milestone-b', 'proj-1', 'Milestone B', 'medium', 'in_progress'],
+      );
+      runStatement(
+        db.connection,
+        `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['issue-a', 'proj-1', null, 'milestone-a', 'Task A', 'high', 'done', 'M', '[]', 'Done'],
+      );
+      runStatement(
+        db.connection,
+        `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['issue-b', 'proj-1', null, 'milestone-b', 'Task B', 'high', 'done', 'M', '[]', 'Done'],
+      );
+      runStatement(
+        db.connection,
+        `INSERT INTO memory_links (id, workspace_id, project_id, campaign_id, issue_id, memory_kind, memory_ref, summary, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['link-a', 'ws-1', 'proj-1', null, 'issue-a', 'summary', 'mem-a', 'Milestone A memory', '2026-01-01T00:00:00Z'],
+      );
+      runStatement(
+        db.connection,
+        `INSERT INTO memory_links (id, workspace_id, project_id, campaign_id, issue_id, memory_kind, memory_ref, summary, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['link-b', 'ws-1', 'proj-1', null, 'issue-b', 'summary', 'mem-b', 'Milestone B memory', '2026-01-01T00:01:00Z'],
+      );
+    } finally {
+      db.close();
+    }
+
+    const { internals } = createServer({
+      adminMem0Loader: async () => adminMem0,
+    });
+    const tool = internals.tools.get('harness_admin')!;
+    const result = (await tool.handler({
+      action: 'mem0_rollup',
+      dbPath,
+      projectId: 'proj-1',
+      milestoneId: 'milestone-a',
+    })) as { rolledUp: boolean; sourceCount: number };
+
+    assert.equal(result.rolledUp, true);
+    assert.equal(result.sourceCount, 1);
+    assert.equal(adminMem0.storedInputs.length, 1);
+    assert.match(adminMem0.storedInputs[0].content, /Milestone A memory/);
+    assert.doesNotMatch(adminMem0.storedInputs[0].content, /Milestone B memory/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

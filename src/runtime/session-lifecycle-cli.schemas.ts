@@ -31,6 +31,14 @@ export const sessionContextSchema = z
     issueId: z.string().min(1),
     issueTask: z.string().min(1),
     claimMode: z.enum(['claim', 'resume', 'recovery']),
+    artifacts: z
+      .object({
+        progressPath: z.string().min(1),
+        featureListPath: z.string().min(1),
+        planPath: z.string().min(1),
+        syncManifestPath: z.string().min(1),
+      })
+      .strict(),
     scope: z
       .object({
         workspace: z.string().min(1),

@@ -1,6 +1,6 @@
 {
   "name": "harness-os",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "The operating system for autonomous AI agents. SQLite-backed lifecycle orchestration, canonical state, and plug-and-play multi-host integration.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,13 +23,15 @@
     "!.github/skills/**/*.pyc"
   ],
   "bin": {
+    "harness-install-mcp": "./dist/bin/agent-harness-install-mcp.js",
+    "harness-scheduler-inject": "./dist/bin/scheduler-inject.js",
     "harness-session-lifecycle": "./dist/bin/session-lifecycle.js",
     "harness-session-lifecycle-mcp": "./dist/bin/session-lifecycle-mcp.js",
     "harness-setup": "./dist/bin/agent-harness-setup.js",
     "harness-sync": "./dist/bin/agent-harness-sync.js"
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').copyFileSync('src/db/sqlite.schema.sql','dist/db/sqlite.schema.sql')\"",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"const fs=require('node:fs');fs.copyFileSync('src/db/sqlite.schema.sql','dist/db/sqlite.schema.sql');for(const entry of fs.readdirSync('dist/bin')){if(entry.endsWith('.js'))fs.chmodSync('dist/bin/'+entry,0o755);}\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node scripts/run-tests.js",
     "init": "bash scripts/init.sh",
@@ -61,6 +63,9 @@
   "homepage": "https://github.com/giulio-leone/harness-os#readme",
   "license": "BUSL-1.1",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "dependencies": {
     "zod": "^4.3.6"
   },

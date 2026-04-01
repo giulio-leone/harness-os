@@ -75,6 +75,13 @@ export interface SessionMemoryContext {
   recalledMemories: MemorySearchResult[];
 }
 
+export interface SessionArtifactPaths {
+  progressPath: string;
+  featureListPath: string;
+  planPath: string;
+  syncManifestPath: string;
+}
+
 export interface SessionContext {
   sessionId: string;
   dbPath: string;
@@ -89,6 +96,7 @@ export interface SessionContext {
   issueId: string;
   issueTask: string;
   claimMode: 'claim' | 'resume' | 'recovery';
+  artifacts: SessionArtifactPaths;
   scope: MemoryScope;
   currentTaskStatus: TaskStatus;
   currentCheckpointId: string;

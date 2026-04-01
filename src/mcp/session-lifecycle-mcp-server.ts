@@ -26,6 +26,7 @@ import {
   resolveCampaignId,
   SessionTokenStore,
 } from '../runtime/harness-agentic-helpers.js';
+import { getHarnessCapabilityCatalog } from '../runtime/harness-capability-catalog.js';
 import type { SessionContext } from '../contracts/session-contracts.js';
 import {
   incrementalSessionInputSchema,
@@ -168,13 +169,14 @@ const HARNESS_INSTRUCTIONS = `You are connected to the agent-harness lifecycle s
 This server exposes 5 tools, each covering a specific domain. Use the "action" parameter to select the operation.
 
 TOOLS:
-1. harness_inspector  — Read-only observation. Actions: get_context, next_action, overview, issue, health.
+1. harness_inspector  — Read-only observation. Actions: capabilities, get_context, next_action, overview, issue, health.
 2. harness_orchestrator — Setup & queue management. Actions: init_workspace, create_campaign, plan_issues, promote_queue, rollback_issue.
 3. harness_session — Execution lifecycle. Actions: begin, begin_recovery, checkpoint, close, advance, heartbeat.
 4. harness_artifacts — Persistent state registry. Actions: save, list.
 5. harness_admin — Maintenance & administration. Actions: reconcile, drain, archive, cleanup, mem0_snapshot, mem0_rollup.
 
 ORIENTATION (call first in any new session):
+- harness_inspector(action: "capabilities") → discover tool map, bundled skills, mem0 availability
 - harness_inspector(action: "get_context") → see workspace, project, campaign, queue status
 - harness_inspector(action: "next_action") → get directive on exactly what to call next
 - harness_inspector(action: "health") → operational metrics (queue depth, stale leases, checkpoint freshness)
@@ -321,13 +323,13 @@ export class SessionLifecycleMcpServer {
       {
         name: 'harness_inspector',
         description:
-          'Read-only observation of the Harness state. Actions: get_context (workspace/project/queue status — call FIRST), next_action (NBA engine — tells you exactly what tool to call next), overview (task dashboard by project), issue (deep-dive into a specific issue), health (operational metrics — queue depth, stale leases, checkpoint freshness).',
+          'Read-only observation of the Harness state. Actions: capabilities (discover tools, bundled skills, mem0 status — call FIRST), get_context (workspace/project/queue status), next_action (NBA engine — tells you exactly what tool to call next), overview (task dashboard by project), issue (deep-dive into a specific issue), health (operational metrics — queue depth, stale leases, checkpoint freshness).',
         inputSchema: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
-              enum: ['get_context', 'next_action', 'overview', 'issue', 'health'],
+              enum: ['capabilities', 'get_context', 'next_action', 'overview', 'issue', 'health'],
               description: 'The inspection action to perform.',
             },
             dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
@@ -344,7 +346,7 @@ export class SessionLifecycleMcpServer {
         },
         handler: async (args) => {
           const parsed = z.object({
-            action: z.enum(['get_context', 'next_action', 'overview', 'issue', 'health']),
+            action: z.enum(['capabilities', 'get_context', 'next_action', 'overview', 'issue', 'health']),
             dbPath: z.string().optional(),
             workspaceId: z.string().optional(),
             projectId: z.string().optional(),
@@ -357,6 +359,17 @@ export class SessionLifecycleMcpServer {
           }).parse(args);
 
           switch (parsed.action) {
+            case 'capabilities': {
+              return {
+                ...getHarnessCapabilityCatalog(),
+                mem0: await inspectMem0Status(this.mem0AdapterLoader),
+                ...buildMeta(
+                  ['harness_inspector', 'harness_session', 'harness_orchestrator'],
+                  'Capability catalog loaded. Use harness_inspector(action: "next_action") for queue guidance or choose a tool/action directly from the catalog.',
+                ),
+              };
+            }
+
             case 'get_context':
               return getHarnessContext({
                 dbPath: parsed.dbPath,
@@ -1261,14 +1274,9 @@ export class SessionLifecycleMcpServer {
                     ...buildMeta(['harness_admin'], 'mem0 is not configured. Set up mem0-mcp to enable memory persistence.'),
                   };
                 }
-                const workspace = selectOne<{ id: string; name: string }>(
+                const workspace = selectOne<{ id: string }>(
                   db.connection,
-                  `SELECT w.id, w.name FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE p.id = ? LIMIT 1`,
-                  [projectId],
-                );
-                const project = selectOne<{ name: string }>(
-                  db.connection,
-                  `SELECT name FROM projects WHERE id = ? LIMIT 1`,
+                  `SELECT w.id FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE p.id = ? LIMIT 1`,
                   [projectId],
                 );
                 const snapshotId = `snap-${randomUUID()}`;
@@ -1276,8 +1284,8 @@ export class SessionLifecycleMcpServer {
                   kind: parsed.memoryKind ?? 'summary',
                   content: parsed.content,
                   scope: {
-                    workspace: workspace?.name ?? 'unknown',
-                    project: project?.name ?? 'unknown',
+                    workspace: workspace?.id ?? 'unknown',
+                    project: projectId,
                     campaign: campaignId ?? undefined,
                   },
                   provenance: {
@@ -1314,29 +1322,32 @@ export class SessionLifecycleMcpServer {
                     ...buildMeta(['harness_admin'], 'mem0 is not configured.'),
                   };
                 }
-                const workspace = selectOne<{ id: string; name: string }>(
+                const workspace = selectOne<{ id: string }>(
                   db.connection,
-                  `SELECT w.id, w.name FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE p.id = ? LIMIT 1`,
+                  `SELECT w.id FROM workspaces w JOIN projects p ON p.workspace_id = w.id WHERE p.id = ? LIMIT 1`,
                   [projectId],
                 );
-                const project = selectOne<{ name: string }>(
-                  db.connection,
-                  `SELECT name FROM projects WHERE id = ? LIMIT 1`,
-                  [projectId],
-                );
-                const scopeFilter = campaignId
-                  ? `AND campaign_id = '${campaignId}'`
-                  : '';
-                const milestoneFilter = parsed.milestoneId
-                  ? `AND milestone_id = '${parsed.milestoneId}'`
-                  : '';
+                const whereClauses = ['ml.project_id = ?'];
+                const queryParams: string[] = [projectId];
+
+                if (campaignId) {
+                  whereClauses.push('ml.campaign_id = ?');
+                  queryParams.push(campaignId);
+                }
+
+                if (parsed.milestoneId) {
+                  whereClauses.push('i.milestone_id = ?');
+                  queryParams.push(parsed.milestoneId);
+                }
+
                 const detailedLinks = selectAll<{ memory_ref: string; summary: string; memory_kind: string }>(
                   db.connection,
-                  `SELECT memory_ref, summary, memory_kind
-                   FROM memory_links
-                   WHERE project_id = ? ${scopeFilter} ${milestoneFilter}
-                   ORDER BY created_at ASC`,
-                  [projectId],
+                  `SELECT ml.memory_ref, ml.summary, ml.memory_kind
+                   FROM memory_links ml
+                   LEFT JOIN issues i ON i.id = ml.issue_id
+                   WHERE ${whereClauses.join(' AND ')}
+                   ORDER BY ml.created_at ASC`,
+                  queryParams,
                 );
                 if (detailedLinks.length === 0) {
                   return {
@@ -1353,8 +1364,8 @@ export class SessionLifecycleMcpServer {
                   kind: 'summary',
                   content: `Rollup of ${detailedLinks.length} memories:\n${rollupContent}`,
                   scope: {
-                    workspace: workspace?.name ?? 'unknown',
-                    project: project?.name ?? 'unknown',
+                    workspace: workspace?.id ?? 'unknown',
+                    project: projectId,
                     campaign: campaignId ?? undefined,
                   },
                   provenance: {
@@ -1954,6 +1965,49 @@ function toJsonRpcErrorPayload(error: unknown): JsonRpcErrorPayload {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function inspectMem0Status(
+  mem0AdapterLoader: Mem0AdapterLoader,
+): Promise<Record<string, unknown>> {
+  try {
+    const mem0 = await mem0AdapterLoader();
+
+    if (mem0 === null) {
+      return {
+        configured: false,
+        available: false,
+        reason: 'mem0 adapter not configured',
+      };
+    }
+
+    try {
+      const health = await mem0.healthCheck();
+      return {
+        configured: true,
+        available: health.ok,
+        adapterId: mem0.metadata.adapterId,
+        contractVersion: mem0.metadata.contractVersion,
+        capabilities: mem0.metadata.capabilities,
+        health,
+      };
+    } catch (error) {
+      return {
+        configured: true,
+        available: false,
+        adapterId: mem0.metadata.adapterId,
+        contractVersion: mem0.metadata.contractVersion,
+        capabilities: mem0.metadata.capabilities,
+        reason: getErrorMessage(error),
+      };
+    }
+  } catch (error) {
+    return {
+      configured: false,
+      available: false,
+      reason: getErrorMessage(error),
+    };
+  }
 }
 
 function buildHarnessAdminMemoryMetadata(input: {

@@ -76,7 +76,7 @@ SQLite acts as the absolute source of truth for:
 - **Failsafe Operations** — If `mem0-mcp` is unavailable, the harness gracefully degrades without corrupting the canonical SQLite tasks.
 
 ### ⏱️ Reusable Scheduler Injector
-A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-daemon.ts`), supporting full 5-field cron expressions to safely trigger work without duplications.
+A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.ts`), supporting full 5-field cron expressions to safely trigger work without duplications.
 
 ---
 
@@ -85,42 +85,50 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-daemon.
 ### 1️⃣ Installation & Multi-Host Setup
 
 ```bash
-git clone https://github.com/giulio-leone/harness-os.git
-cd harness-os
-npm install
-npm run build
+npm install -g harness-os mem0-mcp
 ```
 
-HarnessOS is designed to work interactively with **any AI agent or IDE** (Copilot, Windsurf, Cursor, Gemini, etc.). You can register your environments dynamically:
+HarnessOS targets **Node.js 22+** and ships with installable CLIs for runtime setup, scheduling, and MCP registration.
+
+Register the lifecycle MCP server for Codex, Copilot CLI, and antigravity in one pass:
 
 ```bash
-# Interactively add/remove host workspaces (~/.gemini, ~/.cursor, etc.)
-npx harness-setup
+# Creates ~/.agent-harness/{harness.sqlite,mem0} if missing and configures the hosts
+harness-install-mcp --host codex --host copilot --host antigravity
 
-# Synchronize the latest harness skills to your registered hosts
-npx harness-sync
+# Optional: inspect first without writing anything
+harness-install-mcp --dry-run
+```
+
+You can still register extra host workspaces for skill sync:
+
+```bash
+harness-setup
+harness-sync
 ```
 
 ### 2️⃣ Environment Variables
 
 | Variable | Default Value | Description |
 |----------|---------------|-------------|
+| `HARNESS_DB_PATH` | `~/.agent-harness/harness.sqlite` | Path to the canonical HarnessOS SQLite store |
 | `MEM0_STORE_PATH` | `~/.agent-harness/mem0` | Path to Mem0 semantic storage |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | URL to the Ollama embedding API |
 | `MEM0_EMBED_MODEL` | `qwen3-embedding:latest` | The model used for extracting memory |
+| `AGENT_HARNESS_MEM0_MODULE_PATH` | auto-resolved | Optional explicit module path for `mem0-mcp` |
 | `AGENT_HARNESS_DISABLE_DEFAULT_MEM0`| N/A | Set to `1` to disable lazy loaded mem0 entirely |
 
 ### 3️⃣ Running Commands
 
 ```bash
-# Start the cron-aware scheduler
-npm run build && npm run scheduler:daemon
+# Run the cron-aware scheduler injector
+harness-scheduler-inject
 
 # Run the standard CLI session lifecycle
-npm run build && npm run session:lifecycle
+harness-session-lifecycle
 
 # Start the MCP (Model Context Protocol) Server for lifecycle orchestration
-npm run build && npm run session:lifecycle:mcp
+harness-session-lifecycle-mcp
 ```
 
 *(For detailed examples and JSON payload usage, see the `examples/session-lifecycle/` directory.)*

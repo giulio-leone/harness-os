@@ -5,6 +5,7 @@ import type {
   QueuePromotionInput,
   QueuePromotionResult,
   RecoverySessionInput,
+  SessionArtifactPaths,
   SessionCheckpointInput,
   SessionCloseInput,
   SessionContext,
@@ -520,6 +521,7 @@ export class SessionOrchestrator {
       issueId: recoveryIssue.id,
       issueTask: recoveryIssue.task,
       claimMode: 'recovery',
+      artifacts: buildArtifactPaths(input),
       currentTaskStatus: 'in_progress',
       currentCheckpointId: recoveryCheckpoint.id,
     });
@@ -817,6 +819,7 @@ function buildClaimedBeginResult(
       issueId: input.leaseResult.issue.id,
       issueTask: input.leaseResult.issue.task,
       claimMode: input.leaseResult.resumed ? 'resume' : 'claim',
+      artifacts: buildArtifactPaths(input.input),
       currentTaskStatus: 'in_progress',
       currentCheckpointId: claimCheckpoint.id,
     }),
@@ -885,6 +888,7 @@ function buildContextBase(input: {
   issueId: string;
   issueTask: string;
   claimMode: 'claim' | 'resume' | 'recovery';
+  artifacts: SessionArtifactPaths;
   currentTaskStatus: TaskStatus;
   currentCheckpointId: string;
 }): Omit<SessionContext, 'mem0'> {
@@ -902,6 +906,7 @@ function buildContextBase(input: {
     issueId: input.issueId,
     issueTask: input.issueTask,
     claimMode: input.claimMode,
+    artifacts: input.artifacts,
     scope: buildMemoryScope({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
@@ -911,6 +916,20 @@ function buildContextBase(input: {
     }),
     currentTaskStatus: input.currentTaskStatus,
     currentCheckpointId: input.currentCheckpointId,
+  };
+}
+
+function buildArtifactPaths(
+  input: Pick<
+    IncrementalSessionInput,
+    'progressPath' | 'featureListPath' | 'planPath' | 'syncManifestPath'
+  >,
+): SessionArtifactPaths {
+  return {
+    progressPath: input.progressPath,
+    featureListPath: input.featureListPath,
+    planPath: input.planPath,
+    syncManifestPath: input.syncManifestPath,
   };
 }
 

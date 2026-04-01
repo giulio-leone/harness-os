@@ -7,6 +7,8 @@ export * from './db/lease-manager.js';
 export * from './db/store.js';
 export * from './mcp/session-lifecycle-mcp-server.js';
 export * from './policy/skill-policy-registry.js';
+export * from './runtime/harness-capability-catalog.js';
+export * from './runtime/host-mcp-config.js';
 export * from './runtime/harness-planning-tools.js';
 export * from './runtime/harness-scheduler.js';
 export * from './runtime/mem0-session-bridge.js';

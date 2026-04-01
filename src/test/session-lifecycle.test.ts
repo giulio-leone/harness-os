@@ -177,8 +177,11 @@ test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', 
       );
 
       assert.equal(firstSession.claimMode, 'claim');
+      assert.equal(firstSession.artifacts.progressPath, '/tmp/progress.md');
+      assert.equal(firstSession.artifacts.planPath, '/tmp/plan.md');
       assert.equal(blocked.memoryId !== undefined, true);
       assert.equal(resumedSession.claimMode, 'resume');
+      assert.equal(resumedSession.artifacts.syncManifestPath, '/tmp/manifest.yaml');
       assert.equal(resumedSession.mem0.recalledMemories.length, 1);
       assert.equal(closed.memoryId !== undefined, true);
       assert.equal(issue?.status, 'done');
@@ -789,7 +792,11 @@ test('harness_session resolves persisted session tokens after restart', async ()
         taskStatus: 'in_progress',
         nextStep: 'Close from the restarted server.',
       },
-    })) as { result: { context: { issueId: string } } };
+    })) as {
+      result: {
+        context: { issueId: string; artifacts: { featureListPath: string } };
+      };
+    };
     const closed = (await sessionTool.handler({
       action: 'close',
       dbPath,
@@ -800,7 +807,11 @@ test('harness_session resolves persisted session tokens after restart', async ()
         taskStatus: 'done',
         nextStep: 'Stop.',
       },
-    })) as { result: { context: { issueId: string } } };
+    })) as {
+      result: {
+        context: { issueId: string; artifacts: { featureListPath: string } };
+      };
+    };
 
     const inspected = openHarnessDatabase({ dbPath });
     try {
@@ -815,6 +826,7 @@ test('harness_session resolves persisted session tokens after restart', async ()
 
       assert.equal(checkpointed.result.context.issueId, 'issue-token');
       assert.equal(closed.result.context.issueId, 'issue-token');
+      assert.equal(closed.result.context.artifacts.featureListPath, '/tmp/features.json');
       assert.equal(activeSession?.status, 'closed');
       assert.notEqual(activeSession?.closed_at, null);
     } finally {
