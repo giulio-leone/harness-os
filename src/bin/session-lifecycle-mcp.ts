@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { SessionLifecycleMcpServer } from '../mcp/session-lifecycle-mcp-server.js';
 import { loadDefaultMem0Adapter } from '../runtime/default-mem0-loader.js';
 import { SessionLifecycleAdapter } from '../runtime/session-lifecycle-adapter.js';

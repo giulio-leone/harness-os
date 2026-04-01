@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## 2.0.2 - 2026-04-01
+
+### Fixed
+- Restored `#!/usr/bin/env node` shebangs on the published CLI entrypoints so global installs expose directly executable bins again.
+- Added packaging regression coverage for built CLI entrypoints to prevent future releases from shipping non-executable JS bin shims.
+
 ## 2.0.1 - 2026-04-01
 
 ### Fixed
