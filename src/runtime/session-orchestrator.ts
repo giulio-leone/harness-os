@@ -42,7 +42,9 @@ import {
   openHarnessDatabase,
   runInTransaction,
   runStatement,
+  selectOne,
 } from '../db/store.js';
+import { assertValidTransition } from '../db/state-machine.js';
 import { Mem0SessionBridge } from './mem0-session-bridge.js';
 
 export interface SessionCheckpointResult {
@@ -865,6 +867,16 @@ function updateRunStatus(
   status: string,
   finishedAt?: string,
 ): void {
+  const current = selectOne<{ status: string }>(
+    connection,
+    'SELECT status FROM runs WHERE id = ?',
+    [runId],
+  );
+
+  if (current !== null) {
+    assertValidTransition('run', runId, current.status, status);
+  }
+
   runStatement(
     connection,
     `UPDATE runs

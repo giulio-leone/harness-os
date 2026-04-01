@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
 import { runStatement, selectAll, selectOne } from './store.js';
+import { assertValidTransition } from './state-machine.js';
 
 export interface IssueRecord {
   id: string;
@@ -355,6 +356,16 @@ export function markLeaseRecovered(
   leaseId: string,
   recoveredAt = new Date().toISOString(),
 ): void {
+  const current = selectOne<{ status: string }>(
+    connection,
+    'SELECT status FROM leases WHERE id = ?',
+    [leaseId],
+  );
+
+  if (current !== null) {
+    assertValidTransition('lease', leaseId, current.status, 'recovered');
+  }
+
   runStatement(
     connection,
     `UPDATE leases
@@ -454,6 +465,16 @@ export function releaseLease(
   leaseId: string,
   releasedAt = new Date().toISOString(),
 ): void {
+  const current = selectOne<{ status: string }>(
+    connection,
+    'SELECT status FROM leases WHERE id = ?',
+    [leaseId],
+  );
+
+  if (current !== null) {
+    assertValidTransition('lease', leaseId, current.status, 'released');
+  }
+
   runStatement(
     connection,
     `UPDATE leases
@@ -622,6 +643,8 @@ export function syncMilestoneStatuses(
       continue;
     }
 
+    assertValidTransition('milestone', milestone.id, milestone.status, nextStatus);
+
     runStatement(
       connection,
       `UPDATE milestones
@@ -642,6 +665,16 @@ function updateIssueStatusRaw(
   issueId: string,
   status: string,
 ): void {
+  const current = selectOne<{ status: string }>(
+    connection,
+    'SELECT status FROM issues WHERE id = ?',
+    [issueId],
+  );
+
+  if (current !== null) {
+    assertValidTransition('issue', issueId, current.status, status);
+  }
+
   runStatement(
     connection,
     `UPDATE issues
@@ -864,6 +897,16 @@ function markLeaseNeedsRecovery(
   connection: DatabaseSync,
   leaseId: string,
 ): void {
+  const current = selectOne<{ status: string }>(
+    connection,
+    'SELECT status FROM leases WHERE id = ?',
+    [leaseId],
+  );
+
+  if (current !== null) {
+    assertValidTransition('lease', leaseId, current.status, 'needs_recovery');
+  }
+
   runStatement(
     connection,
     `UPDATE leases
