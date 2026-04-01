@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## 2.0.1 - 2026-04-01
+
+### Fixed
+- `harness_session(action: "begin")` and `harness_session(action: "begin_recovery")` now auto-generate a canonical `sessionId` when the caller omits it, instead of failing with an invalid-arguments error on `sessionId`.
+- Updated MCP discoverability, packaged skills, and example payloads so clients no longer treat `sessionId` as a required field for new session claims.
+
 ## 2.0.0 - 2026-04-01
 
 ### Breaking Changes

@@ -123,7 +123,10 @@ const closeInputJsonSchema = {
 // ─── Begin session shared properties (JSON Schema) ───────────────
 
 const beginSessionProperties = {
-  sessionId: { type: 'string' },
+  sessionId: {
+    type: 'string',
+    description: 'Optional caller-provided run identifier. Auto-generated when omitted.',
+  },
   dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
   workspaceId: { type: 'string' },
   projectId: { type: 'string' },
@@ -141,17 +144,6 @@ const beginSessionProperties = {
   memoryQuery: { type: 'string' },
   memorySearchLimit: { type: 'integer', minimum: 1, maximum: 25 },
 } as const;
-
-const beginSessionRequired = [
-  'sessionId',
-  'workspaceId',
-  'projectId',
-  'progressPath',
-  'featureListPath',
-  'planPath',
-  'syncManifestPath',
-  'mem0Enabled',
-] as const;
 
 // ─── Server ─────────────────────────────────────────────────────────
 

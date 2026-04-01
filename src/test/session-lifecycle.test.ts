@@ -963,6 +963,43 @@ test('CLI supports lifecycle commands and read-only inspection commands', async 
   }
 });
 
+test('CLI begin_incremental auto-generates sessionId when omitted', async () => {
+  const tempDir = createTempDir('cli-autogen-session-id-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-cli-autogen',
+      task: 'Allow begin without caller session id',
+      status: 'ready',
+      nextBestAction: 'Let the CLI generate the run id.',
+    });
+
+    const begin = await runCliCommand(tempDir, {
+      action: 'begin_incremental',
+      input: {
+        dbPath,
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        progressPath: '/tmp/progress.md',
+        featureListPath: '/tmp/features.json',
+        planPath: '/tmp/plan.md',
+        syncManifestPath: '/tmp/manifest.yaml',
+        mem0Enabled: false,
+        preferredIssueId: 'issue-cli-autogen',
+      },
+    });
+
+    assert.equal(begin.action, 'begin_incremental');
+    assert.match(begin.context.sessionId, /^RUN-[0-9a-f-]{36}$/i);
+    assert.equal(begin.context.runId, begin.context.sessionId);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('CLI supports promote_queue for eligible pending issues', async () => {
   const tempDir = createTempDir('cli-promote-');
   const dbPath = join(tempDir, 'harness.sqlite');

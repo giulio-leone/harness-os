@@ -1,7 +1,7 @@
 ---
 name: session-lifecycle
 description: "Operational session protocol for task-scoped leases, reconciliation, checkpoints, inspection, queue promotion, and handoff across long-running work."
-version: "2.0.0"
+version: "2.0.1"
 ---
 
 # Session Lifecycle
@@ -92,5 +92,6 @@ Example fixtures live under `examples/session-lifecycle/`.
 - `interaction-loop` — governs decision checkpoints with the user
 
 ## Version Notes
+- `2.0.1` — `harness_session(action: "begin")` and `begin_recovery` now auto-generate `sessionId` when omitted, so MCP callers no longer fail on missing run IDs.
 - `2.0.0` — made queue planning batch-first only, documented milestone-gated promotion, and removed the legacy single-milestone import payload from the skill contract.
 - `1.1.0` — promoted `agent-harness-core` to the repo-native source of truth, documented `inspect_overview`, `inspect_issue`, explicit `promote_queue`, and automatic queue promotion on `close(done)`.

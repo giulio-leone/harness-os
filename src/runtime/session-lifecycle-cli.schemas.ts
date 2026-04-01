@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   memoryKindSchema,
@@ -54,9 +55,15 @@ export const sessionContextSchema = z
   })
   .strict();
 
+const beginSessionIdSchema = z
+  .string()
+  .min(1)
+  .optional()
+  .transform((value) => value ?? `RUN-${randomUUID()}`);
+
 export const incrementalSessionInputSchema = z
   .object({
-    sessionId: z.string().min(1),
+    sessionId: beginSessionIdSchema,
     dbPath: z.string().min(1).optional(),
     workspaceId: z.string().min(1),
     projectId: z.string().min(1),

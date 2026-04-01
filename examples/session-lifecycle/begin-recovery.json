@@ -1,7 +1,6 @@
 {
   "action": "begin_recovery",
   "input": {
-    "sessionId": "session-recovery-001",
     "dbPath": "/absolute/path/to/harness.sqlite",
     "workspaceId": "workspace-1",
     "projectId": "project-1",

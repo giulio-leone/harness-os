@@ -245,7 +245,6 @@ const TOOL_CATALOG: HarnessToolCatalogEntry[] = [
         purpose: 'Claim or resume the next ready issue.',
         recommendedWhen: ['start working', 'resume active work'],
         requiredFields: [
-          'sessionId',
           'workspaceId',
           'projectId',
           'progressPath',
@@ -256,7 +255,6 @@ const TOOL_CATALOG: HarnessToolCatalogEntry[] = [
         ],
         example: {
           action: 'begin',
-          sessionId: 'run-001',
           workspaceId: 'W-123',
           projectId: 'P-123',
           progressPath: '/workspace/progress.md',
@@ -271,7 +269,6 @@ const TOOL_CATALOG: HarnessToolCatalogEntry[] = [
         purpose: 'Claim a needs_recovery issue explicitly.',
         recommendedWhen: ['recovery workflow'],
         requiredFields: [
-          'sessionId',
           'workspaceId',
           'projectId',
           'progressPath',
@@ -283,7 +280,6 @@ const TOOL_CATALOG: HarnessToolCatalogEntry[] = [
         ],
         example: {
           action: 'begin_recovery',
-          sessionId: 'run-recovery-001',
           workspaceId: 'W-123',
           projectId: 'P-123',
           progressPath: '/workspace/progress.md',

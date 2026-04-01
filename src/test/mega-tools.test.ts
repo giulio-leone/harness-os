@@ -623,6 +623,40 @@ test('harness_session: full begin → checkpoint → close lifecycle via mega-to
   }
 });
 
+test('harness_session: begin auto-generates sessionId when omitted', async () => {
+  const tempDir = createTempDir('session-autogen-id-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-autogen', 'ready');
+
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_session')!;
+
+    const started = (await tool.handler({
+      action: 'begin',
+      dbPath,
+      workspaceId: 'ws-1',
+      projectId: 'proj-1',
+      progressPath: '/tmp/progress.md',
+      featureListPath: '/tmp/features.json',
+      planPath: '/tmp/plan.md',
+      syncManifestPath: '/tmp/manifest.yaml',
+      mem0Enabled: false,
+      preferredIssueId: 'issue-autogen',
+    })) as {
+      context: { runId: string; sessionId: string };
+      sessionToken: string;
+    };
+
+    assert.ok(started.sessionToken, 'sessionToken must be present');
+    assert.match(started.context.sessionId, /^RUN-[0-9a-f-]{36}$/i);
+    assert.equal(started.context.runId, started.context.sessionId);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('harness_session: advance atomically closes current and begins next', async () => {
   const tempDir = createTempDir('session-advance-');
   const dbPath = join(tempDir, 'harness.sqlite');
