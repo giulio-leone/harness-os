@@ -26,7 +26,8 @@ interface Issue { id: string; task: string; priority: "critical"|"high"|"medium"
 4. Execute by dependency order, then priority (`critical` → `high` → `medium` → `low`).
 5. Run independent same-priority milestones in parallel when safe.
 6. Update statuses continuously and append concise progress summaries.
-7. Trigger the `github-sync` skill after creating/updating the plan or changing status to ensure perfect alignment with GitHub milestones/issues.
+7. If the plan is being materialized into HarnessOS, export it through `harness_orchestrator(action: "plan_issues")` using the canonical `milestones[]` payload.
+8. Trigger the `github-sync` skill after creating/updating the plan or changing status to ensure perfect alignment with GitHub milestones/issues.
 
 ## Effort Sizing
 
@@ -53,6 +54,55 @@ When following the `harness-lifecycle` skill, each issue becomes an **incrementa
 6. **Repeat** — pick the next issue.
 
 > **Rule**: never implement multiple issues simultaneously. Complete → test → commit → update → next.
+
+## HarnessOS Canonical Mapping
+
+When the plan is imported into HarnessOS, the queue payload must stay batch-first:
+
+```json
+{
+  "action": "plan_issues",
+  "projectId": "<project-id>",
+  "campaignId": "<campaign-id>",
+  "milestones": [
+    {
+      "milestone_key": "runtime-foundations",
+      "description": "Ship the runtime foundations",
+      "issues": [
+        {
+          "task": "Add the canonical planner",
+          "priority": "high",
+          "size": "M"
+        },
+        {
+          "task": "Add regression coverage",
+          "priority": "high",
+          "size": "S",
+          "depends_on_indices": [0]
+        }
+      ]
+    },
+    {
+      "milestone_key": "capability-discovery",
+      "description": "Expose agent-readable discoverability",
+      "depends_on_milestone_keys": ["runtime-foundations"],
+      "issues": [
+        {
+          "task": "Publish the capability catalog",
+          "priority": "medium",
+          "size": "M"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Rules:
+- Always use `milestones[]`, even for a single milestone import.
+- Use `depends_on_milestone_keys` for edges within the current batch.
+- Use `depends_on_milestone_ids` only when a milestone depends on already imported work.
+- Do not re-encode milestone hierarchy as fake issue dependencies.
 
 ## Concrete Template
 
@@ -88,3 +138,5 @@ When following the `harness-lifecycle` skill, each issue becomes an **incrementa
 - Missing dependency declarations
 - Running blocked items in parallel
 - XL issues that should be split into children
+- Flattening milestone dependencies into artificial issue edges to satisfy the queue importer
+- Using the removed top-level `milestoneDescription` or `issues` planning payload

@@ -10,6 +10,7 @@ import {
   runStatement,
   selectOne,
 } from '../db/store.js';
+import { syncMilestoneStatuses } from '../db/lease-manager.js';
 import {
   AgenticToolError,
   buildMeta,
@@ -22,6 +23,26 @@ import {
 const issuePriorityOrder = ['critical', 'high', 'medium', 'low'] as const;
 
 // ─── Input Schemas ──────────────────────────────────────────────────
+
+const planningScopeSchema = z
+  .object({
+    dbPath: z.string().min(1).optional(),
+    workspaceId: z.string().min(1).optional(),
+    projectId: z.string().min(1).optional(),
+    projectName: z.string().min(1).optional(),
+    campaignId: z.string().min(1).optional(),
+    campaignName: z.string().min(1).optional(),
+  })
+  .strict();
+
+const harnessPlanIssueDefinitionSchema = z
+  .object({
+    task: z.string().min(1),
+    priority: z.enum(issuePriorityOrder),
+    size: z.string().min(1),
+    depends_on_indices: z.array(z.number().int().nonnegative()).optional(),
+  })
+  .strict();
 
 export const harnessInitWorkspaceInputSchema = z
   .object({
@@ -40,29 +61,23 @@ export const harnessCreateCampaignInputSchema = z
   })
   .strict();
 
-export const harnessPlanIssuesInputSchema = z
+export const harnessPlanMilestoneBatchItemSchema = z
   .object({
-    dbPath: z.string().min(1).optional(),
-    workspaceId: z.string().min(1).optional(),
-    projectId: z.string().min(1).optional(),
-    projectName: z.string().min(1).optional(),
-    campaignId: z.string().min(1).optional(),
-    campaignName: z.string().min(1).optional(),
-    milestoneDescription: z.string().min(1),
-    issues: z
-      .array(
-        z
-          .object({
-            task: z.string().min(1),
-            priority: z.enum(issuePriorityOrder),
-            size: z.string().min(1),
-            depends_on_indices: z.array(z.number().int().nonnegative()).optional(),
-          })
-          .strict(),
-      )
-      .min(1),
+    milestone_key: z.string().min(1),
+    description: z.string().min(1),
+    depends_on_milestone_ids: z.array(z.string().min(1)).optional(),
+    depends_on_milestone_keys: z.array(z.string().min(1)).optional(),
+    issues: z.array(harnessPlanIssueDefinitionSchema).min(1),
   })
   .strict();
+
+export const harnessPlanBatchInputSchema = planningScopeSchema
+  .extend({
+    milestones: z.array(harnessPlanMilestoneBatchItemSchema).min(1),
+  })
+  .strict();
+
+export const harnessPlanIssuesInputSchema = harnessPlanBatchInputSchema;
 
 export const harnessRollbackIssueInputSchema = z
   .object({
@@ -72,8 +87,13 @@ export const harnessRollbackIssueInputSchema = z
   .strict();
 
 export type HarnessPlanIssueInput = z.infer<
-  typeof harnessPlanIssuesInputSchema
->['issues'][number];
+  typeof harnessPlanIssueDefinitionSchema
+>;
+type HarnessPlanningScopeInput = z.infer<typeof planningScopeSchema>;
+type HarnessPlanBatchMilestoneInput = z.infer<
+  typeof harnessPlanMilestoneBatchItemSchema
+>;
+type HarnessPlanBatchInput = z.infer<typeof harnessPlanBatchInputSchema>;
 
 // ─── Row types ──────────────────────────────────────────────────────
 
@@ -213,7 +233,7 @@ export function createHarnessCampaign(
       ...result,
       ...buildMeta(
         ['harness_orchestrator'],
-        `Project "${input.projectName}" and campaign "${input.campaignName}" ready. Now call harness_orchestrator(action: "plan_issues") with projectId "${result.projectId}" and campaignId "${result.campaignId}" to populate the task queue.`,
+        `Project "${input.projectName}" and campaign "${input.campaignName}" ready. Now call harness_orchestrator(action: "plan_issues") with projectId "${result.projectId}", campaignId "${result.campaignId}", and a canonical milestones[] batch to populate the task queue.`,
         { idempotent: true },
       ),
     };
@@ -227,89 +247,31 @@ export function planHarnessIssues(
 ): Record<string, unknown> {
   const input = harnessPlanIssuesInputSchema.parse(rawInput);
   const dbPath = resolveDbPath(input.dbPath);
-  validateIssueDependencies(input.issues);
 
   const database = openHarnessDatabase({ dbPath });
 
   try {
-    const projectId = resolveProjectId(database.connection, {
-      projectId: input.projectId,
-      projectName: input.projectName,
-      workspaceId: input.workspaceId,
-    });
-    const campaignId = resolveCampaignId(database.connection, projectId, {
-      campaignId: input.campaignId,
-      campaignName: input.campaignName,
-    });
+    const { projectId, campaignId } = resolvePlanningScope(
+      database.connection,
+      input,
+    );
 
     const result = runInTransaction(database.connection, () => {
-      const milestoneId = `M-${randomUUID()}`;
-      runStatement(
-        database.connection,
-        `INSERT INTO milestones (id, project_id, description, priority, status)
-         VALUES (?, ?, ?, ?, 'in_progress')`,
-        [
-          milestoneId,
-          projectId,
-          input.milestoneDescription,
-          resolveHighestPriority(input.issues),
-        ],
-      );
-
-      const createdIssues = input.issues.map((issue) => ({
-        ...issue,
-        id: `I-${randomUUID()}`,
-      }));
-
-      createdIssues.forEach((issue, index) => {
-        const dependsOnIds = [...new Set((issue.depends_on_indices ?? []).map((value) => {
-          const dependency = createdIssues[value];
-
-          if (dependency === undefined) {
-            throw new Error(
-              `Issue at index ${index} references dependency index ${value}, which does not exist.`,
-            );
-          }
-
-          return dependency.id;
-        }))];
-
-        runStatement(
-          database.connection,
-          `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
-          [
-            issue.id,
-            projectId,
-            campaignId,
-            milestoneId,
-            issue.task,
-            issue.priority,
-            issue.size,
-            JSON.stringify(dependsOnIds),
-            new Date().toISOString(),
-          ],
-        );
+      const result = planMilestoneBatch(database.connection, {
+        projectId,
+        campaignId,
+        input,
       });
 
-      return {
-        milestoneId,
-        issueCount: createdIssues.length,
-        generatedIssues: createdIssues.map((issue) => ({
-          id: issue.id,
-          task: issue.task,
-          dependsOn: (issue.depends_on_indices ?? []).map(
-            (dependencyIndex) => createdIssues[dependencyIndex].id,
-          ),
-        })),
-      };
+      syncMilestoneStatuses(database.connection, { projectId, campaignId });
+      return result;
     });
 
     return {
       ...result,
       ...buildMeta(
         ['harness_orchestrator', 'harness_session'],
-        `${result.issueCount} issues injected into the queue as "pending". Call harness_orchestrator(action: "promote_queue") to unlock tasks with no dependencies, then harness_session(action: "begin") to start working.`,
+        `${result.issueCount} issues across ${result.milestoneCount} milestones were injected into the queue as "pending". Call harness_orchestrator(action: "promote_queue") to unlock milestone roots whose dependencies are fully done, then harness_session(action: "begin") to start working.`,
       ),
     };
   } finally {
@@ -429,6 +391,106 @@ function slugify(value: string): string {
     .replace(/-{2,}/g, '-');
 }
 
+function resolvePlanningScope(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: HarnessPlanningScopeInput,
+): { projectId: string; campaignId: string } {
+  const projectId = resolveProjectId(connection, {
+    projectId: input.projectId,
+    projectName: input.projectName,
+    workspaceId: input.workspaceId,
+  });
+  const campaignId = resolveCampaignId(connection, projectId, {
+    campaignId: input.campaignId,
+    campaignName: input.campaignName,
+  });
+
+  return { projectId, campaignId };
+}
+
+function planMilestoneBatch(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    projectId: string;
+    campaignId: string;
+    input: HarnessPlanBatchInput;
+  },
+): {
+  milestoneCount: number;
+  issueCount: number;
+  generatedMilestones: Array<{
+    key: string;
+    id: string;
+    description: string;
+    dependsOnMilestoneIds: string[];
+    generatedIssues: Array<{ id: string; task: string; dependsOn: string[] }>;
+  }>;
+} {
+  const orderedMilestones = orderMilestonesByDependency(input.input.milestones);
+  const milestoneIdByKey = new Map<string, string>();
+
+  for (const milestone of orderedMilestones) {
+    milestoneIdByKey.set(milestone.milestone_key, `M-${randomUUID()}`);
+  }
+
+  const generatedMilestones = orderedMilestones.map((milestone) => {
+    validateIssueDependencies(milestone.issues);
+    const externalDependencyIds = normalizeMilestoneIds(
+      milestone.depends_on_milestone_ids,
+    );
+
+    assertMilestoneDependenciesExist(
+      connection,
+      input.projectId,
+      externalDependencyIds,
+    );
+
+    const dependsOnMilestoneIds = normalizeMilestoneIds(
+      [
+        ...externalDependencyIds,
+        ...(milestone.depends_on_milestone_keys ?? []).map((key) => {
+          const milestoneId = milestoneIdByKey.get(key);
+
+          if (milestoneId === undefined) {
+            throw new AgenticToolError(
+              `Milestone ${milestone.milestone_key} references unknown dependency ${key}.`,
+              'Make sure depends_on_milestone_keys references a milestone_key present in the same batch.',
+            );
+          }
+
+          return milestoneId;
+        }),
+      ],
+    );
+
+    const created = insertMilestoneWithIssues(connection, {
+      projectId: input.projectId,
+      campaignId: input.campaignId,
+      milestoneId: milestoneIdByKey.get(milestone.milestone_key),
+      description: milestone.description,
+      dependsOnMilestoneIds,
+      issues: milestone.issues,
+    });
+
+    return {
+      key: milestone.milestone_key,
+      id: created.milestoneId,
+      description: milestone.description,
+      dependsOnMilestoneIds,
+      generatedIssues: created.generatedIssues,
+    };
+  });
+
+  return {
+    milestoneCount: generatedMilestones.length,
+    issueCount: generatedMilestones.reduce(
+      (sum, milestone) => sum + milestone.generatedIssues.length,
+      0,
+    ),
+    generatedMilestones,
+  };
+}
+
 function validateIssueDependencies(issues: HarnessPlanIssueInput[]): void {
   issues.forEach((issue, index) => {
     for (const dependencyIndex of issue.depends_on_indices ?? []) {
@@ -440,6 +502,190 @@ function validateIssueDependencies(issues: HarnessPlanIssueInput[]): void {
       }
     }
   });
+}
+
+function insertMilestoneWithIssues(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    projectId: string;
+    campaignId: string;
+    milestoneId?: string;
+    description: string;
+    dependsOnMilestoneIds?: string[];
+    issues: HarnessPlanIssueInput[];
+  },
+): {
+  milestoneId: string;
+  generatedIssues: Array<{ id: string; task: string; dependsOn: string[] }>;
+} {
+  const milestoneId = input.milestoneId ?? `M-${randomUUID()}`;
+  const dependsOnMilestoneIds = normalizeMilestoneIds(input.dependsOnMilestoneIds);
+
+  runStatement(
+    connection,
+    `INSERT INTO milestones (id, project_id, description, priority, status, depends_on)
+     VALUES (?, ?, ?, ?, 'pending', ?)`,
+    [
+      milestoneId,
+      input.projectId,
+      input.description,
+      resolveHighestPriority(input.issues),
+      JSON.stringify(dependsOnMilestoneIds),
+    ],
+  );
+
+  const createdIssues = input.issues.map((issue) => ({
+    ...issue,
+    id: `I-${randomUUID()}`,
+  }));
+
+  createdIssues.forEach((issue, index) => {
+    const dependsOnIds = [...new Set((issue.depends_on_indices ?? []).map((value) => {
+      const dependency = createdIssues[value];
+
+      if (dependency === undefined) {
+        throw new Error(
+          `Issue at index ${index} references dependency index ${value}, which does not exist.`,
+        );
+      }
+
+      return dependency.id;
+    }))];
+
+    runStatement(
+      connection,
+      `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      [
+        issue.id,
+        input.projectId,
+        input.campaignId,
+        milestoneId,
+        issue.task,
+        issue.priority,
+        issue.size,
+        JSON.stringify(dependsOnIds),
+        new Date().toISOString(),
+      ],
+    );
+  });
+
+  return {
+    milestoneId,
+    generatedIssues: createdIssues.map((issue) => ({
+      id: issue.id,
+      task: issue.task,
+      dependsOn: (issue.depends_on_indices ?? []).map(
+        (dependencyIndex) => createdIssues[dependencyIndex].id,
+      ),
+    })),
+  };
+}
+
+function assertMilestoneDependenciesExist(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  projectId: string,
+  milestoneIds: string[],
+): void {
+  if (milestoneIds.length === 0) {
+    return;
+  }
+
+  const placeholders = milestoneIds.map(() => '?').join(', ');
+  const rows = selectOne<{ count: number }>(
+    connection,
+    `SELECT COUNT(*) AS count
+     FROM milestones
+     WHERE project_id = ?
+       AND id IN (${placeholders})`,
+    [projectId, ...milestoneIds],
+  );
+
+  if ((rows?.count ?? 0) !== milestoneIds.length) {
+    throw new AgenticToolError(
+      'Some depends_on_milestone_ids do not exist in the target project.',
+      'Use valid milestone IDs from the same project, or import the parent milestones in the same batch.',
+    );
+  }
+}
+
+function orderMilestonesByDependency(
+  milestones: HarnessPlanBatchMilestoneInput[],
+): HarnessPlanBatchMilestoneInput[] {
+  const milestonesByKey = new Map<string, HarnessPlanBatchMilestoneInput>();
+
+  for (const milestone of milestones) {
+    if (milestonesByKey.has(milestone.milestone_key)) {
+      throw new AgenticToolError(
+        `Duplicate milestone_key "${milestone.milestone_key}" detected.`,
+        'Every milestone in a batch import must have a unique milestone_key.',
+      );
+    }
+
+    milestonesByKey.set(milestone.milestone_key, milestone);
+  }
+
+  const ordered: HarnessPlanBatchMilestoneInput[] = [];
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  const visit = (milestoneKey: string): void => {
+    if (visited.has(milestoneKey)) {
+      return;
+    }
+
+    if (visiting.has(milestoneKey)) {
+      throw new AgenticToolError(
+        `Cycle detected in milestone dependencies at "${milestoneKey}".`,
+        'Remove circular depends_on_milestone_keys references before importing the batch.',
+      );
+    }
+
+    const milestone = milestonesByKey.get(milestoneKey);
+
+    if (milestone === undefined) {
+      throw new AgenticToolError(
+        `Unknown milestone dependency "${milestoneKey}".`,
+        'Make sure every depends_on_milestone_keys entry references a milestone_key present in the same batch.',
+      );
+    }
+
+    visiting.add(milestoneKey);
+
+    for (const dependencyKey of milestone.depends_on_milestone_keys ?? []) {
+      if (dependencyKey === milestoneKey) {
+        throw new AgenticToolError(
+          `Milestone "${milestoneKey}" cannot depend on itself.`,
+          'Remove the self-reference from depends_on_milestone_keys.',
+        );
+      }
+
+      if (!milestonesByKey.has(dependencyKey)) {
+        throw new AgenticToolError(
+          `Milestone "${milestoneKey}" references unknown dependency "${dependencyKey}".`,
+          'Make sure every depends_on_milestone_keys entry references a milestone_key present in the same batch.',
+        );
+      }
+
+      visit(dependencyKey);
+    }
+
+    visiting.delete(milestoneKey);
+    visited.add(milestoneKey);
+    ordered.push(milestone);
+  };
+
+  for (const milestone of milestones) {
+    visit(milestone.milestone_key);
+  }
+
+  return ordered;
+}
+
+function normalizeMilestoneIds(
+  milestoneIds: string[] | undefined,
+): string[] {
+  return [...new Set(milestoneIds ?? [])];
 }
 
 function resolveHighestPriority(issues: HarnessPlanIssueInput[]): string {

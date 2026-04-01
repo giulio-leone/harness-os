@@ -62,7 +62,7 @@ Agents can now autonomously bootstrap workspaces and campaigns without executing
 
 1. **Initialize Workspace:** Call the `harness_init_workspace` MCP tool to create the `harness.db` and inject the workspace record.
 2. **Create Campaign:** Call the `harness_create_campaign` MCP tool to create the target project and campaign.
-3. **Plan Issues:** Call the `harness_plan_issues` MCP tool with the generated plan and dependencies to populate the `pending` queue.
+3. **Plan Issues:** Call the `harness_plan_issues` MCP tool with a canonical `milestones[]` batch, even when importing a single milestone. Preserve cross-milestone hierarchy through `depends_on_milestone_ids` or `depends_on_milestone_keys` instead of flattening it into artificial issue edges.
 4. **Execution Loop:** Call `begin_incremental_session` via MCP to pick up the first issue in the queue.
 5. (Legacy Fallback): You can still run `bash init.sh` and python scripts if a manual override is needed.
 

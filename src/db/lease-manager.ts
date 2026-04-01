@@ -97,6 +97,12 @@ interface RawLeaseCheckpointRow extends RawLeaseRow {
   last_checkpoint_at: string | null;
 }
 
+interface RawMilestoneRow {
+  id: string;
+  depends_on: string;
+  status: string;
+}
+
 export function reconcileProjectState(
   connection: DatabaseSync,
   input: ReconcileProjectInput,
@@ -524,6 +530,118 @@ export function updateIssueStatus(
   issueId: string,
   status: string,
 ): void {
+  const scope = selectOne<{ project_id: string; campaign_id: string | null }>(
+    connection,
+    `SELECT project_id, campaign_id
+     FROM issues
+     WHERE id = ?
+     LIMIT 1`,
+    [issueId],
+  );
+
+  updateIssueStatusRaw(connection, issueId, status);
+
+  if (scope !== null) {
+    syncMilestoneStatuses(connection, {
+      projectId: scope.project_id,
+      campaignId: normalizeNullable(scope.campaign_id),
+    });
+  }
+}
+
+export function syncMilestoneStatuses(
+  connection: DatabaseSync,
+  input: PromoteQueueInput,
+): Array<{ milestoneId: string; status: string }> {
+  const milestones = selectAll<RawMilestoneRow>(
+    connection,
+    `SELECT id, depends_on, status
+     FROM milestones
+     WHERE project_id = ?
+     ORDER BY id ASC`,
+    [input.projectId],
+  );
+
+  if (milestones.length === 0) {
+    return [];
+  }
+
+  const issueCounts = selectAll<{
+    milestone_id: string;
+    status: string;
+    cnt: number;
+  }>(
+    connection,
+    `SELECT milestone_id, status, COUNT(*) AS cnt
+     FROM issues
+     WHERE project_id = ?
+       AND milestone_id IS NOT NULL
+       AND (? IS NULL OR campaign_id = ?)
+     GROUP BY milestone_id, status`,
+    [input.projectId, input.campaignId ?? null, input.campaignId ?? null],
+  );
+
+  const issueCountsByMilestone = new Map<string, Map<string, number>>();
+
+  for (const row of issueCounts) {
+    const current = issueCountsByMilestone.get(row.milestone_id) ?? new Map<string, number>();
+    current.set(row.status, row.cnt);
+    issueCountsByMilestone.set(row.milestone_id, current);
+  }
+
+  const nextStatuses = new Map<string, string>();
+
+  for (const milestone of milestones) {
+    nextStatuses.set(
+      milestone.id,
+      deriveMilestoneBaseStatus(issueCountsByMilestone.get(milestone.id)),
+    );
+  }
+
+  for (const milestone of milestones) {
+    const currentStatus = nextStatuses.get(milestone.id) ?? 'pending';
+
+    if (currentStatus === 'done' || currentStatus === 'failed') {
+      continue;
+    }
+
+    const dependencyIds = parseDependsOn(milestone.depends_on);
+    const isBlockedByDependency = dependencyIds.some(
+      (dependencyId) => nextStatuses.get(dependencyId) !== 'done',
+    );
+
+    if (isBlockedByDependency) {
+      nextStatuses.set(milestone.id, 'blocked');
+    }
+  }
+
+  for (const milestone of milestones) {
+    const nextStatus = nextStatuses.get(milestone.id) ?? 'pending';
+
+    if (nextStatus === milestone.status) {
+      continue;
+    }
+
+    runStatement(
+      connection,
+      `UPDATE milestones
+       SET status = ?
+       WHERE id = ?`,
+      [nextStatus, milestone.id],
+    );
+  }
+
+  return milestones.map((milestone) => ({
+    milestoneId: milestone.id,
+    status: nextStatuses.get(milestone.id) ?? 'pending',
+  }));
+}
+
+function updateIssueStatusRaw(
+  connection: DatabaseSync,
+  issueId: string,
+  status: string,
+): void {
   runStatement(
     connection,
     `UPDATE issues
@@ -537,6 +655,8 @@ export function promoteEligiblePendingIssues(
   connection: DatabaseSync,
   input: PromoteQueueInput,
 ): IssueRecord[] {
+  syncMilestoneStatuses(connection, input);
+
   const rows = selectAll<RawIssueRow>(
     connection,
     `SELECT
@@ -573,6 +693,16 @@ export function promoteEligiblePendingIssues(
 
   const dependencyIds = [...new Set(pendingIssues.flatMap((issue) => issue.dependsOn))];
   const dependencyStatuses = new Map<string, string>();
+  const milestoneIds = [
+    ...new Set(
+      pendingIssues
+        .map((issue) => issue.milestoneId)
+        .filter((milestoneId): milestoneId is string => milestoneId !== undefined),
+    ),
+  ];
+  const milestoneDependencyIds = new Set<string>();
+  const milestoneDependencies = new Map<string, string[]>();
+  const milestoneStatuses = new Map<string, string>();
 
   if (dependencyIds.length > 0) {
     const placeholders = dependencyIds.map(() => '?').join(', ');
@@ -589,18 +719,66 @@ export function promoteEligiblePendingIssues(
     }
   }
 
+  if (milestoneIds.length > 0) {
+    const placeholders = milestoneIds.map(() => '?').join(', ');
+    const milestoneRows = selectAll<RawMilestoneRow>(
+      connection,
+      `SELECT id, depends_on, status
+       FROM milestones
+       WHERE id IN (${placeholders})`,
+      milestoneIds,
+    );
+
+    for (const milestone of milestoneRows) {
+      const dependsOnIds = parseDependsOn(milestone.depends_on);
+      milestoneDependencies.set(milestone.id, dependsOnIds);
+      milestoneStatuses.set(milestone.id, milestone.status);
+
+      for (const dependencyId of dependsOnIds) {
+        milestoneDependencyIds.add(dependencyId);
+      }
+    }
+  }
+
+  const unresolvedMilestoneIds = [...milestoneDependencyIds].filter(
+    (milestoneId) => !milestoneStatuses.has(milestoneId),
+  );
+
+  if (unresolvedMilestoneIds.length > 0) {
+    const placeholders = unresolvedMilestoneIds.map(() => '?').join(', ');
+    const dependencyMilestones = selectAll<{ id: string; status: string }>(
+      connection,
+      `SELECT id, status
+       FROM milestones
+       WHERE id IN (${placeholders})`,
+      unresolvedMilestoneIds,
+    );
+
+    for (const milestone of dependencyMilestones) {
+      milestoneStatuses.set(milestone.id, milestone.status);
+    }
+  }
+
   const promoted: IssueRecord[] = [];
 
   for (const issue of pendingIssues) {
+    const milestoneReady =
+      issue.milestoneId === undefined ||
+      (milestoneDependencies.get(issue.milestoneId) ?? []).every(
+        (dependencyId) => milestoneStatuses.get(dependencyId) === 'done',
+      );
     const readyToPromote =
-      issue.dependsOn.length === 0 ||
-      issue.dependsOn.every((dependencyId) => dependencyStatuses.get(dependencyId) === 'done');
+      milestoneReady &&
+      (
+        issue.dependsOn.length === 0 ||
+        issue.dependsOn.every((dependencyId) => dependencyStatuses.get(dependencyId) === 'done')
+      );
 
     if (!readyToPromote) {
       continue;
     }
 
-    updateIssueStatus(connection, issue.id, 'ready');
+    updateIssueStatusRaw(connection, issue.id, 'ready');
     dependencyStatuses.set(issue.id, 'ready');
     promoted.push({
       ...issue,
@@ -608,7 +786,49 @@ export function promoteEligiblePendingIssues(
     });
   }
 
+  if (promoted.length > 0) {
+    syncMilestoneStatuses(connection, input);
+  }
+
   return promoted;
+}
+
+function deriveMilestoneBaseStatus(
+  counts: Map<string, number> | undefined,
+): string {
+  if (counts === undefined || counts.size === 0) {
+    return 'pending';
+  }
+
+  const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+  const failed = counts.get('failed') ?? 0;
+  const done = counts.get('done') ?? 0;
+  const inProgress = counts.get('in_progress') ?? 0;
+  const ready = counts.get('ready') ?? 0;
+  const blocked = counts.get('blocked') ?? 0;
+  const needsRecovery = counts.get('needs_recovery') ?? 0;
+
+  if (failed > 0) {
+    return 'failed';
+  }
+
+  if (done === total) {
+    return 'done';
+  }
+
+  if (inProgress > 0) {
+    return 'in_progress';
+  }
+
+  if (ready > 0) {
+    return 'ready';
+  }
+
+  if (blocked > 0 || needsRecovery > 0) {
+    return 'blocked';
+  }
+
+  return 'pending';
 }
 
 function findBlockingStaleLeases(

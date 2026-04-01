@@ -1,7 +1,7 @@
 ---
 name: session-lifecycle
 description: "Operational session protocol for task-scoped leases, reconciliation, checkpoints, inspection, queue promotion, and handoff across long-running work."
-version: "1.1.0"
+version: "2.0.0"
 ---
 
 # Session Lifecycle
@@ -27,7 +27,8 @@ Enforce the operational protocol for long-running work when a single task or lea
 7. Checkpoints are mandatory on claim, on every `task_status` transition, and before release or close.
 8. Each checkpoint must include `task_status`, a short summary, evidence or artifact references, and `next_step`.
 9. mem0 is read on begin or recovery and written only on significant checkpoints or close, with canonical scope tags and links back to SQLite evidence.
-10. Queue promotion belongs to the lifecycle layer: eligible dependent issues may be promoted automatically on `close(done)` or explicitly through `promote_queue`.
+10. Queue promotion belongs to the lifecycle layer: eligible dependent issues may be promoted automatically on `close(done)` or explicitly through `promote_queue`, and promotion must respect both issue-level and milestone-level dependency gates.
+11. New queue work must be imported through the canonical batch-first `harness_orchestrator(action: "plan_issues")` contract using `milestones[]`; do not rely on the removed legacy single-milestone payload.
 
 ## Runtime Surface
 The verified runtime in `agent-harness-core` exposes:
@@ -55,7 +56,7 @@ Example fixtures live under `examples/session-lifecycle/`.
 6. Load mem0 context if available and relevant for begin or recovery.
 7. Hand execution to the relevant project or domain skill for the assigned issue only.
 8. Write a checkpoint on every `task_status` change.
-9. On `close(done)`, allow lifecycle-driven queue promotion to advance newly eligible dependent issues.
+9. On `close(done)`, allow lifecycle-driven queue promotion to advance newly eligible dependent issues and newly eligible dependent milestones.
 10. Use `inspect_overview` or `inspect_issue` for read-only state inspection; do not mutate canonical state from ad-hoc scripts when inspection is enough.
 11. Before release, close, or handoff, write the final checkpoint and persist any allowed mem0 summary.
 
@@ -81,6 +82,7 @@ Example fixtures live under `examples/session-lifecycle/`.
 - Claiming new work while `needs_recovery` or stale state is unresolved
 - Writing mem0 entries that are not linked to canonical evidence
 - Re-implementing queue promotion in a project wrapper when the lifecycle already exposes `promote_queue`
+- Planning queue work with the removed top-level `milestoneDescription` or `issues` payload instead of canonical `milestones[]`
 
 ## Related Skills
 - `harness-lifecycle` — umbrella model for long-running work
@@ -90,4 +92,5 @@ Example fixtures live under `examples/session-lifecycle/`.
 - `interaction-loop` — governs decision checkpoints with the user
 
 ## Version Notes
+- `2.0.0` — made queue planning batch-first only, documented milestone-gated promotion, and removed the legacy single-milestone import payload from the skill contract.
 - `1.1.0` — promoted `agent-harness-core` to the repo-native source of truth, documented `inspect_overview`, `inspect_issue`, explicit `promote_queue`, and automatic queue promotion on `close(done)`.

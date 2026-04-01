@@ -495,7 +495,7 @@ export class SessionLifecycleMcpServer {
       {
         name: 'harness_orchestrator',
         description:
-          'Setup, configuration, and queue management. Actions: init_workspace (create DB and workspace), create_campaign (register project + campaign — idempotent), plan_issues (inject tasks into queue), promote_queue (unlock tasks whose deps are done), rollback_issue (emergency reset of stuck issue to pending).',
+          'Setup, configuration, and queue management. Actions: init_workspace (create DB and workspace), create_campaign (register project + campaign — idempotent), plan_issues (inject a canonical milestone batch into the queue), promote_queue (unlock tasks whose issue and milestone deps are done), rollback_issue (emergency reset of stuck issue to pending).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -514,23 +514,43 @@ export class SessionLifecycleMcpServer {
             // plan_issues
             projectId: { type: 'string', description: 'Project UUID (or use projectName instead).' },
             campaignId: { type: 'string', description: 'Campaign UUID (or use campaignName instead).' },
-            milestoneDescription: { type: 'string', description: 'For "plan_issues": milestone description.' },
-            issues: {
+            milestones: {
               type: 'array',
-              description: 'For "plan_issues": array of task objects.',
+              description: 'For "plan_issues": canonical array of milestones. Use this shape even for a single milestone import.',
               items: {
                 type: 'object',
                 properties: {
-                  task: { type: 'string' },
-                  priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
-                  size: { type: 'string' },
-                  depends_on_indices: {
+                  milestone_key: { type: 'string', description: 'Stable local key used by depends_on_milestone_keys within this batch.' },
+                  description: { type: 'string', description: 'Milestone description.' },
+                  depends_on_milestone_ids: {
                     type: 'array',
-                    items: { type: 'number' },
-                    description: 'Indices of the issues array this task depends on. E.g. [0] means it depends on the first task in the array.',
+                    description: 'Existing milestone IDs that must complete before this milestone can unlock.',
+                    items: { type: 'string' },
+                  },
+                  depends_on_milestone_keys: {
+                    type: 'array',
+                    description: 'Local milestone keys in the same batch that must complete before this milestone can unlock.',
+                    items: { type: 'string' },
+                  },
+                  issues: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        task: { type: 'string' },
+                        priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+                        size: { type: 'string' },
+                        depends_on_indices: {
+                          type: 'array',
+                          items: { type: 'number' },
+                          description: 'Indices of earlier issues in the same milestone this task depends on.',
+                        },
+                      },
+                      required: ['task', 'priority', 'size'],
+                    },
                   },
                 },
-                required: ['task', 'priority', 'size'],
+                required: ['milestone_key', 'description', 'issues'],
               },
             },
             // rollback_issue

@@ -17,6 +17,7 @@
     <a href="#-key-features">Key Features</a> •
     <a href="#-getting-started">Getting Started</a> •
     <a href="#-architecture">Architecture</a> •
+    <a href="CHANGELOG.md">Changelog</a> •
     <a href="#%EF%B8%8F-developer">Developer</a>
   </p>
 </div>
@@ -52,6 +53,8 @@ Think of it this way:
 
 **HarnessOS** provides the foundational execution framework for advanced autonomous agents. It focuses strictly on robust lifecycle management, leaving LLM inference and tool implementation to the consumer.
 
+Latest release notes and breaking changes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
 ### What it handles:
 - **Zod Plan Contracts** — Strongly typed schema validation for robust planning.
 - **Session Contracts** — Standardized agent execution lifecycles.
@@ -70,10 +73,19 @@ SQLite acts as the absolute source of truth for:
 - **Events** — Immutable transaction logs.
 - **Task State** — Workflow queues and resolutions.
 
+### 📋 Batch-First Planning & Promotion
+- `harness_orchestrator(action: "plan_issues")` accepts a canonical `milestones[]` batch only, even when importing a single milestone.
+- Milestone hierarchy is preserved with `depends_on_milestone_keys` for in-batch edges and `depends_on_milestone_ids` for previously imported milestones.
+- `promote_queue` advances work only when both issue-level and milestone-level dependencies are truly `done`.
+
 ### 🧠 Optional Memory Derivation
 - Integrating `mem0-mcp` provides advanced semantic memory and context extraction.
 - **Lazy Loading** — Derived memory is loaded *only* when needed to conserve resources.
 - **Failsafe Operations** — If `mem0-mcp` is unavailable, the harness gracefully degrades without corrupting the canonical SQLite tasks.
+
+### 🧭 Capability Discoverability
+- `harness_inspector(action: "capabilities")` exposes the runtime tool surface, bundled skills, policy-driven skills, and mem0 state in an agent-readable format.
+- The packaged skills under `.github/skills` mirror the canonical runtime contract, so prompts, docs, and MCP discovery stay aligned.
 
 ### ⏱️ Reusable Scheduler Injector
 A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.ts`), supporting full 5-field cron expressions to safely trigger work without duplications.
@@ -133,17 +145,61 @@ harness-session-lifecycle-mcp
 
 *(For detailed examples and JSON payload usage, see the `examples/session-lifecycle/` directory.)*
 
+### 4️⃣ Planning Payloads
+
+As of `2.0.0`, queue planning is batch-first:
+
+```json
+{
+  "action": "plan_issues",
+  "projectId": "<project-id>",
+  "campaignId": "<campaign-id>",
+  "milestones": [
+    {
+      "milestone_key": "runtime-foundations",
+      "description": "Ship the runtime foundations",
+      "issues": [
+        {
+          "task": "Add canonical planner support",
+          "priority": "high",
+          "size": "M"
+        },
+        {
+          "task": "Add planner regression tests",
+          "priority": "high",
+          "size": "S",
+          "depends_on_indices": [0]
+        }
+      ]
+    },
+    {
+      "milestone_key": "capability-discovery",
+      "description": "Expose agent-readable capability discovery",
+      "depends_on_milestone_keys": ["runtime-foundations"],
+      "issues": [
+        {
+          "task": "Publish the capability catalog",
+          "priority": "high",
+          "size": "M"
+        }
+      ]
+    }
+  ]
+}
+```
+
 ---
 
 ## 🧩 Architecture
 
-For an in-depth look at how HarnessOS works, refer to the [Architecture Documentation](docs/architecture.md).
+For an in-depth look at how HarnessOS works, refer to the [Architecture Documentation](docs/architecture.md). Release highlights and migrations live in [CHANGELOG.md](CHANGELOG.md).
 
 The typical execution flow:
-1. `beginIncrementalSession()` — Claims a pending task.
-2. `beginRecoverySession()` — Resolves and overrides a stuck or failed task.
-3. `checkpoint()` — Writes immediate progress to SQLite.
-4. `close()` — Releases the lease and promotes task resolution.
+1. `harness_orchestrator(action: "plan_issues")` — Imports a canonical milestone batch into the queue.
+2. `beginIncrementalSession()` — Claims a ready task.
+3. `beginRecoverySession()` — Resolves and overrides a stuck or failed task.
+4. `checkpoint()` — Writes immediate progress to SQLite.
+5. `close()` — Releases the lease and promotes newly eligible work.
 
 ---
 

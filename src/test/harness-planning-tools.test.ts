@@ -9,6 +9,7 @@ import {
   initHarnessWorkspace,
   openHarnessDatabase,
   planHarnessIssues,
+  promoteEligiblePendingIssues,
   rollbackHarnessIssue,
   runStatement,
   selectAll,
@@ -17,10 +18,16 @@ import {
 
 // ─── Helper types for test assertions ───────────────────────────────
 
-interface PlanResult {
-  milestoneId: string;
+interface BatchPlanResult {
+  milestoneCount: number;
   issueCount: number;
-  generatedIssues: Array<{ id: string; task: string; dependsOn: string[] }>;
+  generatedMilestones: Array<{
+    key: string;
+    id: string;
+    description: string;
+    dependsOnMilestoneIds: string[];
+    generatedIssues: Array<{ id: string; task: string; dependsOn: string[] }>;
+  }>;
 }
 
 interface CampaignResult {
@@ -134,7 +141,7 @@ test('createHarnessCampaign requires workspaceId when multiple workspaces exist'
   }
 });
 
-test('planHarnessIssues stores validated backward dependencies', () => {
+test('planHarnessIssues stores validated issue dependencies inside a canonical milestone batch', () => {
   const tempDir = createTempDir('harness-plan-issues-');
   const dbPath = join(tempDir, 'harness.sqlite');
 
@@ -154,55 +161,63 @@ test('planHarnessIssues stores validated backward dependencies', () => {
       dbPath,
       projectId: campaign.projectId,
       campaignId: campaign.campaignId,
-      milestoneDescription: 'Milestone for testing',
-      issues: [
+      milestones: [
         {
-          task: 'Bootstrap workspace',
-          priority: 'high',
-          size: 'S',
-        },
-        {
-          task: 'Seed campaigns',
-          priority: 'critical',
-          size: 'M',
-          depends_on_indices: [0],
-        },
-        {
-          task: 'Review output',
-          priority: 'medium',
-          size: 'S',
-          depends_on_indices: [0, 1],
+          milestone_key: 'test-milestone',
+          description: 'Milestone for testing',
+          issues: [
+            {
+              task: 'Bootstrap workspace',
+              priority: 'high',
+              size: 'S',
+            },
+            {
+              task: 'Seed campaigns',
+              priority: 'critical',
+              size: 'M',
+              depends_on_indices: [0],
+            },
+            {
+              task: 'Review output',
+              priority: 'medium',
+              size: 'S',
+              depends_on_indices: [0, 1],
+            },
+          ],
         },
       ],
-    }) as unknown as PlanResult;
+    }) as unknown as BatchPlanResult;
 
-    assert.equal(planned.generatedIssues.length, 3);
-    assert.deepEqual(planned.generatedIssues[1].dependsOn, [
-      planned.generatedIssues[0].id,
+    const milestone = planned.generatedMilestones[0];
+
+    assert.equal(planned.generatedMilestones.length, 1);
+    assert.equal(milestone.generatedIssues.length, 3);
+    assert.deepEqual(milestone.generatedIssues[1].dependsOn, [
+      milestone.generatedIssues[0].id,
     ]);
-    assert.deepEqual(planned.generatedIssues[2].dependsOn, [
-      planned.generatedIssues[0].id,
-      planned.generatedIssues[1].id,
+    assert.deepEqual(milestone.generatedIssues[2].dependsOn, [
+      milestone.generatedIssues[0].id,
+      milestone.generatedIssues[1].id,
     ]);
 
     const database = openHarnessDatabase({ dbPath });
 
     try {
-      const milestone = selectOne<{ priority: string }>(
+      const storedMilestone = selectOne<{ priority: string }>(
         database.connection,
         'SELECT priority FROM milestones WHERE id = ?',
-        [planned.milestoneId],
+        [milestone.id],
       );
       const thirdIssue = selectOne<{ depends_on: string }>(
         database.connection,
         'SELECT depends_on FROM issues WHERE id = ?',
-        [planned.generatedIssues[2].id],
+        [milestone.generatedIssues[2].id],
       );
 
-      assert.equal(milestone?.priority, 'critical');
+      assert.equal(storedMilestone?.priority, 'critical');
       assert.deepEqual(
         JSON.parse(thirdIssue?.depends_on ?? '[]'),
-        planned.generatedIssues[2].dependsOn,
+        milestone.generatedIssues[2].dependsOn,
       );
     } finally {
       database.close();
@@ -214,18 +229,198 @@ test('planHarnessIssues stores validated backward dependencies', () => {
           dbPath,
           projectId: campaign.projectId,
           campaignId: campaign.campaignId,
-          milestoneDescription: 'Invalid milestone',
-          issues: [
+          milestones: [
             {
-              task: 'Invalid self dependency',
-              priority: 'high',
-              size: 'S',
-              depends_on_indices: [0],
+              milestone_key: 'invalid-milestone',
+              description: 'Invalid milestone',
+              issues: [
+                {
+                  task: 'Invalid self dependency',
+                  priority: 'high',
+                  size: 'S',
+                  depends_on_indices: [0],
+                },
+              ],
             },
           ],
         }),
       /can depend only on earlier issues/,
     );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('planHarnessIssues supports milestone-level dependencies across canonical batch imports', () => {
+  const tempDir = createTempDir('harness-plan-cross-milestone-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const workspace = initHarnessWorkspace({
+      dbPath,
+      workspaceName: 'Cross Milestone Workspace',
+    }) as unknown as WorkspaceResult;
+    const campaign = createHarnessCampaign({
+      dbPath,
+      workspaceId: workspace.workspaceId,
+      projectName: 'Planner',
+      campaignName: 'Campaign Delta',
+      objective: 'Preserve milestone hierarchy in the live queue',
+    }) as unknown as CampaignResult;
+
+    const foundation = planHarnessIssues({
+      dbPath,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+      milestones: [
+        {
+          milestone_key: 'foundation',
+          description: 'Foundation',
+          issues: [
+            {
+              task: 'Build the base layer',
+              priority: 'high',
+              size: 'M',
+            },
+          ],
+        },
+      ],
+    }) as unknown as BatchPlanResult;
+
+    const followUp = planHarnessIssues({
+      dbPath,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+      milestones: [
+        {
+          milestone_key: 'follow-up',
+          description: 'Follow-up',
+          depends_on_milestone_ids: [foundation.generatedMilestones[0].id],
+          issues: [
+            {
+              task: 'Polish the base layer',
+              priority: 'medium',
+              size: 'S',
+            },
+          ],
+        },
+      ],
+    }) as unknown as BatchPlanResult;
+
+    const batch = planHarnessIssues({
+      dbPath,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+      milestones: [
+        {
+          milestone_key: 'qa',
+          description: 'QA',
+          depends_on_milestone_keys: ['polish'],
+          issues: [
+            {
+              task: 'Run QA pass',
+              priority: 'medium',
+              size: 'S',
+            },
+          ],
+        },
+        {
+          milestone_key: 'polish',
+          description: 'Batch polish',
+          issues: [
+            {
+              task: 'Batch polish task',
+              priority: 'high',
+              size: 'S',
+            },
+          ],
+        },
+      ],
+    }) as unknown as BatchPlanResult;
+
+    const foundationMilestone = foundation.generatedMilestones[0];
+    const followUpMilestone = followUp.generatedMilestones[0];
+
+    assert.equal(followUpMilestone.dependsOnMilestoneIds[0], foundationMilestone.id);
+    assert.equal(batch.milestoneCount, 2);
+    assert.equal(batch.issueCount, 2);
+
+    const polishMilestone = batch.generatedMilestones.find((item) => item.key === 'polish');
+    const qaMilestone = batch.generatedMilestones.find((item) => item.key === 'qa');
+
+    assert.ok(polishMilestone);
+    assert.ok(qaMilestone);
+    assert.deepEqual(qaMilestone?.dependsOnMilestoneIds, [polishMilestone?.id]);
+
+    const database = openHarnessDatabase({ dbPath });
+
+    try {
+      const initialPromotion = promoteEligiblePendingIssues(database.connection, {
+        projectId: campaign.projectId,
+        campaignId: campaign.campaignId,
+      }).map((issue) => issue.id);
+
+      assert.deepEqual(
+        [...initialPromotion].sort(),
+        [
+          foundationMilestone.generatedIssues[0].id,
+          polishMilestone?.generatedIssues[0].id,
+        ].sort(),
+      );
+
+      const followUpStatus = selectOne<{ status: string; depends_on: string }>(
+        database.connection,
+        'SELECT status, depends_on FROM milestones WHERE id = ?',
+        [followUpMilestone.id],
+      );
+      const qaStatus = selectOne<{ status: string; depends_on: string }>(
+        database.connection,
+        'SELECT status, depends_on FROM milestones WHERE id = ?',
+        [qaMilestone?.id],
+      );
+
+      assert.equal(followUpStatus?.status, 'blocked');
+      assert.deepEqual(JSON.parse(followUpStatus?.depends_on ?? '[]'), [foundationMilestone.id]);
+      assert.equal(qaStatus?.status, 'blocked');
+      assert.deepEqual(JSON.parse(qaStatus?.depends_on ?? '[]'), [polishMilestone?.id]);
+
+      runStatement(
+        database.connection,
+        `UPDATE issues
+         SET status = 'done'
+         WHERE id IN (?, ?)`,
+        [foundationMilestone.generatedIssues[0].id, polishMilestone?.generatedIssues[0].id],
+      );
+
+      const secondPromotion = promoteEligiblePendingIssues(database.connection, {
+        projectId: campaign.projectId,
+        campaignId: campaign.campaignId,
+      }).map((issue) => issue.id);
+
+      assert.deepEqual(
+        [...secondPromotion].sort(),
+        [
+          followUpMilestone.generatedIssues[0].id,
+          qaMilestone?.generatedIssues[0].id,
+        ].sort(),
+      );
+
+      const refreshedFollowUp = selectOne<{ status: string }>(
+        database.connection,
+        'SELECT status FROM milestones WHERE id = ?',
+        [followUpMilestone.id],
+      );
+      const refreshedQa = selectOne<{ status: string }>(
+        database.connection,
+        'SELECT status FROM milestones WHERE id = ?',
+        [qaMilestone?.id],
+      );
+
+      assert.equal(refreshedFollowUp?.status, 'ready');
+      assert.equal(refreshedQa?.status, 'ready');
+    } finally {
+      database.close();
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -266,12 +461,17 @@ test('planHarnessIssues rejects ambiguous projectName across workspaces without 
           dbPath,
           projectName: 'Shared Project',
           campaignId: firstCampaign.campaignId,
-          milestoneDescription: 'Ambiguous project resolution',
-          issues: [
+          milestones: [
             {
-              task: 'Do the work',
-              priority: 'high',
-              size: 'S',
+              milestone_key: 'ambiguous-scope',
+              description: 'Ambiguous project resolution',
+              issues: [
+                {
+                  task: 'Do the work',
+                  priority: 'high',
+                  size: 'S',
+                },
+              ],
             },
           ],
         }),
@@ -302,15 +502,21 @@ test('rollbackHarnessIssue creates a rollback run and releases active leases ato
       dbPath,
       projectId: campaign.projectId,
       campaignId: campaign.campaignId,
-      milestoneDescription: 'Rollback milestone',
-      issues: [
+      milestones: [
         {
-          task: 'Recover failed issue',
-          priority: 'high',
-          size: 'M',
+          milestone_key: 'rollback-milestone',
+          description: 'Rollback milestone',
+          issues: [
+            {
+              task: 'Recover failed issue',
+              priority: 'high',
+              size: 'M',
+            },
+          ],
         },
       ],
-    }) as unknown as PlanResult;
+    }) as unknown as BatchPlanResult;
+    const plannedIssue = planned.generatedMilestones[0].generatedIssues[0];
 
     const database = openHarnessDatabase({ dbPath });
 
@@ -318,7 +524,7 @@ test('rollbackHarnessIssue creates a rollback run and releases active leases ato
       runStatement(
         database.connection,
         `UPDATE issues SET status = 'blocked', next_best_action = 'Resume later' WHERE id = ?`,
-        [planned.generatedIssues[0].id],
+        [plannedIssue.id],
       );
       runStatement(
         database.connection,
@@ -329,7 +535,7 @@ test('rollbackHarnessIssue creates a rollback run and releases active leases ato
           workspace.workspaceId,
           campaign.projectId,
           campaign.campaignId,
-          planned.generatedIssues[0].id,
+          plannedIssue.id,
           'agent-1',
           '2026-03-22T00:00:00.000Z',
           '2026-03-22T01:00:00.000Z',
@@ -341,7 +547,7 @@ test('rollbackHarnessIssue creates a rollback run and releases active leases ato
 
     const rollback = rollbackHarnessIssue({
       dbPath,
-      issueId: planned.generatedIssues[0].id,
+      issueId: plannedIssue.id,
     }) as unknown as RollbackResult;
 
     assert.equal(rollback.newStatus, 'pending');
@@ -352,7 +558,7 @@ test('rollbackHarnessIssue creates a rollback run and releases active leases ato
       const issue = selectOne<{ status: string; next_best_action: string | null }>(
         reopenedDatabase.connection,
         'SELECT status, next_best_action FROM issues WHERE id = ?',
-        [planned.generatedIssues[0].id],
+        [plannedIssue.id],
       );
       const lease = selectOne<{ status: string; released_at: string | null }>(
         reopenedDatabase.connection,
@@ -367,10 +573,10 @@ test('rollbackHarnessIssue creates a rollback run and releases active leases ato
       const event = selectOne<{ run_id: string; payload: string }>(
         reopenedDatabase.connection,
         `SELECT run_id, payload
-           FROM events
+          FROM events
           WHERE issue_id = ? AND kind = 'issue_rollback'
           LIMIT 1`,
-        [planned.generatedIssues[0].id],
+        [plannedIssue.id],
       );
 
       assert.equal(issue?.status, 'pending');

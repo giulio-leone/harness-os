@@ -72,6 +72,16 @@ Run this phase on **every subsequent context window**.
 [ ] Codebase in clean, mergeable state
 ```
 
+## HarnessOS Queue Materialization
+
+When this harness is backed by HarnessOS, keep the human plan and the queue payload aligned:
+
+1. Model the work as milestones containing issues.
+2. Import queue work through `harness_orchestrator(action: "plan_issues")` with a canonical `milestones[]` batch, even when the batch contains a single milestone.
+3. Use `depends_on_milestone_keys` for dependencies between milestones inside the same import batch.
+4. Use `depends_on_milestone_ids` only for dependencies on milestones that already exist in the project.
+5. Do not flatten milestone dependencies into artificial issue chains just to satisfy the queue importer.
+
 ## Cross-Session Memory: `progress.md`
 
 This file is the harness's persistent memory across context windows. Every session reads it first and writes to it last.
@@ -199,13 +209,14 @@ echo "=== Environment Ready ==="
 
 | Skill | Harness Role |
 |-------|-------------|
-| `planning-tracking` | Generates the initial feature list (Phase 1) |
+| `planning-tracking` | Generates the initial feature list and the canonical HarnessOS `milestones[]` import shape |
 | `session-logging` | Writes the session entries in `progress.md` |
 | `completion-gate` | Validates each feature before `passes: true` |
 | `git-workflow` | Commit conventions for incremental progress |
 | `testing-policy` | Defines what "tests pass" means |
 | `context-management` | Compaction strategy within long sessions |
 | `rollback-rca` | Recovery when smoke test fails |
+| `session-lifecycle` | Claims work, promotes the queue, and enforces issue plus milestone dependency gates |
 
 ## References
 

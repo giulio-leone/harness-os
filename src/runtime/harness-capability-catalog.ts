@@ -178,19 +178,36 @@ const TOOL_CATALOG: HarnessToolCatalogEntry[] = [
       },
       {
         action: 'plan_issues',
-        purpose: 'Create issues with priorities, sizes, and dependency ordering.',
+        purpose: 'Create a canonical milestone batch with issue dependencies and milestone gating.',
         recommendedWhen: ['breaking down work', 'queue planning'],
-        requiredFields: ['milestoneDescription', 'issues'],
+        requiredFields: ['milestones'],
         example: {
           action: 'plan_issues',
           projectName: 'Agent Harness Core',
           campaignName: 'Runtime hardening',
-          milestoneDescription: 'Agentic-first runtime improvements',
-          issues: [
+          milestones: [
             {
-              task: 'Add capability introspection',
-              priority: 'high',
-              size: 'M',
+              milestone_key: 'runtime-foundations',
+              description: 'Agentic-first runtime improvements',
+              issues: [
+                {
+                  task: 'Add capability introspection',
+                  priority: 'high',
+                  size: 'M',
+                },
+              ],
+            },
+            {
+              milestone_key: 'runtime-polish',
+              description: 'Follow-up polish',
+              depends_on_milestone_keys: ['runtime-foundations'],
+              issues: [
+                {
+                  task: 'Tighten tool discoverability prompts',
+                  priority: 'medium',
+                  size: 'S',
+                },
+              ],
             },
           ],
         },

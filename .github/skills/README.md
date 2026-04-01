@@ -7,9 +7,9 @@ Use this index to quickly select the right skill file.
 - `breaking-change-paths/SKILL.md` — non-breaking vs breaking packaging, migration, unchanged quality gates.
 
 ## Planning & Delivery
-- `harness-lifecycle/SKILL.md` — two-phase harness (initializer + incremental sessions), cross-session memory.
-- `session-lifecycle/SKILL.md` — task-scoped operational protocol for reconciliation, claims, checkpoints, and handoff.
-- `planning-tracking/SKILL.md` — plan structure, milestone/issue flow, effort sizing.
+- `harness-lifecycle/SKILL.md` — two-phase harness (initializer + incremental sessions), cross-session memory, and canonical queue materialization.
+- `session-lifecycle/SKILL.md` — task-scoped operational protocol for reconciliation, claims, checkpoints, handoff, and milestone-gated queue promotion.
+- `planning-tracking/SKILL.md` — plan structure, milestone/issue flow, effort sizing, and canonical `milestones[]` export for HarnessOS.
 - `completion-gate/SKILL.md` — mandatory quality gate and double clean-pass rule.
 - `github-sync/SKILL.md` — mirror plan states to GitHub artifacts, default label set.
 - `session-logging/SKILL.md` — mandatory session reporting format with template.
