@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## 2.0.5 - 2026-04-03
+
+### Fixed
+- Fixed the `harness_orchestrator` MCP dispatch path so `init_workspace`, `create_campaign`, and `plan_issues` no longer re-parse strict action-less payload schemas with the top-level `action` field still attached.
+- Pinned MCP runtime database resolution to the host-configured `HARNESS_DB_PATH` whenever the host provides one, preventing Copilot CLI and other MCP clients from drifting into hallucinated per-session SQLite paths.
+- Added MCP-level regression coverage for the canonical `init_workspace -> create_campaign` setup flow and for conflicting `dbPath` overrides under a pinned host database.
+
 ## 2.0.4 - 2026-04-03
 
 ### Fixed

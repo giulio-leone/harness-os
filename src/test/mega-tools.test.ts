@@ -5,7 +5,7 @@
  * verifying action dispatch, error handling, _meta hints, and DB state.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -868,6 +868,109 @@ test('harness_inspector: health_snapshot reports policy breaches as alerts', asy
 });
 
 // ─── 2. harness_orchestrator ────────────────────────────────────────
+
+test('harness_orchestrator: init_workspace and create_campaign succeed via the mega-tool contract', async () => {
+  const tempDir = createTempDir('orch-setup-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_orchestrator')!;
+
+    const initialized = (await tool.handler({
+      action: 'init_workspace',
+      dbPath,
+      workspaceName: 'Mega Tool Workspace',
+    })) as { workspaceId: string };
+
+    assert.match(initialized.workspaceId, /^W-/);
+
+    const created = (await tool.handler({
+      action: 'create_campaign',
+      dbPath,
+      workspaceId: initialized.workspaceId,
+      projectName: 'Mega Tool Project',
+      campaignName: 'Launch',
+      objective: 'Ship the release-safe setup flow.',
+    })) as { projectId: string; campaignId: string };
+
+    assert.match(created.projectId, /^P-/);
+    assert.match(created.campaignId, /^C-/);
+
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      const workspace = selectOne<{ name: string }>(
+        db.connection,
+        'SELECT name FROM workspaces WHERE id = ?',
+        [initialized.workspaceId],
+      );
+      const project = selectOne<{ name: string }>(
+        db.connection,
+        'SELECT name FROM projects WHERE id = ?',
+        [created.projectId],
+      );
+      const campaign = selectOne<{ name: string }>(
+        db.connection,
+        'SELECT name FROM campaigns WHERE id = ?',
+        [created.campaignId],
+      );
+
+      assert.equal(workspace?.name, 'Mega Tool Workspace');
+      assert.equal(project?.name, 'Mega Tool Project');
+      assert.equal(campaign?.name, 'Launch');
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test(
+  'harness_orchestrator: HARNESS_DB_PATH pins MCP writes and ignores conflicting dbPath overrides',
+  { concurrency: false },
+  async () => {
+    const tempDir = createTempDir('orch-pinned-db-');
+    const pinnedDbPath = join(tempDir, 'canonical', 'harness.sqlite');
+    const spoofedDbPath = join(tempDir, 'session-state', 'hallucinated.sqlite');
+    const previousDbPath = process.env['HARNESS_DB_PATH'];
+
+    process.env['HARNESS_DB_PATH'] = pinnedDbPath;
+
+    try {
+      const { internals } = createServer();
+      const tool = internals.tools.get('harness_orchestrator')!;
+
+      const initialized = (await tool.handler({
+        action: 'init_workspace',
+        dbPath: spoofedDbPath,
+        workspaceName: 'Pinned Workspace',
+      })) as { workspaceId: string };
+
+      assert.match(initialized.workspaceId, /^W-/);
+      assert.equal(existsSync(spoofedDbPath), false);
+
+      const pinnedDb = openHarnessDatabase({ dbPath: pinnedDbPath });
+      try {
+        const workspace = selectOne<{ name: string }>(
+          pinnedDb.connection,
+          'SELECT name FROM workspaces WHERE id = ?',
+          [initialized.workspaceId],
+        );
+
+        assert.equal(workspace?.name, 'Pinned Workspace');
+      } finally {
+        pinnedDb.close();
+      }
+    } finally {
+      if (previousDbPath === undefined) {
+        delete process.env['HARNESS_DB_PATH'];
+      } else {
+        process.env['HARNESS_DB_PATH'] = previousDbPath;
+      }
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  },
+);
 
 test('harness_orchestrator: promote_queue promotes eligible pending issues', async () => {
   const tempDir = createTempDir('orch-promote-');

@@ -144,7 +144,7 @@ MAINTENANCE:
 - harness_admin(action: "mem0_rollup") → compact task-level memories into summary
 
 RULES:
-- dbPath is optional: set HARNESS_DB_PATH env var to avoid passing it every call.
+- dbPath is optional: set HARNESS_DB_PATH env var to avoid passing it every call. When the host pins HARNESS_DB_PATH, the MCP server uses that canonical database and ignores conflicting caller overrides.
 - Tools accept human-readable names (projectName, campaignName) instead of UUIDs, but ambiguous scope must be resolved explicitly with workspaceId or projectId.
 - Always pass the short \`sessionToken\` returned by begin to checkpoint/close/advance/heartbeat, NOT the heavy context.
 - \`next_action\`, \`begin\`, and \`begin_recovery\` require explicit host routing context (\`host\` + \`hostCapabilities\`) so dispatch remains configurable and explainable.
@@ -252,6 +252,29 @@ export class SessionLifecycleMcpServer {
     };
   }
 
+  private resolvePinnedMcpDbPath(input?: string): string {
+    return resolveDbPath(this.resolvePinnedMcpDbPathIfPresent(input));
+  }
+
+  private resolvePinnedMcpDbPathIfPresent(input?: string): string | undefined {
+    const pinnedDbPath = process.env['HARNESS_DB_PATH'];
+
+    if (typeof pinnedDbPath === 'string' && pinnedDbPath.length > 0) {
+      return pinnedDbPath;
+    }
+
+    return input;
+  }
+
+  private withPinnedMcpDbPath<T extends { dbPath?: string }>(
+    input: T,
+  ): Omit<T, 'dbPath'> & { dbPath: string } {
+    return {
+      ...input,
+      dbPath: this.resolvePinnedMcpDbPath(input.dbPath),
+    };
+  }
+
   // ─── Tool Definitions ───────────────────────────────────────────
 
   private buildTools(): ToolDefinition[] {
@@ -287,7 +310,7 @@ export class SessionLifecycleMcpServer {
 
             case 'get_context':
               return getHarnessContext({
-                dbPath: parsed.dbPath,
+                dbPath: this.resolvePinnedMcpDbPath(parsed.dbPath),
                 workspaceId: parsed.workspaceId,
                 projectId: parsed.projectId,
                 projectName: parsed.projectName,
@@ -296,7 +319,7 @@ export class SessionLifecycleMcpServer {
 
             case 'next_action':
               return getNextAction({
-                dbPath: parsed.dbPath,
+                dbPath: this.resolvePinnedMcpDbPath(parsed.dbPath),
                 workspaceId: parsed.workspaceId,
                 projectId: parsed.projectId,
                 projectName: parsed.projectName,
@@ -305,7 +328,7 @@ export class SessionLifecycleMcpServer {
               });
 
             case 'export': {
-              const dbPath = resolveDbPath(parsed.dbPath);
+              const dbPath = this.resolvePinnedMcpDbPath(parsed.dbPath);
               const db = openHarnessDatabase({ dbPath });
               try {
                 const projectId = resolveProjectId(db.connection, {
@@ -350,7 +373,7 @@ export class SessionLifecycleMcpServer {
             }
 
             case 'audit': {
-              const dbPath = resolveDbPath(parsed.dbPath);
+              const dbPath = this.resolvePinnedMcpDbPath(parsed.dbPath);
               const { action: _action, ...input } = parsed;
               const result = await this.adapter.execute(withCliContractVersion({
                 action: 'inspect_audit',
@@ -373,7 +396,7 @@ export class SessionLifecycleMcpServer {
             }
 
             case 'health_snapshot': {
-              const dbPath = resolveDbPath(parsed.dbPath);
+              const dbPath = this.resolvePinnedMcpDbPath(parsed.dbPath);
               const db = openHarnessDatabase({ dbPath });
               try {
                 const projectId = resolveProjectId(db.connection, {
@@ -420,16 +443,22 @@ export class SessionLifecycleMcpServer {
 
           switch (parsed.action) {
             case 'init_workspace':
-              return initHarnessWorkspace(parsed);
+              return initHarnessWorkspace(
+                this.withPinnedMcpDbPath(stripAction(parsed)),
+              );
 
             case 'create_campaign':
-              return createHarnessCampaign(parsed);
+              return createHarnessCampaign(
+                this.withPinnedMcpDbPath(stripAction(parsed)),
+              );
 
             case 'plan_issues':
-              return planHarnessIssues(parsed);
+              return planHarnessIssues(
+                this.withPinnedMcpDbPath(stripAction(parsed)),
+              );
 
             case 'promote_queue': {
-              const dbPath = resolveDbPath(parsed.dbPath);
+              const dbPath = this.resolvePinnedMcpDbPath(parsed.dbPath);
               const db = openHarnessDatabase({ dbPath });
               try {
                 const projectId = resolveProjectId(db.connection, {
@@ -460,8 +489,9 @@ export class SessionLifecycleMcpServer {
 
             case 'rollback_issue':
               {
-                const { action: _action, ...input } = parsed;
-                return rollbackHarnessIssue(input);
+                return rollbackHarnessIssue(
+                  this.withPinnedMcpDbPath(stripAction(parsed)),
+                );
               }
           }
         },
@@ -477,8 +507,8 @@ export class SessionLifecycleMcpServer {
 
           switch (parsed.action) {
             case 'begin': {
-              const { action: _action, ...input } = parsed;
-              const dbPath = resolveDbPath(input.dbPath);
+              const input = this.withPinnedMcpDbPath(stripAction(parsed));
+              const dbPath = input.dbPath;
               const result = (await this.adapter.execute(withCliContractVersion({
                 action: 'begin_incremental',
                 input: { ...input, dbPath },
@@ -498,8 +528,8 @@ export class SessionLifecycleMcpServer {
             }
 
             case 'begin_recovery': {
-              const { action: _action, ...input } = parsed;
-              const dbPath = resolveDbPath(input.dbPath);
+              const input = this.withPinnedMcpDbPath(stripAction(parsed));
+              const dbPath = input.dbPath;
               const result = (await this.adapter.execute(withCliContractVersion({
                 action: 'begin_recovery',
                 input: { ...input, dbPath },
@@ -521,10 +551,12 @@ export class SessionLifecycleMcpServer {
             case 'checkpoint': {
               const session = this.tokenStore.resolve(
                  parsed.sessionToken,
-                 parsed.dbPath,
+                 this.resolvePinnedMcpDbPathIfPresent(parsed.dbPath),
                );
                const context = session.context as unknown as SessionContext;
-               const dbPath = resolveDbPath(context.dbPath ?? parsed.dbPath);
+               const dbPath = this.resolvePinnedMcpDbPath(
+                 context.dbPath ?? parsed.dbPath,
+               );
                 const result = (await this.adapter.execute(withCliContractVersion({
                    action: 'checkpoint',
                    context: { ...context, dbPath },
@@ -548,10 +580,12 @@ export class SessionLifecycleMcpServer {
             case 'close': {
                const session = this.tokenStore.resolve(
                  parsed.sessionToken,
-                 parsed.dbPath,
+                 this.resolvePinnedMcpDbPathIfPresent(parsed.dbPath),
                );
                const context = session.context as unknown as SessionContext;
-               const dbPath = resolveDbPath(context.dbPath ?? parsed.dbPath);
+               const dbPath = this.resolvePinnedMcpDbPath(
+                 context.dbPath ?? parsed.dbPath,
+               );
 
                 const executed = (await this.adapter.execute(withCliContractVersion({
                    action: 'close',
@@ -582,10 +616,12 @@ export class SessionLifecycleMcpServer {
             case 'advance': {
                 const session = this.tokenStore.resolve(
                   parsed.sessionToken,
-                  parsed.dbPath,
+                  this.resolvePinnedMcpDbPathIfPresent(parsed.dbPath),
                 );
                 const context = session.context as unknown as SessionContext;
-                const dbPath = resolveDbPath(context.dbPath ?? parsed.dbPath);
+                const dbPath = this.resolvePinnedMcpDbPath(
+                  context.dbPath ?? parsed.dbPath,
+                );
                 const nextBeginInput = buildNextIncrementalInput(session.beginInput, dbPath);
                 const advanced = await this.adapter.advanceSession(
                   { ...context, dbPath },
@@ -635,10 +671,12 @@ export class SessionLifecycleMcpServer {
              case 'heartbeat': {
                const session = this.tokenStore.resolve(
                  parsed.sessionToken,
-                 parsed.dbPath,
+                 this.resolvePinnedMcpDbPathIfPresent(parsed.dbPath),
                );
                const context = session.context as unknown as SessionContext;
-               const dbPath = resolveDbPath(context.dbPath ?? parsed.dbPath);
+               const dbPath = this.resolvePinnedMcpDbPath(
+                 context.dbPath ?? parsed.dbPath,
+               );
                const db = openHarnessDatabase({ dbPath });
                try {
                  const { renewLease } = await import('../db/lease-manager.js');
@@ -672,7 +710,7 @@ export class SessionLifecycleMcpServer {
         handler: async (args) => {
           const parsed = harnessArtifactsInputSchema.parse(args);
 
-          const dbPath = resolveDbPath(parsed.dbPath);
+          const dbPath = this.resolvePinnedMcpDbPath(parsed.dbPath);
           const db = openHarnessDatabase({ dbPath });
           try {
             const projectId = resolveProjectId(db.connection, {
@@ -789,7 +827,7 @@ export class SessionLifecycleMcpServer {
         handler: async (args) => {
           const parsed = harnessAdminInputSchema.parse(args);
 
-          const dbPath = resolveDbPath(parsed.dbPath);
+          const dbPath = this.resolvePinnedMcpDbPath(parsed.dbPath);
           const db = openHarnessDatabase({ dbPath });
           try {
             const projectId = resolveProjectId(db.connection, {
@@ -2466,6 +2504,11 @@ function toJsonRpcErrorPayload(error: unknown): JsonRpcErrorPayload {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function stripAction<T extends { action: string }>(input: T): Omit<T, 'action'> {
+  const { action: _action, ...rest } = input;
+  return rest;
 }
 
 async function inspectMem0Status(
