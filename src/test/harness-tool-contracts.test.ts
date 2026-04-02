@@ -72,6 +72,11 @@ test('tool input JSON schemas stay compatible with object-root function calling 
       false,
       `${contract.name} should remain strict at the public boundary`,
     );
+    assert.equal('oneOf' in schema, false, `${contract.name} should not expose top-level oneOf`);
+    assert.equal('anyOf' in schema, false, `${contract.name} should not expose top-level anyOf`);
+    assert.equal('allOf' in schema, false, `${contract.name} should not expose top-level allOf`);
+    assert.equal('enum' in schema, false, `${contract.name} should not expose top-level enum`);
+    assert.equal('not' in schema, false, `${contract.name} should not expose top-level not`);
 
     const properties = schema.properties;
     assert.ok(isRecord(properties), `${contract.name} should expose properties`);

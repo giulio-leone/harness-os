@@ -1022,8 +1022,17 @@ function normalizeDiscriminatedObjectInputSchema(
     actionValues,
   );
 
+  const {
+    oneOf: _ignoredOneOf,
+    anyOf: _ignoredAnyOf,
+    allOf: _ignoredAllOf,
+    enum: _ignoredEnum,
+    not: _ignoredNot,
+    ...rootSchema
+  } = schema;
+
   return {
-    ...schema,
+    ...rootSchema,
     type: 'object',
     properties: mergedProperties,
     required: sharedRequiredFields ? [...sharedRequiredFields] : [],
