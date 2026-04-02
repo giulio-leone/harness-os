@@ -1,7 +1,10 @@
 export * from './contracts/plan.schema.js';
 export * from './contracts/memory-contracts.js';
+export * from './contracts/policy-contracts.js';
 export * from './contracts/session-contracts.js';
 export * from './contracts/task-domain.js';
+export * from './contracts/workflow-contracts.js';
+export * from './contracts/workload-profiles.js';
 export * from './db/checkpoint-writer.js';
 export * from './db/lease-manager.js';
 export * from './db/store.js';
@@ -16,3 +19,4 @@ export * from './runtime/session-lifecycle-adapter.js';
 export * from './runtime/session-lifecycle-cli.schemas.js';
 export * from './runtime/session-lifecycle-inspector.js';
 export * from './runtime/session-orchestrator.js';
+export * from './runtime/work-item-metadata.js';

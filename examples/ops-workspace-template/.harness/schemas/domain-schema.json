@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "domain": "ops-incident-lifecycle",
+  "promptFixtureId": "ops-prompt",
+  "extendsHarnessCore": {
+    "projectKey": "ops-workspace-template",
+    "workspaceKind": "bootstrap-template",
+    "tables": [
+      "workspaces",
+      "projects",
+      "campaigns",
+      "issues",
+      "runs",
+      "leases",
+      "checkpoints",
+      "events",
+      "artifacts",
+      "memory_links"
+    ]
+  },
+  "canonicalInvariants": [
+    "The database is the primary source of truth.",
+    "mem0 and other semantic memory layers are support-only retrieval surfaces.",
+    "Every risky change must carry a rollback path before execution.",
+    "Summaries and decisions must remain operator-defensible."
+  ],
+  "entities": [
+    {
+      "name": "incidents",
+      "description": "Canonical incidents or risky changes discovered before mitigation begins.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "summary", "type": "text", "required": true },
+        { "name": "service", "type": "text", "required": true },
+        { "name": "owner", "type": "text", "required": false },
+        { "name": "priority_tier", "type": "text", "required": true },
+        { "name": "current_state", "type": "text", "required": true },
+        { "name": "next_best_action", "type": "text", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "changes",
+      "description": "Mitigation or rollback records linked to a specific incident and harness issue.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "incident_id", "type": "text", "required": true },
+        { "name": "issue_id", "type": "text", "required": false },
+        { "name": "current_run_id", "type": "text", "required": false },
+        { "name": "status", "type": "text", "required": true },
+        { "name": "change_summary", "type": "text", "required": false },
+        { "name": "rollback_reference", "type": "text", "required": false },
+        { "name": "next_best_action", "type": "text", "required": true },
+        { "name": "verification_at", "type": "timestamp", "required": false },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "stakeholders",
+      "description": "Responders or approvers connected to one incident or mitigation path.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "incident_id", "type": "text", "required": true },
+        { "name": "full_name", "type": "text", "required": true },
+        { "name": "role", "type": "text", "required": true },
+        { "name": "channel", "type": "text", "required": false },
+        { "name": "contact_url", "type": "text", "required": false },
+        { "name": "escalation_reason", "type": "text", "required": true },
+        { "name": "priority_rank", "type": "integer", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "postincident_notes",
+      "description": "Compressed post-incident notes linked back to canonical state and optional mem0 evidence.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "change_id", "type": "text", "required": true },
+        { "name": "memory_link_id", "type": "text", "required": false },
+        { "name": "compressed_context", "type": "text", "required": true },
+        { "name": "risks", "type": "text", "required": true },
+        { "name": "next_action_summary", "type": "text", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from": "changes.incident_id",
+      "to": "incidents.id",
+      "purpose": "Each mitigation path belongs to one canonical incident."
+    },
+    {
+      "from": "changes.issue_id",
+      "to": "issues.id",
+      "purpose": "Mitigation state can be tied back to the currently leased issue."
+    },
+    {
+      "from": "stakeholders.incident_id",
+      "to": "incidents.id",
+      "purpose": "Stakeholders stay scoped to a canonical incident when relevant."
+    },
+    {
+      "from": "postincident_notes.change_id",
+      "to": "changes.id",
+      "purpose": "Post-incident notes remain linked to canonical mitigation state."
+    },
+    {
+      "from": "postincident_notes.memory_link_id",
+      "to": "memory_links.id",
+      "purpose": "Derived memory can point to optional mem0 evidence without replacing canonical data."
+    }
+  ],
+  "qualificationScoring": {
+    "dimensions": [
+      "severity",
+      "blast_radius",
+      "rollback_complexity",
+      "approval_latency",
+      "follow_up_value"
+    ],
+    "tiers": [
+      { "name": "A", "description": "Highest-value and highest-confidence records." },
+      { "name": "B", "description": "Useful records worth active work." },
+      { "name": "C", "description": "Low-priority or controlled-volume records." }
+    ]
+  },
+  "stateMachine": {
+    "states": [
+      { "name": "discovered", "allowedNext": ["triaged", "deprioritized"] },
+      { "name": "triaged", "allowedNext": ["planned", "deprioritized"] },
+      { "name": "planned", "allowedNext": ["mitigating", "blocked"] },
+      { "name": "mitigating", "allowedNext": ["verifying", "blocked", "closed"] },
+      { "name": "verifying", "allowedNext": ["closed", "planned"] },
+      { "name": "blocked", "allowedNext": ["planned", "mitigating", "closed"] }
+    ],
+    "terminalStates": [
+      "closed",
+      "deprioritized"
+    ]
+  },
+  "requiredSummaryFields": [
+    "Incident",
+    "Source",
+    "Main signal",
+    "Why it matters",
+    "Rollback path",
+    "Main risks",
+    "Stakeholders",
+    "Actions completed",
+    "Current state",
+    "Next best action"
+  ]
+}

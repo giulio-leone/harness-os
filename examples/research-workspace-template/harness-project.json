@@ -1,0 +1,105 @@
+{
+  "projectId": "research-workspace-template",
+  "workspaceRoot": ".",
+  "bootstrapFiles": {
+    "agents": "AGENTS.MD",
+    "progress": "progress.md",
+    "featureList": "feature_list.json",
+    "init": "init.sh"
+  },
+  "engines": {
+    "browser": "Onecrawl",
+    "memory": "mem0",
+    "lifecycle": "session-lifecycle"
+  },
+  "runtimeDirectories": {
+    "smokeSuites": ".harness",
+    "runtime": ".harness/runtime",
+    "logs": ".harness/logs",
+    "fixtures": ".harness/fixtures",
+    "mem0": ".harness/mem0",
+    "schemas": ".harness/schemas",
+    "missionWorkflows": ".harness/mission-workflows"
+  },
+  "localSkillsDir": ".github/skills",
+  "missions": [
+    {
+      "id": "research-discovery",
+      "status": "reference",
+      "description": "Discover and normalize source material into a ranked insight backlog."
+    },
+    {
+      "id": "research-synthesis",
+      "status": "reference",
+      "description": "Draft the insight brief, attach evidence, and route it through peer review."
+    },
+    {
+      "id": "research-handoff",
+      "status": "reference",
+      "description": "Publish the approved brief and capture follow-up questions or monitoring tasks."
+    }
+  ],
+  "nextOpenArtifacts": [
+    "replace the placeholder context files with the real research program and audience",
+    "customize .harness/live-mission-catalog.json with real sources, reviewers, deadlines, and external refs",
+    "customize the prompt fixture, bindings, schema, and workflow vocabulary"
+  ],
+  "promptFixtures": [
+    {
+      "id": "research-prompt",
+      "path": ".harness/fixtures/template.prompt.txt",
+      "kind": "template",
+      "status": "customize"
+    }
+  ],
+  "promptBindings": ".harness/prompt-workflow-bindings.json",
+  "domainSchemas": [
+    {
+      "id": "research-domain",
+      "path": ".harness/schemas/domain-schema.json",
+      "kind": "reference",
+      "status": "customize"
+    }
+  ],
+  "missionWorkflows": [
+    {
+      "id": "research-workflow",
+      "path": ".harness/mission-workflows/workflow.json",
+      "status": "reference"
+    }
+  ],
+  "validationArtifacts": {
+    "smokeSuiteManifest": ".harness/smoke-suite-manifest.json",
+    "smokeSuiteRunner": ".harness/run-smoke-suites.js"
+  },
+  "liveCatalog": {
+    "catalogPath": ".harness/live-mission-catalog.json",
+    "seedScript": ".harness/seed-live-catalog.py",
+    "defaultDbPath": ".harness/runtime/live-catalog.sqlite",
+    "overviewInput": ".harness/runtime/generated/live-catalog.inspect-overview.json",
+    "overviewProof": ".harness/runtime/live-catalog-overview.json"
+  },
+  "liveDryRun": {
+    "script": ".harness/run-live-dry-run.sh",
+    "generatedBeginInput": ".harness/runtime/generated/live-dry-run.begin.json",
+    "generatedOverviewInput": ".harness/runtime/generated/live-dry-run.inspect-overview.json",
+    "generatedIssueInput": ".harness/runtime/generated/live-dry-run.inspect-issue.json",
+    "summaryProof": ".harness/runtime/live-dry-run.summary.json"
+  },
+  "liveClaimPackage": {
+    "script": ".harness/run-live-claim.sh",
+    "generatedBeginInput": ".harness/runtime/generated/live-claim.begin.json",
+    "generatedOverviewInput": ".harness/runtime/generated/live-claim.inspect-overview.json",
+    "generatedIssueInput": ".harness/runtime/generated/live-claim.inspect-issue.json",
+    "previewSummary": ".harness/runtime/live-claim-preview-summary.json",
+    "handoff": ".harness/live-claim-package.txt"
+  },
+  "liveQueuePromotion": {
+    "script": ".harness/run-live-queue-promotion.sh",
+    "generatedPayload": ".harness/runtime/generated/live-queue-promotion.json",
+    "previewSummary": ".harness/runtime/live-queue-promotion-preview.json",
+    "handoff": ".harness/live-queue-promotion.txt",
+    "executeResult": ".harness/runtime/live-queue-promotion-result.json",
+    "executeOverview": ".harness/runtime/live-queue-promotion-overview.json"
+  }
+}

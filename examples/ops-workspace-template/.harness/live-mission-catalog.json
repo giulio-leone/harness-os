@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "catalogId": "ops-workspace-template-live-v1",
+  "projectIntent": "Reference live catalog for an ops workspace that moves from incident triage to mitigation and post-incident follow-through.",
+  "sourceContext": [
+    "CONTEXT.MD",
+    "JOBS.MD",
+    "NETWORK.MD",
+    "incident-summary.md",
+    "rollback-plan.md"
+  ],
+  "workspace": {
+    "id": "workspace-template-ops",
+    "name": "ops-workspace-template",
+    "kind": "bootstrap-template"
+  },
+  "project": {
+    "id": "project-template-ops",
+    "key": "ops-workspace-template",
+    "name": "Ops Workspace Template",
+    "domain": "ops-incident-lifecycle",
+    "status": "active"
+  },
+  "campaigns": [
+    {
+      "id": "mission-ops-triage",
+      "name": "ops-triage",
+      "objective": "Capture incidents or risky changes and normalize them into a canonical operational queue.",
+      "status": "active",
+      "scope": {
+        "sources": ["alerts", "maintenance requests", "operator escalations"],
+        "qualityBar": "Every mitigation path must include rollback intent and impact verification.",
+        "sourceContext": ["CONTEXT.MD", "JOBS.MD", "NETWORK.MD"]
+      }
+    },
+    {
+      "id": "mission-ops-mitigation",
+      "name": "ops-mitigation",
+      "objective": "Prepare the mitigation package, collect approvals, and execute the approved operational change.",
+      "status": "active",
+      "scope": {
+        "executionBias": "safety-first",
+        "supportAssets": ["incident-summary.md", "rollback-plan.md"],
+        "sourceContext": ["CONTEXT.MD", "JOBS.MD", "incident-summary.md", "rollback-plan.md"]
+      }
+    },
+    {
+      "id": "mission-ops-follow-through",
+      "name": "ops-follow-through",
+      "objective": "Verify recovery, record evidence, and publish the post-incident follow-through.",
+      "status": "active",
+      "scope": {
+        "channels": ["ops-incident-room", "change-log"],
+        "sourceContext": ["CONTEXT.MD", "NETWORK.MD", "incident-summary.md"]
+      }
+    }
+  ],
+  "issues": [
+    {
+      "id": "issue-ops-triage-batch",
+      "campaignId": "mission-ops-triage",
+      "task": "Triage the first batch of incidents or risky changes and rank the operational next best action.",
+      "priority": "high",
+      "status": "ready",
+      "size": "S",
+      "dependsOn": [],
+      "nextBestAction": "Use the ranked queue to unlock the mitigation planning issue.",
+      "deadlineAt": "2026-05-05T09:30:00.000Z",
+      "recipients": [
+        { "id": "incident-commander", "kind": "person", "label": "Incident commander", "role": "lead" }
+      ],
+      "externalRefs": [
+        { "id": "ops-board", "kind": "board", "value": "ops://queues/platform-incidents", "label": "Incident board" }
+      ]
+    },
+    {
+      "id": "issue-ops-mitigation-plan",
+      "campaignId": "mission-ops-mitigation",
+      "task": "Prepare the mitigation plan, rollback path, and change approval request for the highest-priority incident.",
+      "priority": "medium",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-ops-triage-batch"
+      ],
+      "nextBestAction": "Promote this issue after triage ranks the first incident batch.",
+      "deadlineAt": "2026-05-05T11:00:00.000Z",
+      "recipients": [
+        { "id": "incident-commander", "kind": "person", "label": "Incident commander", "role": "owner" },
+        { "id": "change-approver", "kind": "person", "label": "Change approver", "role": "cab" }
+      ],
+      "approvals": [
+        {
+          "id": "change-approval",
+          "label": "Change approval",
+          "recipientIds": ["change-approver"],
+          "required": true,
+          "state": "pending",
+          "note": "Required before executing a risky mitigation step."
+        }
+      ],
+      "externalRefs": [
+        { "id": "runbook", "kind": "runbook", "value": "ops://runbooks/cache-failover", "label": "Mitigation runbook" },
+        { "id": "rollback-doc", "kind": "document", "value": "ops://rollback/cache-failover", "label": "Rollback doc" }
+      ]
+    },
+    {
+      "id": "issue-ops-change-execute",
+      "campaignId": "mission-ops-mitigation",
+      "task": "Execute the approved mitigation, capture verification evidence, and preserve rollback state if blocked.",
+      "priority": "medium",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-ops-mitigation-plan"
+      ],
+      "nextBestAction": "Claim this issue when the mitigation plan is approved.",
+      "deadlineAt": "2026-05-05T13:00:00.000Z",
+      "recipients": [
+        { "id": "incident-commander", "kind": "person", "label": "Incident commander", "role": "lead" },
+        { "id": "on-call-engineer", "kind": "person", "label": "On-call engineer", "role": "executor" }
+      ],
+      "approvals": [
+        {
+          "id": "change-approval",
+          "label": "Change approval",
+          "recipientIds": ["incident-commander"],
+          "required": true,
+          "state": "approved"
+        }
+      ],
+      "externalRefs": [
+        { "id": "dashboard", "kind": "dashboard", "value": "ops://dashboards/cache-failover", "label": "Verification dashboard" }
+      ]
+    },
+    {
+      "id": "issue-ops-post-incident-review",
+      "campaignId": "mission-ops-follow-through",
+      "task": "Confirm recovery, capture follow-up actions, and publish the post-incident review package.",
+      "priority": "low",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-ops-change-execute"
+      ],
+      "nextBestAction": "Promote this issue when mitigation execution completes.",
+      "deadlineAt": "2026-05-06T10:00:00.000Z",
+      "recipients": [
+        { "id": "incident-commander", "kind": "person", "label": "Incident commander", "role": "owner" }
+      ],
+      "externalRefs": [
+        { "id": "timeline", "kind": "timeline", "value": "ops://incidents/cache-failover/timeline", "label": "Incident timeline" }
+      ]
+    }
+  ]
+}

@@ -4,12 +4,19 @@ import { dirname } from 'node:path';
 
 import { z } from 'zod';
 
+import { harnessPolicySchema } from '../contracts/policy-contracts.js';
+import { harnessWorkflowMetadataSchema } from '../contracts/workflow-contracts.js';
+import {
+  issuePrioritySchema,
+  issuePriorityValues,
+} from '../contracts/task-domain.js';
 import {
   openHarnessDatabase,
   runInTransaction,
   runStatement,
   selectOne,
 } from '../db/store.js';
+import { serializeHarnessPolicy } from './policy-engine.js';
 import { syncMilestoneStatuses } from '../db/lease-manager.js';
 import {
   AgenticToolError,
@@ -19,8 +26,11 @@ import {
   resolveProjectId,
   resolveWorkspaceId,
 } from './harness-agentic-helpers.js';
-
-const issuePriorityOrder = ['critical', 'high', 'medium', 'low'] as const;
+import {
+  serializeWorkItemApprovals,
+  serializeWorkItemExternalRefs,
+  serializeWorkItemRecipients,
+} from './work-item-metadata.js';
 
 // ─── Input Schemas ──────────────────────────────────────────────────
 
@@ -38,9 +48,14 @@ const planningScopeSchema = z
 const harnessPlanIssueDefinitionSchema = z
   .object({
     task: z.string().min(1),
-    priority: z.enum(issuePriorityOrder),
+    priority: issuePrioritySchema,
     size: z.string().min(1),
     depends_on_indices: z.array(z.number().int().nonnegative()).optional(),
+    deadlineAt: harnessWorkflowMetadataSchema.shape.deadlineAt,
+    recipients: harnessWorkflowMetadataSchema.shape.recipients,
+    approvals: harnessWorkflowMetadataSchema.shape.approvals,
+    externalRefs: harnessWorkflowMetadataSchema.shape.externalRefs,
+    policy: harnessPolicySchema.optional(),
   })
   .strict();
 
@@ -58,6 +73,7 @@ export const harnessCreateCampaignInputSchema = z
     projectName: z.string().min(1),
     campaignName: z.string().min(1),
     objective: z.string().min(1),
+    policy: harnessPolicySchema.optional(),
   })
   .strict();
 
@@ -67,6 +83,10 @@ export const harnessPlanMilestoneBatchItemSchema = z
     description: z.string().min(1),
     depends_on_milestone_ids: z.array(z.string().min(1)).optional(),
     depends_on_milestone_keys: z.array(z.string().min(1)).optional(),
+    deadlineAt: harnessWorkflowMetadataSchema.shape.deadlineAt,
+    recipients: harnessWorkflowMetadataSchema.shape.recipients,
+    approvals: harnessWorkflowMetadataSchema.shape.approvals,
+    externalRefs: harnessWorkflowMetadataSchema.shape.externalRefs,
     issues: z.array(harnessPlanIssueDefinitionSchema).min(1),
   })
   .strict();
@@ -104,6 +124,7 @@ interface ProjectRow {
 
 interface CampaignRow {
   id: string;
+  policy_json?: string;
 }
 
 interface RollbackIssueRow {
@@ -209,13 +230,14 @@ export function createHarnessCampaign(
         campaign = { id: `C-${randomUUID()}` };
         runStatement(
           database.connection,
-          `INSERT INTO campaigns (id, project_id, name, objective, status, scope_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'active', '{}', ?, ?)`,
+          `INSERT INTO campaigns (id, project_id, name, objective, status, scope_json, policy_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'active', '{}', ?, ?, ?)`,
           [
             campaign.id,
             project.id,
             input.campaignName,
             input.objective,
+            serializeHarnessPolicy(input.policy),
             now,
             now,
           ],
@@ -301,8 +323,8 @@ export function rollbackHarnessIssue(
       if (issue === null) {
         throw new AgenticToolError(
           `Issue ${input.issueId} does not exist.`,
-          'Call inspect_overview to list all valid issue IDs, then retry with a correct issueId.',
-          'inspect_overview',
+          'Call inspect_export to list all valid issue IDs, then retry with a correct issueId.',
+          'inspect_export',
         );
       }
 
@@ -463,14 +485,18 @@ function planMilestoneBatch(
       ],
     );
 
-    const created = insertMilestoneWithIssues(connection, {
-      projectId: input.projectId,
-      campaignId: input.campaignId,
-      milestoneId: milestoneIdByKey.get(milestone.milestone_key),
-      description: milestone.description,
-      dependsOnMilestoneIds,
-      issues: milestone.issues,
-    });
+      const created = insertMilestoneWithIssues(connection, {
+        projectId: input.projectId,
+        campaignId: input.campaignId,
+        milestoneId: milestoneIdByKey.get(milestone.milestone_key),
+        description: milestone.description,
+        dependsOnMilestoneIds,
+        deadlineAt: milestone.deadlineAt,
+        recipients: milestone.recipients,
+        approvals: milestone.approvals,
+        externalRefs: milestone.externalRefs,
+        issues: milestone.issues,
+      });
 
     return {
       key: milestone.milestone_key,
@@ -512,6 +538,10 @@ function insertMilestoneWithIssues(
     milestoneId?: string;
     description: string;
     dependsOnMilestoneIds?: string[];
+    deadlineAt?: string;
+    recipients?: z.infer<typeof harnessWorkflowMetadataSchema.shape.recipients>;
+    approvals?: z.infer<typeof harnessWorkflowMetadataSchema.shape.approvals>;
+    externalRefs?: z.infer<typeof harnessWorkflowMetadataSchema.shape.externalRefs>;
     issues: HarnessPlanIssueInput[];
   },
 ): {
@@ -523,14 +553,29 @@ function insertMilestoneWithIssues(
 
   runStatement(
     connection,
-    `INSERT INTO milestones (id, project_id, description, priority, status, depends_on)
-     VALUES (?, ?, ?, ?, 'pending', ?)`,
+    `INSERT INTO milestones (
+       id,
+       project_id,
+       description,
+       priority,
+       status,
+       depends_on,
+       deadline_at,
+       recipients_json,
+       approvals_json,
+       external_refs_json
+     )
+     VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
     [
       milestoneId,
       input.projectId,
       input.description,
       resolveHighestPriority(input.issues),
       JSON.stringify(dependsOnMilestoneIds),
+      input.deadlineAt ?? null,
+      serializeWorkItemRecipients(input.recipients),
+      serializeWorkItemApprovals(input.approvals),
+      serializeWorkItemExternalRefs(input.externalRefs),
     ],
   );
 
@@ -554,8 +599,24 @@ function insertMilestoneWithIssues(
 
     runStatement(
       connection,
-      `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      `INSERT INTO issues (
+         id,
+         project_id,
+         campaign_id,
+         milestone_id,
+         task,
+         priority,
+         status,
+         size,
+         depends_on,
+         deadline_at,
+         recipients_json,
+         approvals_json,
+         external_refs_json,
+         policy_json,
+         created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         issue.id,
         input.projectId,
@@ -565,6 +626,11 @@ function insertMilestoneWithIssues(
         issue.priority,
         issue.size,
         JSON.stringify(dependsOnIds),
+        issue.deadlineAt ?? null,
+        serializeWorkItemRecipients(issue.recipients),
+        serializeWorkItemApprovals(issue.approvals),
+        serializeWorkItemExternalRefs(issue.externalRefs),
+        serializeHarnessPolicy(issue.policy),
         new Date().toISOString(),
       ],
     );
@@ -689,7 +755,7 @@ function normalizeMilestoneIds(
 }
 
 function resolveHighestPriority(issues: HarnessPlanIssueInput[]): string {
-  const priority = issuePriorityOrder.find((candidate) =>
+  const priority = issuePriorityValues.find((candidate) =>
     issues.some((issue) => issue.priority === candidate),
   );
 

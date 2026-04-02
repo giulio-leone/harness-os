@@ -1,0 +1,8 @@
+{
+  "contractVersion": "6.0.0",
+  "action": "inspect_health_snapshot",
+  "input": {
+    "dbPath": "/absolute/path/to/harness.sqlite",
+    "projectId": "project-1"
+  }
+}

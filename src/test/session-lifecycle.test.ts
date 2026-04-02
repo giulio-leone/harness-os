@@ -16,10 +16,13 @@ import type {
   PublicMemoryRecord,
 } from '../contracts/memory-contracts.js';
 import {
+  SESSION_LIFECYCLE_CLI_CONTRACT_VERSION,
   SessionLifecycleAdapter,
+  SessionLifecycleInspector,
   SessionLifecycleMcpServer,
   SessionOrchestrator,
   openHarnessDatabase,
+  promoteEligiblePendingIssues,
   runStatement,
   selectAll,
   selectOne,
@@ -98,6 +101,66 @@ class FailingStoreMem0Adapter extends InMemoryMem0Adapter {
   }
 }
 
+const TEST_HOST_ROUTING_CONTEXT: {
+  host: string;
+  hostCapabilities: {
+    workloadClasses: string[];
+    capabilities: string[];
+  };
+} = {
+  host: 'host-1',
+  hostCapabilities: {
+    workloadClasses: ['default', 'typescript'],
+    capabilities: ['node', 'sqlite'],
+  },
+};
+
+const TEST_SESSION_ARTIFACTS = [
+  { kind: 'session_handoff', path: '/tmp/progress.md' },
+  { kind: 'task_catalog', path: '/tmp/features.json' },
+  { kind: 'execution_plan', path: '/tmp/plan.md' },
+  { kind: 'sync_manifest', path: '/tmp/manifest.yaml' },
+] as const;
+
+function buildTestSessionArtifacts(): Array<{
+  kind: string;
+  path: string;
+}> {
+  return TEST_SESSION_ARTIFACTS.map((artifact) => ({
+    kind: artifact.kind,
+    path: artifact.path,
+  }));
+}
+
+function findArtifactPath(
+  artifacts: Array<{ kind: string; path: string }>,
+  kind: string,
+): string | undefined {
+  return artifacts.find((artifact) => artifact.kind === kind)?.path;
+}
+
+function withHostRoutingContext<
+  T extends Record<string, unknown> & {
+    host?: string;
+    hostCapabilities?: typeof TEST_HOST_ROUTING_CONTEXT.hostCapabilities;
+    artifacts?: Array<{ kind: string; path: string }>;
+  },
+>(input: T): T &
+  typeof TEST_HOST_ROUTING_CONTEXT & {
+    artifacts: Array<{ kind: string; path: string }>;
+  } {
+  return {
+    ...input,
+    host: input.host ?? TEST_HOST_ROUTING_CONTEXT.host,
+    hostCapabilities:
+      input.hostCapabilities ?? TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
+    artifacts: input.artifacts ?? buildTestSessionArtifacts(),
+  } as T &
+    typeof TEST_HOST_ROUTING_CONTEXT & {
+      artifacts: Array<{ kind: string; path: string }>;
+    };
+}
+
 test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', async () => {
   const tempDir = createTempDir('orchestrator-resume-');
   const dbPath = join(tempDir, 'harness.sqlite');
@@ -117,39 +180,34 @@ test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', 
       defaultCheckpointFreshnessSeconds: 3600,
     });
 
-    const firstSession = await orchestrator.beginIncrementalSession({
+    const firstSession = await orchestrator.beginIncrementalSession(withHostRoutingContext({
       sessionId: 'run-1',
       dbPath,
       workspaceId: 'workspace-1',
       projectId: 'project-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: true,
       agentId: 'agent-1',
       preferredIssueId: 'issue-1',
-    });
+    }));
     const blocked = await orchestrator.checkpoint(firstSession, {
       title: 'blocked',
       summary: 'Blocked and waiting for recovery context.',
       taskStatus: 'blocked',
       nextStep: 'Resume after loading the derived memory.',
+      blockedReason: 'manual_blocker:derived_memory_pending',
       artifactIds: ['artifact-1'],
     });
-    const resumedSession = await orchestrator.beginIncrementalSession({
+    const resumedSession = await orchestrator.beginIncrementalSession(withHostRoutingContext({
       sessionId: 'run-2',
       dbPath,
       workspaceId: 'workspace-1',
       projectId: 'project-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: true,
       agentId: 'agent-1',
       preferredIssueId: 'issue-1',
-    });
+    }));
     const closed = await orchestrator.close(resumedSession, {
       title: 'close',
       summary: 'Completed after resume.',
@@ -160,9 +218,9 @@ test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', 
 
     const inspected = openHarnessDatabase({ dbPath });
     try {
-      const issue = selectOne<{ status: string }>(
+      const issue = selectOne<{ status: string; blocked_reason: string | null }>(
         inspected.connection,
-        'SELECT status FROM issues WHERE id = ?',
+        'SELECT status, blocked_reason FROM issues WHERE id = ?',
         ['issue-1'],
       );
       const lease = selectOne<{ status: string }>(
@@ -177,14 +235,24 @@ test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', 
       );
 
       assert.equal(firstSession.claimMode, 'claim');
-      assert.equal(firstSession.artifacts.progressPath, '/tmp/progress.md');
-      assert.equal(firstSession.artifacts.planPath, '/tmp/plan.md');
+      assert.equal(
+        findArtifactPath(firstSession.artifacts, 'session_handoff'),
+        '/tmp/progress.md',
+      );
+      assert.equal(
+        findArtifactPath(firstSession.artifacts, 'execution_plan'),
+        '/tmp/plan.md',
+      );
       assert.equal(blocked.memoryId !== undefined, true);
       assert.equal(resumedSession.claimMode, 'resume');
-      assert.equal(resumedSession.artifacts.syncManifestPath, '/tmp/manifest.yaml');
+      assert.equal(
+        findArtifactPath(resumedSession.artifacts, 'sync_manifest'),
+        '/tmp/manifest.yaml',
+      );
       assert.equal(resumedSession.mem0.recalledMemories.length, 1);
       assert.equal(closed.memoryId !== undefined, true);
       assert.equal(issue?.status, 'done');
+      assert.equal(issue?.blocked_reason, null);
       assert.equal(lease?.status, 'released');
       assert.deepEqual(memoryLinks.map((link) => link.memory_kind), [
         'decision',
@@ -222,26 +290,23 @@ test('reconciliation marks stale work as needs_recovery and blocks fresh claims'
 
     await assert.rejects(
       () =>
-        orchestrator.beginIncrementalSession({
+        orchestrator.beginIncrementalSession(withHostRoutingContext({
           sessionId: 'run-blocked',
           dbPath,
           workspaceId: 'workspace-1',
           projectId: 'project-1',
-          progressPath: '/tmp/progress.md',
-          featureListPath: '/tmp/features.json',
-          planPath: '/tmp/plan.md',
-          syncManifestPath: '/tmp/manifest.yaml',
+          artifacts: buildTestSessionArtifacts(),
           mem0Enabled: true,
           agentId: 'agent-new',
-        }),
+        })),
       /Reconciliation is required/,
     );
 
     const inspected = openHarnessDatabase({ dbPath });
     try {
-      const issue = selectOne<{ status: string }>(
+      const issue = selectOne<{ status: string; blocked_reason: string | null }>(
         inspected.connection,
-        'SELECT status FROM issues WHERE id = ?',
+        'SELECT status, blocked_reason FROM issues WHERE id = ?',
         ['issue-stale'],
       );
       const lease = selectOne<{ status: string }>(
@@ -266,6 +331,7 @@ test('reconciliation marks stale work as needs_recovery and blocks fresh claims'
       );
 
       assert.equal(issue?.status, 'needs_recovery');
+      assert.equal(issue?.blocked_reason, 'checkpoint_stale');
       assert.equal(lease?.status, 'needs_recovery');
       assert.equal(run?.status, 'needs_recovery');
       assert.deepEqual(checkpoints.map((checkpoint) => checkpoint.title), [
@@ -275,6 +341,173 @@ test('reconciliation marks stale work as needs_recovery and blocks fresh claims'
         'checkpoint_payload',
         'reconciliation_blocked',
       ]);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('reconciliation records explicit lease_expired blocker reasons on issues', async () => {
+  const tempDir = createTempDir('reconciliation-expired-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-expired',
+      task: 'Recover expired lease before claiming',
+      status: 'ready',
+      nextBestAction: 'Inspect the expired lease first.',
+    });
+    seedRun(dbPath, 'run-expired', 'in_progress');
+    seedLease(dbPath, 'lease-expired', 'issue-expired', 'active');
+
+    const database = openHarnessDatabase({ dbPath });
+    try {
+      runStatement(
+        database.connection,
+        `UPDATE leases
+         SET expires_at = ?
+         WHERE id = ?`,
+        ['2026-03-20T00:00:00.000Z', 'lease-expired'],
+      );
+    } finally {
+      database.close();
+    }
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 60,
+    });
+
+    await assert.rejects(
+      () =>
+        orchestrator.beginIncrementalSession(withHostRoutingContext({
+          sessionId: 'run-expired-blocked',
+          dbPath,
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          artifacts: buildTestSessionArtifacts(),
+          mem0Enabled: true,
+          agentId: 'agent-new',
+        })),
+      /Reconciliation is required/,
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const issue = selectOne<{ status: string; blocked_reason: string | null }>(
+        inspected.connection,
+        'SELECT status, blocked_reason FROM issues WHERE id = ?',
+        ['issue-expired'],
+      );
+      assert.equal(issue?.status, 'needs_recovery');
+      assert.equal(issue?.blocked_reason, 'lease_expired');
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('concurrent begin_incremental calls keep stale lease reconciliation deterministic', async () => {
+  const tempDir = createTempDir('reconciliation-load-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-stale-load',
+      task: 'Recover stale work before new claims',
+      status: 'ready',
+      nextBestAction: 'Recover the stale lease first.',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-ready-load',
+      task: 'Stay ready until recovery is resolved',
+      status: 'ready',
+      nextBestAction: 'Wait for stale recovery to finish.',
+    });
+    seedRun(dbPath, 'run-stale-load', 'in_progress');
+    seedLease(dbPath, 'lease-stale-load', 'issue-stale-load', 'active');
+    seedCheckpoint(
+      dbPath,
+      'checkpoint-stale-load',
+      'run-stale-load',
+      'issue-stale-load',
+      'claim',
+    );
+
+    const attempts = await Promise.all(
+      Array.from({ length: 4 }, (_, index) =>
+        runCliCommandRaw(
+          tempDir,
+          buildBeginIncrementalCommand({
+            sessionId: `run-blocked-${index + 1}`,
+            dbPath,
+            agentId: `agent-blocked-${index + 1}`,
+          }),
+          DISABLE_DEFAULT_MEM0_ENV,
+        ),
+      ),
+    );
+
+    attempts.forEach((result) => {
+      assert.notEqual(result.code, 0);
+      assert.match(
+        result.stderr,
+        /Reconciliation is required|Cannot claim new work while stale leases remain unresolved|database is locked/i,
+      );
+    });
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const staleIssue = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-stale-load'],
+      );
+      const readyIssue = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-ready-load'],
+      );
+      const needsRecoveryLeases = selectAll<{ id: string }>(
+        inspected.connection,
+        `SELECT id
+         FROM leases
+         WHERE status = 'needs_recovery'
+           AND released_at IS NULL`,
+      );
+      const activeLeases = selectAll<{ id: string }>(
+        inspected.connection,
+        `SELECT id
+         FROM leases
+         WHERE status = 'active'
+           AND released_at IS NULL`,
+      );
+      const blockedRuns = selectAll<{ status: string }>(
+        inspected.connection,
+        `SELECT status
+         FROM runs
+         WHERE id LIKE 'run-blocked-%'
+         ORDER BY id ASC`,
+      );
+
+      assert.equal(staleIssue?.status, 'needs_recovery');
+      assert.equal(readyIssue?.status, 'ready');
+      assert.equal(needsRecoveryLeases.length, 1);
+      assert.equal(activeLeases.length, 0);
+      assert.ok(blockedRuns.length >= 1);
+      assert.ok(
+        blockedRuns.every((run) => run.status === 'needs_recovery'),
+      );
     } finally {
       inspected.close();
     }
@@ -314,19 +547,16 @@ test('beginIncrementalSession rolls back canonical state when lease claim fails'
 
     await assert.rejects(
       () =>
-        orchestrator.beginIncrementalSession({
+        orchestrator.beginIncrementalSession(withHostRoutingContext({
           sessionId: 'run-candidate',
           dbPath,
           workspaceId: 'workspace-1',
           projectId: 'project-1',
-          progressPath: '/tmp/progress.md',
-          featureListPath: '/tmp/features.json',
-          planPath: '/tmp/plan.md',
-          syncManifestPath: '/tmp/manifest.yaml',
+          artifacts: buildTestSessionArtifacts(),
           mem0Enabled: false,
           agentId: 'agent-candidate',
           preferredIssueId: 'issue-rollback',
-        }),
+        })),
       /already has an active lease/i,
     );
 
@@ -382,19 +612,16 @@ test('checkpoint keeps canonical state valid when mem0 persistence fails', async
       defaultCheckpointFreshnessSeconds: 3600,
     });
 
-    const started = await orchestrator.beginIncrementalSession({
+    const started = await orchestrator.beginIncrementalSession(withHostRoutingContext({
       sessionId: 'run-mem0-failure',
       dbPath,
       workspaceId: 'workspace-1',
       projectId: 'project-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: true,
       agentId: 'agent-mem0-failure',
       preferredIssueId: 'issue-mem0-failure',
-    });
+    }));
     const checkpoint = await orchestrator.checkpoint(started, {
       title: 'blocked',
       summary: 'Persist canonical state even if mem0 storage fails.',
@@ -476,21 +703,18 @@ test('beginRecoverySession replaces stale leases with a fresh recovery lease', a
       defaultCheckpointFreshnessSeconds: 3600,
     });
 
-    const recoverySession = await orchestrator.beginRecoverySession({
+    const recoverySession = await orchestrator.beginRecoverySession(withHostRoutingContext({
       sessionId: 'run-recovery',
       dbPath,
       workspaceId: 'workspace-1',
       projectId: 'project-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: true,
       agentId: 'agent-recovery',
       preferredIssueId: 'issue-recovery',
       recoverySummary: 'Recover the flagged issue with a new lease.',
       recoveryNextStep: 'Continue under the fresh recovery lease.',
-    });
+    }));
     await orchestrator.close(recoverySession, {
       title: 'close',
       summary: 'Closed the recovered issue.',
@@ -535,6 +759,144 @@ test('beginRecoverySession replaces stale leases with a fresh recovery lease', a
   }
 });
 
+test('concurrent begin_recovery calls create one fresh recovery lease', async () => {
+  const tempDir = createTempDir('recovery-race-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-recovery-race',
+      task: 'Recover one issue under concurrent pressure',
+      status: 'needs_recovery',
+      nextBestAction: 'Recover this issue explicitly.',
+    });
+    seedLease(
+      dbPath,
+      'lease-recovery-race-old',
+      'issue-recovery-race',
+      'needs_recovery',
+    );
+
+    const attempts = await Promise.all(
+      Array.from({ length: 4 }, (_, index) =>
+        runCliCommandRaw(
+          tempDir,
+          buildBeginRecoveryCommand({
+            sessionId: `run-recovery-race-${index + 1}`,
+            dbPath,
+            agentId: `agent-recovery-race-${index + 1}`,
+            preferredIssueId: 'issue-recovery-race',
+            recoverySummary: `Recover attempt ${index + 1}.`,
+            recoveryNextStep: 'Continue under the winning recovery lease.',
+          }),
+          DISABLE_DEFAULT_MEM0_ENV,
+        ),
+      ),
+    );
+
+    const successes = attempts.filter((result) => result.code === 0);
+    const failures = attempts.filter((result) => result.code !== 0);
+
+    assert.equal(successes.length, 1);
+    assert.equal(failures.length, 3);
+
+    const successPayload = JSON.parse(successes[0]?.stdout ?? '{}');
+    assert.equal(successPayload.action, 'begin_recovery');
+    assert.equal(successPayload.context?.claimMode, 'recovery');
+    assert.equal(successPayload.context?.issueId, 'issue-recovery-race');
+
+    failures.forEach((result) => {
+      assert.match(
+        result.stderr,
+        /No needs_recovery issues are available|not recoverable from status in_progress|already has an active lease|database is locked/i,
+      );
+    });
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const issue = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-recovery-race'],
+      );
+      const leaseStatuses = selectAll<{ status: string }>(
+        inspected.connection,
+        `SELECT status
+         FROM leases
+         WHERE issue_id = ?
+         ORDER BY acquired_at ASC`,
+        ['issue-recovery-race'],
+      );
+      const activeLeases = selectAll<{ id: string }>(
+        inspected.connection,
+        `SELECT id
+         FROM leases
+         WHERE issue_id = ?
+           AND status = 'active'
+           AND released_at IS NULL`,
+        ['issue-recovery-race'],
+      );
+
+      assert.equal(issue?.status, 'in_progress');
+      assert.deepEqual(leaseStatuses.map((lease) => lease.status), [
+        'recovered',
+        'active',
+      ]);
+      assert.equal(activeLeases.length, 1);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('checkpoint rejects blockedReason unless taskStatus is blocked', async () => {
+  const tempDir = createTempDir('checkpoint-blocked-reason-validation-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-invalid-blocked-reason',
+      task: 'Reject invalid blocked reason combinations',
+      status: 'ready',
+      nextBestAction: 'Start the task.',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const session = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-invalid-blocked-reason',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: 'agent-invalid-blocked-reason',
+      preferredIssueId: 'issue-invalid-blocked-reason',
+    }));
+
+    await assert.rejects(
+      () => orchestrator.checkpoint(session, {
+        title: 'invalid',
+        summary: 'This should be rejected.',
+        taskStatus: 'done',
+        nextStep: 'Stop.',
+        blockedReason: 'issue_dependency:issue-other',
+      }),
+      /blockedReason can only be provided when taskStatus is blocked/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('close promotes dependent pending issues and the next session can claim them', async () => {
   const tempDir = createTempDir('queue-promotion-close-');
   const dbPath = join(tempDir, 'harness.sqlite');
@@ -570,19 +932,16 @@ test('close promotes dependent pending issues and the next session can claim the
       defaultCheckpointFreshnessSeconds: 3600,
     });
 
-    const session = await orchestrator.beginIncrementalSession({
+    const session = await orchestrator.beginIncrementalSession(withHostRoutingContext({
       sessionId: 'run-primary',
       dbPath,
       workspaceId: 'workspace-1',
       projectId: 'project-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: false,
       agentId: 'agent-primary',
       preferredIssueId: 'issue-primary',
-    });
+    }));
     const closed = await orchestrator.close(session, {
       title: 'close',
       summary: 'Closed the first issue and unlocked the next queue item.',
@@ -617,18 +976,15 @@ test('close promotes dependent pending issues and the next session can claim the
       inspectedAfterClose.close();
     }
 
-    const nextSession = await orchestrator.beginIncrementalSession({
+    const nextSession = await orchestrator.beginIncrementalSession(withHostRoutingContext({
       sessionId: 'run-followup',
       dbPath,
       workspaceId: 'workspace-1',
       projectId: 'project-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: false,
       agentId: 'agent-primary',
-    });
+    }));
 
     assert.equal(nextSession.issueId, 'issue-followup');
     assert.equal(nextSession.claimMode, 'claim');
@@ -675,13 +1031,11 @@ test('advance_session closes cleanly when no next ready issue exists', async () 
       dbPath,
       workspaceId: 'workspace-1',
       projectId: 'project-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: false,
       agentId: 'agent-mcp',
       preferredIssueId: 'issue-only',
+      ...TEST_HOST_ROUTING_CONTEXT,
     })) as {
       sessionToken: string;
     };
@@ -758,13 +1112,11 @@ test('harness_session resolves persisted session tokens after restart', async ()
       dbPath,
       workspaceId: 'workspace-1',
       projectId: 'project-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: false,
       agentId: 'agent-token',
       preferredIssueId: 'issue-token',
+      ...TEST_HOST_ROUTING_CONTEXT,
     })) as { sessionToken: string };
 
     const server2 = new SessionLifecycleMcpServer(
@@ -794,7 +1146,7 @@ test('harness_session resolves persisted session tokens after restart', async ()
       },
     })) as {
       result: {
-        context: { issueId: string; artifacts: { featureListPath: string } };
+        context: { issueId: string; artifacts: Array<{ kind: string; path: string }> };
       };
     };
     const closed = (await sessionTool.handler({
@@ -809,7 +1161,7 @@ test('harness_session resolves persisted session tokens after restart', async ()
       },
     })) as {
       result: {
-        context: { issueId: string; artifacts: { featureListPath: string } };
+        context: { issueId: string; artifacts: Array<{ kind: string; path: string }> };
       };
     };
 
@@ -826,7 +1178,10 @@ test('harness_session resolves persisted session tokens after restart', async ()
 
       assert.equal(checkpointed.result.context.issueId, 'issue-token');
       assert.equal(closed.result.context.issueId, 'issue-token');
-      assert.equal(closed.result.context.artifacts.featureListPath, '/tmp/features.json');
+      assert.equal(
+        findArtifactPath(closed.result.context.artifacts, 'task_catalog'),
+        '/tmp/features.json',
+      );
       assert.equal(activeSession?.status, 'closed');
       assert.notEqual(activeSession?.closed_at, null);
     } finally {
@@ -871,12 +1226,11 @@ test('CLI supports lifecycle commands and read-only inspection commands', async 
         dbPath,
         workspaceId: 'workspace-1',
         projectId: 'project-1',
-        progressPath: '/tmp/progress.md',
-        featureListPath: '/tmp/features.json',
-        planPath: '/tmp/plan.md',
-        syncManifestPath: '/tmp/manifest.yaml',
+        artifacts: buildTestSessionArtifacts(),
         mem0Enabled: false,
         agentId: 'cli-agent-recovery',
+        host: TEST_HOST_ROUTING_CONTEXT.host,
+        hostCapabilities: TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
         preferredIssueId: 'issue-cli-recovery',
         recoverySummary: 'Recover via CLI.',
         recoveryNextStep: 'Close the recovered issue.',
@@ -901,12 +1255,11 @@ test('CLI supports lifecycle commands and read-only inspection commands', async 
         dbPath,
         workspaceId: 'workspace-1',
         projectId: 'project-1',
-        progressPath: '/tmp/progress.md',
-        featureListPath: '/tmp/features.json',
-        planPath: '/tmp/plan.md',
-        syncManifestPath: '/tmp/manifest.yaml',
+        artifacts: buildTestSessionArtifacts(),
         mem0Enabled: false,
         agentId: 'cli-agent',
+        host: TEST_HOST_ROUTING_CONTEXT.host,
+        hostCapabilities: TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
         preferredIssueId: 'issue-cli',
         checkpointFreshnessSeconds: 3600,
       },
@@ -935,14 +1288,14 @@ test('CLI supports lifecycle commands and read-only inspection commands', async 
     });
 
     const overview = await runCliCommand(tempDir, {
-      action: 'inspect_overview',
+      action: 'inspect_export',
       input: {
         dbPath,
         projectId: 'project-1',
       },
     });
     const issue = await runCliCommand(tempDir, {
-      action: 'inspect_issue',
+      action: 'inspect_audit',
       input: {
         dbPath,
         issueId: 'issue-cli',
@@ -952,12 +1305,12 @@ test('CLI supports lifecycle commands and read-only inspection commands', async 
     assert.equal(recovery.action, 'begin_recovery');
     assert.equal(begin.action, 'begin_incremental');
     assert.equal(checkpoint.action, 'checkpoint');
-    assert.equal(overview.action, 'inspect_overview');
-    assert.equal(issue.action, 'inspect_issue');
-    assert.equal(overview.result.counts.readyIssues, 0);
-    assert.equal(overview.result.counts.recoveryIssues, 0);
+    assert.equal(overview.action, 'inspect_export');
+    assert.equal(issue.action, 'inspect_audit');
+    assert.equal(overview.result.queue.statusCounts.ready ?? 0, 0);
+    assert.equal(overview.result.queue.statusCounts.needs_recovery ?? 0, 0);
     assert.equal(issue.result.issue.status, 'done');
-    assert.equal(issue.result.checkpoints.length, 3);
+    assert.equal(issue.result.evidence.checkpoints.length, 3);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -983,11 +1336,10 @@ test('CLI begin_incremental auto-generates sessionId when omitted', async () => 
         dbPath,
         workspaceId: 'workspace-1',
         projectId: 'project-1',
-        progressPath: '/tmp/progress.md',
-        featureListPath: '/tmp/features.json',
-        planPath: '/tmp/plan.md',
-        syncManifestPath: '/tmp/manifest.yaml',
+        artifacts: buildTestSessionArtifacts(),
         mem0Enabled: false,
+        host: TEST_HOST_ROUTING_CONTEXT.host,
+        hostCapabilities: TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
         preferredIssueId: 'issue-cli-autogen',
       },
     });
@@ -995,6 +1347,88 @@ test('CLI begin_incremental auto-generates sessionId when omitted', async () => 
     assert.equal(begin.action, 'begin_incremental');
     assert.match(begin.context.sessionId, /^RUN-[0-9a-f-]{36}$/i);
     assert.equal(begin.context.runId, begin.context.sessionId);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI rejects missing contractVersion at the public boundary', async () => {
+  const tempDir = createTempDir('cli-missing-contract-version-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-cli-missing-contract',
+      task: 'Reject missing CLI contract version',
+      status: 'ready',
+      nextBestAction: 'Fail fast on stale payloads.',
+    });
+
+    const result = await runCliCommandRaw(
+      tempDir,
+      {
+        action: 'begin_incremental',
+        input: {
+          dbPath,
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          artifacts: buildTestSessionArtifacts(),
+          mem0Enabled: false,
+          host: TEST_HOST_ROUTING_CONTEXT.host,
+          hostCapabilities: TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
+          preferredIssueId: 'issue-cli-missing-contract',
+        },
+      },
+      DISABLE_DEFAULT_MEM0_ENV,
+      false,
+    );
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /contractVersion/i);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI rejects stale contractVersion at the public boundary', async () => {
+  const tempDir = createTempDir('cli-stale-contract-version-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-cli-stale-contract',
+      task: 'Reject stale CLI contract version',
+      status: 'ready',
+      nextBestAction: 'Fail fast on stale payloads.',
+    });
+
+    const result = await runCliCommandRaw(
+      tempDir,
+      {
+        contractVersion: '2.0.0',
+        action: 'begin_incremental',
+        input: {
+          dbPath,
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          artifacts: buildTestSessionArtifacts(),
+          mem0Enabled: false,
+          host: TEST_HOST_ROUTING_CONTEXT.host,
+          hostCapabilities: TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
+          preferredIssueId: 'issue-cli-stale-contract',
+        },
+      },
+      DISABLE_DEFAULT_MEM0_ENV,
+      false,
+    );
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /contractVersion/i);
+    assert.match(result.stderr, /6\.0\.0/i);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -1030,7 +1464,7 @@ test('CLI supports promote_queue for eligible pending issues', async () => {
       },
     });
     const overview = await runCliCommand(tempDir, {
-      action: 'inspect_overview',
+      action: 'inspect_export',
       input: {
         dbPath,
         projectId: 'project-1',
@@ -1039,8 +1473,341 @@ test('CLI supports promote_queue for eligible pending issues', async () => {
 
     assert.equal(promoted.action, 'promote_queue');
     assert.deepEqual(promoted.result.promotedIssueIds, ['issue-promoted']);
-    assert.equal(overview.result.counts.readyIssues, 1);
-    assert.equal(overview.result.readyIssues[0].id, 'issue-promoted');
+    assert.equal(overview.result.queue.statusCounts.ready, 1);
+    assert.equal(overview.result.queue.readyIssues[0].id, 'issue-promoted');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('promote_queue records dependency blocker reasons and next_action explains them', async () => {
+  const tempDir = createTempDir('queue-blocked-reasons-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-dependency',
+      task: 'Finish the dependency first',
+      status: 'in_progress',
+      nextBestAction: 'Complete the dependency first.',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-blocked',
+      task: 'Wait for the dependency',
+      status: 'pending',
+      dependsOn: ['issue-dependency'],
+      nextBestAction: 'Wait for issue-dependency.',
+    });
+
+    const database = openHarnessDatabase({ dbPath });
+    try {
+      const promoted = promoteEligiblePendingIssues(database.connection, {
+        projectId: 'project-1',
+      });
+      assert.deepEqual(promoted, []);
+    } finally {
+      database.close();
+    }
+
+    const inspector = new SessionLifecycleInspector();
+    const overview = inspector.inspectExport({
+      dbPath,
+      projectId: 'project-1',
+    }) as {
+      queue: {
+        blockedIssues: Array<{ id: string; status: string; blockedReason?: string }>;
+      };
+    };
+    const issueDetails = inspector.inspectAudit({
+      dbPath,
+      issueId: 'issue-blocked',
+    }) as {
+      issue: { id: string; blockedReason?: string };
+    };
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const blockedIssue = selectOne<{ blocked_reason: string | null }>(
+        inspected.connection,
+        'SELECT blocked_reason FROM issues WHERE id = ?',
+        ['issue-blocked'],
+      );
+
+      assert.equal(
+        blockedIssue?.blocked_reason,
+        'issue_dependency:issue-dependency',
+      );
+    } finally {
+      inspected.close();
+    }
+
+    const server = new SessionLifecycleMcpServer(
+      new SessionLifecycleAdapter(
+        new SessionOrchestrator({
+          mem0Adapter: new InMemoryMem0Adapter(),
+          defaultCheckpointFreshnessSeconds: 3600,
+        }),
+      ),
+    );
+    const inspectorTool = (
+      server as unknown as {
+        tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
+      }
+    ).tools.get('harness_inspector');
+
+    assert.ok(inspectorTool);
+
+    const nextAction = (await inspectorTool.handler({
+      action: 'next_action',
+      dbPath,
+      projectId: 'project-1',
+      host: TEST_HOST_ROUTING_CONTEXT.host,
+      hostCapabilities: TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
+    })) as {
+      action: string;
+      tool?: string;
+      reason: string;
+      suggestedPayload?: { action?: string; issueId?: string };
+      context?: {
+        stage: string;
+        priority: number;
+        issue?: { id: string; status: string; blockedReason?: string | null };
+        blocker?: { kind: string; refId: string; refType: string; code: string };
+        blockingIssue?: { id: string; status: string; nextBestAction?: string | null };
+      };
+    };
+
+    assert.equal(overview.queue.blockedIssues.length, 1);
+    assert.equal(overview.queue.blockedIssues[0]?.id, 'issue-blocked');
+    assert.equal(overview.queue.blockedIssues[0]?.status, 'pending');
+    assert.equal(
+      overview.queue.blockedIssues[0]?.blockedReason,
+      'issue_dependency:issue-dependency',
+    );
+    assert.equal(issueDetails.issue.id, 'issue-blocked');
+    assert.equal(
+      issueDetails.issue.blockedReason,
+      'issue_dependency:issue-dependency',
+    );
+    assert.equal(nextAction.action, 'call_tool');
+    assert.equal(nextAction.tool, 'harness_inspector');
+    assert.match(nextAction.reason, /issue-dependency/);
+    assert.equal(nextAction.suggestedPayload?.action, 'audit');
+    assert.equal(nextAction.suggestedPayload?.issueId, 'issue-blocked');
+    assert.equal(nextAction.context?.stage, 'blocked_issue');
+    assert.equal(nextAction.context?.priority, 4);
+    assert.equal(nextAction.context?.issue?.id, 'issue-blocked');
+    assert.equal(nextAction.context?.issue?.status, 'pending');
+    assert.equal(
+      nextAction.context?.issue?.blockedReason,
+      'issue_dependency:issue-dependency',
+    );
+    assert.equal(nextAction.context?.blocker?.kind, 'issue_dependency');
+    assert.equal(nextAction.context?.blocker?.refId, 'issue-dependency');
+    assert.equal(nextAction.context?.blocker?.refType, 'issue');
+    assert.equal(
+      nextAction.context?.blocker?.code,
+      'issue_dependency:issue-dependency',
+    );
+    assert.equal(nextAction.context?.blockingIssue?.id, 'issue-dependency');
+    assert.equal(nextAction.context?.blockingIssue?.status, 'in_progress');
+    assert.equal(
+      nextAction.context?.blockingIssue?.nextBestAction,
+      'Complete the dependency first.',
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('promote_queue records milestone blocker reasons and overview exposes blocked milestones', () => {
+  const tempDir = createTempDir('milestone-blocked-reasons-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertMilestone({
+      dbPath,
+      milestoneId: 'milestone-root',
+      description: 'Root milestone',
+      status: 'pending',
+    });
+    insertMilestone({
+      dbPath,
+      milestoneId: 'milestone-child',
+      description: 'Child milestone',
+      status: 'pending',
+      dependsOn: ['milestone-root'],
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-milestone-blocked',
+      milestoneId: 'milestone-child',
+      task: 'Wait for the parent milestone',
+      status: 'pending',
+      nextBestAction: 'Wait for milestone-root.',
+    });
+
+    const database = openHarnessDatabase({ dbPath });
+    try {
+      const promoted = promoteEligiblePendingIssues(database.connection, {
+        projectId: 'project-1',
+      });
+      assert.deepEqual(promoted, []);
+    } finally {
+      database.close();
+    }
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const milestone = selectOne<{ status: string; blocked_reason: string | null }>(
+        inspected.connection,
+        'SELECT status, blocked_reason FROM milestones WHERE id = ?',
+        ['milestone-child'],
+      );
+      const issue = selectOne<{ status: string; blocked_reason: string | null }>(
+        inspected.connection,
+        'SELECT status, blocked_reason FROM issues WHERE id = ?',
+        ['issue-milestone-blocked'],
+      );
+
+      assert.equal(milestone?.status, 'blocked');
+      assert.equal(
+        milestone?.blocked_reason,
+        'milestone_dependency:milestone-root',
+      );
+      assert.equal(issue?.status, 'pending');
+      assert.equal(
+        issue?.blocked_reason,
+        'milestone_dependency:milestone-root',
+      );
+    } finally {
+      inspected.close();
+    }
+
+    const overview = new SessionLifecycleInspector().inspectExport({
+      dbPath,
+      projectId: 'project-1',
+    }) as {
+      queue: {
+        blockedMilestones: Array<{ id: string; blockedReason?: string }>;
+      };
+    };
+
+    assert.equal(overview.queue.blockedMilestones.length, 1);
+    assert.equal(overview.queue.blockedMilestones[0]?.id, 'milestone-child');
+    assert.equal(
+      overview.queue.blockedMilestones[0]?.blockedReason,
+      'milestone_dependency:milestone-root',
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('promote_queue clears blocker reasons when dependencies complete and dependents become ready', () => {
+  const tempDir = createTempDir('queue-unblock-drill-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-dependency-drill',
+      task: 'Complete the dependency first',
+      status: 'in_progress',
+      nextBestAction: 'Finish the dependency.',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-independent-drill',
+      task: 'Promote independently',
+      status: 'pending',
+      nextBestAction: 'Promote immediately.',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-blocked-drill',
+      task: 'Wait for the dependency to complete',
+      status: 'pending',
+      dependsOn: ['issue-dependency-drill'],
+      nextBestAction: 'Wait for issue-dependency-drill.',
+    });
+
+    const firstPass = openHarnessDatabase({ dbPath });
+    try {
+      const promoted = promoteEligiblePendingIssues(firstPass.connection, {
+        projectId: 'project-1',
+      });
+
+      assert.deepEqual(promoted.map((issue) => issue.id), [
+        'issue-independent-drill',
+      ]);
+    } finally {
+      firstPass.close();
+    }
+
+    const afterFirstPass = openHarnessDatabase({ dbPath });
+    try {
+      const blockedIssue = selectOne<{ status: string; blocked_reason: string | null }>(
+        afterFirstPass.connection,
+        'SELECT status, blocked_reason FROM issues WHERE id = ?',
+        ['issue-blocked-drill'],
+      );
+      const independentIssue = selectOne<{ status: string; blocked_reason: string | null }>(
+        afterFirstPass.connection,
+        'SELECT status, blocked_reason FROM issues WHERE id = ?',
+        ['issue-independent-drill'],
+      );
+
+      assert.equal(blockedIssue?.status, 'pending');
+      assert.equal(
+        blockedIssue?.blocked_reason,
+        'issue_dependency:issue-dependency-drill',
+      );
+      assert.equal(independentIssue?.status, 'ready');
+      assert.equal(independentIssue?.blocked_reason, null);
+
+      runStatement(
+        afterFirstPass.connection,
+        `UPDATE issues
+         SET status = 'done', blocked_reason = NULL
+         WHERE id = ?`,
+        ['issue-dependency-drill'],
+      );
+    } finally {
+      afterFirstPass.close();
+    }
+
+    const secondPass = openHarnessDatabase({ dbPath });
+    try {
+      const promoted = promoteEligiblePendingIssues(secondPass.connection, {
+        projectId: 'project-1',
+      });
+
+      assert.deepEqual(promoted.map((issue) => issue.id), [
+        'issue-blocked-drill',
+      ]);
+    } finally {
+      secondPass.close();
+    }
+
+    const afterSecondPass = openHarnessDatabase({ dbPath });
+    try {
+      const blockedIssue = selectOne<{ status: string; blocked_reason: string | null }>(
+        afterSecondPass.connection,
+        'SELECT status, blocked_reason FROM issues WHERE id = ?',
+        ['issue-blocked-drill'],
+      );
+
+      assert.equal(blockedIssue?.status, 'ready');
+      assert.equal(blockedIssue?.blocked_reason, null);
+    } finally {
+      afterSecondPass.close();
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -1064,10 +1831,39 @@ test('runtime rejects unsupported pre-v2 harness schemas', () => {
 
   assert.throws(
     () => openHarnessDatabase({ dbPath }),
-    /schema version 1 is too old for in-place migration|schema version 1 is no longer supported/i,
+    /Harness schema version mismatch/,
   );
 
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('openHarnessDatabase rejects v3 databases with an explicit recreate instruction', () => {
+  const tempDir = createTempDir('schema-v3-hard-break-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw.exec('PRAGMA journal_mode = WAL');
+      raw.exec('PRAGMA foreign_keys = OFF');
+      const schemaPath = join(
+        import.meta.dirname ?? '.',
+        '..', 'db', 'sqlite.schema.sql',
+      );
+      const schemaSql = readFileSync(schemaPath, 'utf8');
+      raw.exec(schemaSql);
+      raw.exec('PRAGMA user_version = 3');
+    } finally {
+      raw.close();
+    }
+
+    assert.throws(
+      () => openHarnessDatabase({ dbPath }),
+      /expected v5, got v3.*Backward compatibility is disabled.*recreate the harness database/i,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('CLI inspection and promotion commands work with default mem0 loader disabled', async () => {
@@ -1087,7 +1883,7 @@ test('CLI inspection and promotion commands work with default mem0 loader disabl
     const overview = await runCliCommand(
       tempDir,
       {
-        action: 'inspect_overview',
+        action: 'inspect_export',
         input: {
           dbPath,
           projectId: 'project-1',
@@ -1098,10 +1894,21 @@ test('CLI inspection and promotion commands work with default mem0 loader disabl
     const issue = await runCliCommand(
       tempDir,
       {
-        action: 'inspect_issue',
+        action: 'inspect_audit',
         input: {
           dbPath,
           issueId: 'issue-cli-nomem0',
+        },
+      },
+      { AGENT_HARNESS_DISABLE_DEFAULT_MEM0: '1' },
+    );
+    const healthSnapshot = await runCliCommand(
+      tempDir,
+      {
+        action: 'inspect_health_snapshot',
+        input: {
+          dbPath,
+          projectId: 'project-1',
         },
       },
       { AGENT_HARNESS_DISABLE_DEFAULT_MEM0: '1' },
@@ -1118,9 +1925,11 @@ test('CLI inspection and promotion commands work with default mem0 loader disabl
       { AGENT_HARNESS_DISABLE_DEFAULT_MEM0: '1' },
     );
 
-    assert.equal(overview.action, 'inspect_overview');
-    assert.equal(overview.result.counts.readyIssues, 1);
+    assert.equal(overview.action, 'inspect_export');
+    assert.equal(overview.result.queue.statusCounts.ready, 1);
     assert.equal(issue.result.issue.id, 'issue-cli-nomem0');
+    assert.equal(healthSnapshot.action, 'inspect_health_snapshot');
+    assert.equal(healthSnapshot.result.snapshotVersion, 1);
     assert.deepEqual(promoted.result.promotedIssueIds, []);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1148,12 +1957,11 @@ test('two CLI begin processes cannot create two active leases for the same issue
         dbPath,
         workspaceId: 'workspace-1',
         projectId: 'project-1',
-        progressPath: '/tmp/progress.md',
-        featureListPath: '/tmp/features.json',
-        planPath: '/tmp/plan.md',
-        syncManifestPath: '/tmp/manifest.yaml',
+        artifacts: buildTestSessionArtifacts(),
         mem0Enabled: false,
         agentId,
+        host: TEST_HOST_ROUTING_CONTEXT.host,
+        hostCapabilities: TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
         preferredIssueId: 'issue-race',
       },
     });
@@ -1202,9 +2010,321 @@ test('two CLI begin processes cannot create two active leases for the same issue
   }
 });
 
+test('many CLI begin processes still create only one active lease for the same issue', async () => {
+  const tempDir = createTempDir('cli-lease-stress-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-race-stress',
+      task: 'Race on one preferred issue under load',
+      status: 'ready',
+      nextBestAction: 'Only one process may claim this issue.',
+    });
+
+    const attempts = await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        runCliCommandRaw(
+          tempDir,
+          buildBeginIncrementalCommand({
+            sessionId: `run-race-stress-${index + 1}`,
+            dbPath,
+            agentId: `agent-race-stress-${index + 1}`,
+            preferredIssueId: 'issue-race-stress',
+          }),
+          DISABLE_DEFAULT_MEM0_ENV,
+        ),
+      ),
+    );
+
+    const successes = attempts.filter((result) => result.code === 0);
+    const failures = attempts.filter((result) => result.code !== 0);
+
+    assert.equal(successes.length, 1);
+    assert.equal(failures.length, 5);
+
+    const successPayload = JSON.parse(successes[0]?.stdout ?? '{}');
+    assert.equal(successPayload.action, 'begin_incremental');
+    assert.equal(successPayload.context?.claimMode, 'claim');
+    assert.equal(successPayload.context?.issueId, 'issue-race-stress');
+
+    failures.forEach((result) => {
+      assert.match(
+        result.stderr,
+        /(already has an active lease|No ready issues are available|database is locked|not claimable from status in_progress)/i,
+      );
+    });
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const activeLeases = selectAll<{ agent_id: string }>(
+        inspected.connection,
+        `SELECT agent_id
+         FROM leases
+         WHERE issue_id = ?
+           AND status = 'active'
+           AND released_at IS NULL`,
+        ['issue-race-stress'],
+      );
+
+      assert.equal(activeLeases.length, 1);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('policy-driven escalation reorders overview and begin() while exposing policy state', async () => {
+  const tempDir = createTempDir('policy-dispatch-order-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-standard',
+      task: 'Handle routine work',
+      status: 'ready',
+      nextBestAction: 'Claim the standard task.',
+      priority: 'high',
+      createdAt: '2026-04-02T11:45:00.000Z',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-policy-escalated',
+      task: 'Handle overdue work',
+      status: 'ready',
+      nextBestAction: 'Claim the overdue task first.',
+      priority: 'low',
+      createdAt: '2026-04-01T10:00:00.000Z',
+      deadlineAt: '2026-04-02T09:00:00.000Z',
+      policy: {
+        escalationRules: [
+          {
+            trigger: 'deadline_breached',
+            action: 'raise_priority',
+            priority: 'critical',
+          },
+        ],
+      },
+    });
+
+    const inspector = new SessionLifecycleInspector();
+    const overview = inspector.inspectExport({
+      dbPath,
+      projectId: 'project-1',
+    }) as {
+      queue: {
+        readyIssues: Array<{
+          id: string;
+          deadlineAt?: string;
+          policyState?: {
+            effectivePriority: string;
+            escalated: boolean;
+            breaches: Array<{ trigger: string; action: string; priority?: string }>;
+          };
+        }>;
+      };
+    };
+    const issueDetails = inspector.inspectAudit({
+      dbPath,
+      issueId: 'issue-policy-escalated',
+    }) as {
+      issue: {
+        id: string;
+        deadlineAt?: string;
+        policyState?: {
+          effectivePriority: string;
+          escalated: boolean;
+          breaches: Array<{ trigger: string; action: string; priority?: string }>;
+        };
+      };
+    };
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const session = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-policy-order',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: 'policy-agent',
+    }));
+
+    assert.equal(overview.queue.readyIssues[0]?.id, 'issue-policy-escalated');
+    assert.equal(
+      overview.queue.readyIssues[0]?.deadlineAt,
+      '2026-04-02T09:00:00.000Z',
+    );
+    assert.equal(
+      overview.queue.readyIssues[0]?.policyState?.effectivePriority,
+      'critical',
+    );
+    assert.equal(overview.queue.readyIssues[0]?.policyState?.escalated, true);
+    assert.equal(
+      overview.queue.readyIssues[0]?.policyState?.breaches[0]?.trigger,
+      'deadline_breached',
+    );
+    assert.equal(
+      overview.queue.readyIssues[0]?.policyState?.breaches[0]?.action,
+      'raise_priority',
+    );
+    assert.equal(
+      overview.queue.readyIssues[0]?.policyState?.breaches[0]?.priority,
+      'critical',
+    );
+    assert.equal(issueDetails.issue.id, 'issue-policy-escalated');
+    assert.equal(
+      issueDetails.issue.deadlineAt,
+      '2026-04-02T09:00:00.000Z',
+    );
+    assert.equal(
+      issueDetails.issue.policyState?.effectivePriority,
+      'critical',
+    );
+    assert.equal(issueDetails.issue.policyState?.escalated, true);
+    assert.equal(session.issueId, 'issue-policy-escalated');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('host routing context filters dispatchable issues before claim ordering', async () => {
+  const tempDir = createTempDir('host-routing-dispatch-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-python',
+      task: 'Handle Python-only workload',
+      status: 'ready',
+      nextBestAction: 'Claim the Python task.',
+      priority: 'critical',
+      policy: {
+        dispatch: {
+          workloadClass: 'python',
+          requiredHostCapabilities: ['python'],
+        },
+      },
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-typescript',
+      task: 'Handle TypeScript workload',
+      status: 'ready',
+      nextBestAction: 'Claim the TypeScript task.',
+      priority: 'low',
+      policy: {
+        dispatch: {
+          workloadClass: 'typescript',
+          requiredHostCapabilities: ['sqlite'],
+        },
+      },
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const session = await orchestrator.beginIncrementalSession(
+      withHostRoutingContext({
+        sessionId: 'run-routing-match',
+        dbPath,
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        artifacts: buildTestSessionArtifacts(),
+        mem0Enabled: false,
+        agentId: 'routing-agent',
+      }),
+    );
+
+    assert.equal(session.issueId, 'issue-typescript');
+
+    await assert.rejects(
+      () =>
+        orchestrator.beginIncrementalSession({
+          sessionId: 'run-routing-mismatch',
+          dbPath,
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          artifacts: buildTestSessionArtifacts(),
+          mem0Enabled: false,
+          agentId: 'routing-agent',
+          preferredIssueId: 'issue-python',
+          host: 'host-1',
+          hostCapabilities: {
+            workloadClasses: ['typescript'],
+            capabilities: ['node', 'sqlite'],
+          },
+        }),
+      /cannot be dispatched to host "host-1": requires workload class "python", requires host capability "python"/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('begin clears stale blocked_reason when a ready issue moves to in_progress', async () => {
+  const tempDir = createTempDir('claim-clears-blocked-reason-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-cleared-blocker',
+      task: 'Resume cleanly',
+      status: 'ready',
+      nextBestAction: 'Start the task.',
+      blockedReason: 'issue_dependency:stale-reference',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-clear-blocker',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: 'agent-clear-blocker',
+      preferredIssueId: 'issue-cleared-blocker',
+    }));
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const issue = selectOne<{ status: string; blocked_reason: string | null }>(
+        inspected.connection,
+        'SELECT status, blocked_reason FROM issues WHERE id = ?',
+        ['issue-cleared-blocker'],
+      );
+
+      assert.equal(issue?.status, 'in_progress');
+      assert.equal(issue?.blocked_reason, null);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 // ---------- Issue #4: schema validation coverage ----------
 
-test('openHarnessDatabase rejects schema-v2 DB with missing workspaces table', () => {
+test('openHarnessDatabase rejects schema-v5 DB with missing workspaces table', () => {
   const tempDir = createTempDir('schema-no-workspaces-');
   const dbPath = join(tempDir, 'harness.sqlite');
 
@@ -1219,7 +2339,7 @@ test('openHarnessDatabase rejects schema-v2 DB with missing workspaces table', (
       );
       const schemaSql = readFileSync(schemaPath, 'utf8');
       raw.exec(schemaSql);
-      raw.exec(`PRAGMA user_version = 2`);
+      raw.exec(`PRAGMA user_version = 5`);
       raw.exec('DROP TABLE workspaces');
     } finally {
       raw.close();
@@ -1234,7 +2354,7 @@ test('openHarnessDatabase rejects schema-v2 DB with missing workspaces table', (
   }
 });
 
-test('openHarnessDatabase rejects schema-v2 DB with missing projects table', () => {
+test('openHarnessDatabase rejects schema-v5 DB with missing projects table', () => {
   const tempDir = createTempDir('schema-no-projects-');
   const dbPath = join(tempDir, 'harness.sqlite');
 
@@ -1249,7 +2369,7 @@ test('openHarnessDatabase rejects schema-v2 DB with missing projects table', () 
       );
       const schemaSql = readFileSync(schemaPath, 'utf8');
       raw.exec(schemaSql);
-      raw.exec(`PRAGMA user_version = 2`);
+      raw.exec(`PRAGMA user_version = 5`);
       raw.exec('DROP TABLE projects');
     } finally {
       raw.close();
@@ -1264,7 +2384,7 @@ test('openHarnessDatabase rejects schema-v2 DB with missing projects table', () 
   }
 });
 
-test('openHarnessDatabase rejects schema-v2 DB with missing issues table', () => {
+test('openHarnessDatabase rejects schema-v5 DB with missing issues table', () => {
   const tempDir = createTempDir('schema-no-issues-');
   const dbPath = join(tempDir, 'harness.sqlite');
 
@@ -1279,7 +2399,7 @@ test('openHarnessDatabase rejects schema-v2 DB with missing issues table', () =>
       );
       const schemaSql = readFileSync(schemaPath, 'utf8');
       raw.exec(schemaSql);
-      raw.exec(`PRAGMA user_version = 2`);
+      raw.exec(`PRAGMA user_version = 5`);
       raw.exec('DROP TABLE issues');
     } finally {
       raw.close();
@@ -1294,7 +2414,7 @@ test('openHarnessDatabase rejects schema-v2 DB with missing issues table', () =>
   }
 });
 
-test('openHarnessDatabase rejects schema-v2 DB with missing critical index', () => {
+test('openHarnessDatabase rejects schema-v5 DB with missing critical index', () => {
   const tempDir = createTempDir('schema-no-idx-');
   const dbPath = join(tempDir, 'harness.sqlite');
 
@@ -1309,7 +2429,7 @@ test('openHarnessDatabase rejects schema-v2 DB with missing critical index', () 
       );
       const schemaSql = readFileSync(schemaPath, 'utf8');
       raw.exec(schemaSql);
-      raw.exec(`PRAGMA user_version = 2`);
+      raw.exec(`PRAGMA user_version = 5`);
       raw.exec('DROP INDEX idx_leases_unique_active_issue');
     } finally {
       raw.close();
@@ -1348,7 +2468,7 @@ test('openHarnessDatabase rejects unversioned DB as corrupted', () => {
 
     assert.throws(
       () => openHarnessDatabase({ dbPath }),
-      /unversioned harness database.*corrupted or pre-release/,
+      /Harness schema version mismatch/,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1377,7 +2497,7 @@ test('openHarnessDatabase rejects newer schema with upgrade hint', () => {
 
     assert.throws(
       () => openHarnessDatabase({ dbPath }),
-      /999 is newer than this runtime.*Upgrade the harness-os package/,
+      /Harness schema version mismatch/,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1445,7 +2565,7 @@ test('begin with campaignId resumes only same-campaign lease', async () => {
     });
 
     // First begin for campaign A — claims issue-camp-a
-    const sessionA = await orchestrator.beginIncrementalSession({
+    const sessionA = await orchestrator.beginIncrementalSession(withHostRoutingContext({
       sessionId: 'run-camp-a1',
       dbPath,
       workspaceId: 'workspace-1',
@@ -1453,12 +2573,9 @@ test('begin with campaignId resumes only same-campaign lease', async () => {
       campaignId: 'camp-a',
       agentId: 'test-agent',
       host: 'host-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: false,
-    });
+    }));
     assert.equal(sessionA.issueId, 'issue-camp-a');
     assert.equal(sessionA.claimMode, 'claim');
 
@@ -1471,7 +2588,7 @@ test('begin with campaignId resumes only same-campaign lease', async () => {
     });
 
     // Begin for campaign B — should NOT resume campaign A's lease
-    const sessionB = await orchestrator.beginIncrementalSession({
+    const sessionB = await orchestrator.beginIncrementalSession(withHostRoutingContext({
       sessionId: 'run-camp-b1',
       dbPath,
       workspaceId: 'workspace-1',
@@ -1479,19 +2596,16 @@ test('begin with campaignId resumes only same-campaign lease', async () => {
       campaignId: 'camp-b',
       agentId: 'test-agent',
       host: 'host-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: false,
-    });
+    }));
 
     // Must claim campaign B's issue, not resume campaign A's
     assert.equal(sessionB.issueId, 'issue-camp-b');
     assert.equal(sessionB.claimMode, 'claim');
 
     // Begin again for campaign A — should resume A's lease
-    const sessionA2 = await orchestrator.beginIncrementalSession({
+    const sessionA2 = await orchestrator.beginIncrementalSession(withHostRoutingContext({
       sessionId: 'run-camp-a2',
       dbPath,
       workspaceId: 'workspace-1',
@@ -1499,15 +2613,136 @@ test('begin with campaignId resumes only same-campaign lease', async () => {
       campaignId: 'camp-a',
       agentId: 'test-agent',
       host: 'host-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: buildTestSessionArtifacts(),
       mem0Enabled: false,
-    });
+    }));
 
     assert.equal(sessionA2.issueId, 'issue-camp-a');
     assert.equal(sessionA2.claimMode, 'resume');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('concurrent campaign-scoped resumes stay isolated under load', async () => {
+  const tempDir = createTempDir('campaign-scope-load-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+
+    const database = openHarnessDatabase({ dbPath });
+    try {
+      for (const [campaignId, campaignName, issueId, task] of [
+        ['camp-a', 'Campaign A', 'issue-camp-a-load', 'Task A under load'],
+        ['camp-b', 'Campaign B', 'issue-camp-b-load', 'Task B under load'],
+        ['camp-c', 'Campaign C', 'issue-camp-c-load', 'Task C under load'],
+      ]) {
+        runStatement(
+          database.connection,
+          `INSERT INTO campaigns (id, project_id, name, objective, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            campaignId,
+            'project-1',
+            campaignName,
+            `${campaignName} objective`,
+            'active',
+            '2026-03-21T00:00:00.000Z',
+            '2026-03-21T00:00:00.000Z',
+          ],
+        );
+        runStatement(
+          database.connection,
+          `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            issueId,
+            'project-1',
+            campaignId,
+            null,
+            task,
+            'high',
+            'ready',
+            'M',
+            '[]',
+            `Resume ${issueId}`,
+          ],
+        );
+      }
+    } finally {
+      database.close();
+    }
+
+    for (const campaignId of ['camp-a', 'camp-b', 'camp-c']) {
+      const initial = await runCliCommand(
+        tempDir,
+        buildBeginIncrementalCommand({
+          sessionId: `seed-${campaignId}`,
+          dbPath,
+          agentId: 'agent-shared',
+          campaignId,
+        }),
+        DISABLE_DEFAULT_MEM0_ENV,
+      );
+
+      assert.equal(initial.action, 'begin_incremental');
+      assert.equal(initial.context.claimMode, 'claim');
+    }
+
+    const resumePlans = [
+      { campaignId: 'camp-a', expectedIssueId: 'issue-camp-a-load' },
+      { campaignId: 'camp-a', expectedIssueId: 'issue-camp-a-load' },
+      { campaignId: 'camp-b', expectedIssueId: 'issue-camp-b-load' },
+      { campaignId: 'camp-b', expectedIssueId: 'issue-camp-b-load' },
+      { campaignId: 'camp-c', expectedIssueId: 'issue-camp-c-load' },
+      { campaignId: 'camp-c', expectedIssueId: 'issue-camp-c-load' },
+    ];
+
+    const resumes = await Promise.all(
+      resumePlans.map((plan, index) =>
+        runCliCommand(
+          tempDir,
+          buildBeginIncrementalCommand({
+            sessionId: `resume-${plan.campaignId}-${index + 1}`,
+            dbPath,
+            agentId: 'agent-shared',
+            campaignId: plan.campaignId,
+          }),
+          DISABLE_DEFAULT_MEM0_ENV,
+        ),
+      ),
+    );
+
+    resumes.forEach((result, index) => {
+      assert.equal(result.action, 'begin_incremental');
+      assert.equal(result.context.claimMode, 'resume');
+      assert.equal(result.context.issueId, resumePlans[index]?.expectedIssueId);
+    });
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const activeLeases = selectAll<{ campaign_id: string; lease_count: number }>(
+        inspected.connection,
+        `SELECT campaign_id, COUNT(*) AS lease_count
+         FROM leases
+         WHERE status = 'active'
+           AND released_at IS NULL
+         GROUP BY campaign_id
+         ORDER BY campaign_id ASC`,
+      );
+
+      assert.deepEqual(
+        activeLeases.map((lease) => [lease.campaign_id, lease.lease_count]),
+        [
+          ['camp-a', 1],
+          ['camp-b', 1],
+          ['camp-c', 1],
+        ],
+      );
+    } finally {
+      inspected.close();
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -1545,7 +2780,7 @@ test('preferredIssueId from wrong project is rejected', async () => {
     });
 
     await assert.rejects(
-      () => orchestrator.beginIncrementalSession({
+      () => orchestrator.beginIncrementalSession(withHostRoutingContext({
         sessionId: 'run-cross-proj',
         dbPath,
         workspaceId: 'workspace-1',
@@ -1553,12 +2788,9 @@ test('preferredIssueId from wrong project is rejected', async () => {
         agentId: 'test-agent',
         host: 'host-1',
         preferredIssueId: 'issue-proj2',
-        progressPath: '/tmp/progress.md',
-        featureListPath: '/tmp/features.json',
-        planPath: '/tmp/plan.md',
-        syncManifestPath: '/tmp/manifest.yaml',
+        artifacts: buildTestSessionArtifacts(),
         mem0Enabled: false,
-      }),
+      })),
       /belongs to project project-2, not project-1/,
     );
   } finally {
@@ -1600,7 +2832,7 @@ test('preferredIssueId from wrong campaign is rejected', async () => {
     });
 
     await assert.rejects(
-      () => orchestrator.beginIncrementalSession({
+      () => orchestrator.beginIncrementalSession(withHostRoutingContext({
         sessionId: 'run-cross-camp',
         dbPath,
         workspaceId: 'workspace-1',
@@ -1609,12 +2841,9 @@ test('preferredIssueId from wrong campaign is rejected', async () => {
         agentId: 'test-agent',
         host: 'host-1',
         preferredIssueId: 'issue-camp-x',
-        progressPath: '/tmp/progress.md',
-        featureListPath: '/tmp/features.json',
-        planPath: '/tmp/plan.md',
-        syncManifestPath: '/tmp/manifest.yaml',
+        artifacts: buildTestSessionArtifacts(),
         mem0Enabled: false,
-      }),
+      })),
       /belongs to campaign camp-x, not camp-y/,
     );
   } finally {
@@ -1669,6 +2898,63 @@ function insertIssue(input: {
   status: string;
   nextBestAction: string;
   dependsOn?: string[];
+  milestoneId?: string;
+  blockedReason?: string;
+  priority?: string;
+  createdAt?: string;
+  deadlineAt?: string;
+  policy?: Record<string, unknown>;
+}): void {
+  const database = openHarnessDatabase({ dbPath: input.dbPath });
+
+  try {
+    runStatement(
+      database.connection,
+      `INSERT INTO issues (
+         id,
+         project_id,
+         campaign_id,
+         milestone_id,
+         task,
+         priority,
+         status,
+         size,
+         depends_on,
+         deadline_at,
+         policy_json,
+         next_best_action,
+         blocked_reason,
+         created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.issueId,
+        'project-1',
+        null,
+        input.milestoneId ?? null,
+        input.task,
+        input.priority ?? 'high',
+        input.status,
+        'M',
+        JSON.stringify(input.dependsOn ?? []),
+        input.deadlineAt ?? null,
+        JSON.stringify(input.policy ?? {}),
+        input.nextBestAction,
+        input.blockedReason ?? null,
+        input.createdAt ?? '2026-03-21T00:00:00.000Z',
+      ],
+    );
+  } finally {
+    database.close();
+  }
+}
+
+function insertMilestone(input: {
+  dbPath: string;
+  milestoneId: string;
+  description: string;
+  status: string;
+  dependsOn?: string[];
   priority?: string;
 }): void {
   const database = openHarnessDatabase({ dbPath: input.dbPath });
@@ -1676,19 +2962,16 @@ function insertIssue(input: {
   try {
     runStatement(
       database.connection,
-      `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO milestones (id, project_id, description, priority, status, depends_on, blocked_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
-        input.issueId,
+        input.milestoneId,
         'project-1',
-        null,
-        null,
-        input.task,
+        input.description,
         input.priority ?? 'high',
         input.status,
-        'M',
         JSON.stringify(input.dependsOn ?? []),
-        input.nextBestAction,
+        null,
       ],
     );
   } finally {
@@ -1798,23 +3081,37 @@ async function runCliCommand(
   tempDir: string,
   command: Record<string, unknown>,
   extraEnv: Record<string, string> = {},
+  injectContractVersion = true,
 ): Promise<any> {
-  const result = await runCliCommandRaw(tempDir, command, extraEnv);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await runCliCommandRaw(tempDir, command, extraEnv, injectContractVersion);
 
-  if (result.code !== 0) {
+    if (result.code === 0) {
+      return JSON.parse(result.stdout);
+    }
+
+    if (
+      attempt < 2 &&
+      /database is locked/i.test(result.stderr)
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+      continue;
+    }
+
     throw new Error(result.stderr || `CLI exited with code ${result.code}`);
   }
 
-  return JSON.parse(result.stdout);
+  throw new Error('CLI retry loop exhausted unexpectedly.');
 }
 
 async function runCliCommandRaw(
   tempDir: string,
   command: Record<string, unknown>,
   extraEnv: Record<string, string> = {},
+  injectContractVersion = true,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const cliPath = join(process.cwd(), 'dist/bin/session-lifecycle.js');
-  const storePath = join(tempDir, 'mem0');
+  const storePath = mkdtempSync(join(tempDir, 'mem0-'));
 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', cliPath], {
@@ -1847,9 +3144,92 @@ async function runCliCommandRaw(
       });
     });
 
-    child.stdin.write(JSON.stringify(command));
+    child.stdin.write(
+      JSON.stringify(
+        injectContractVersion
+          ? withCliContractVersion(command)
+          : command,
+      ),
+    );
     child.stdin.end();
   });
+}
+
+const DISABLE_DEFAULT_MEM0_ENV = {
+  AGENT_HARNESS_DISABLE_DEFAULT_MEM0: '1',
+};
+
+function buildBeginIncrementalCommand(input: {
+  sessionId: string;
+  dbPath: string;
+  agentId: string;
+  preferredIssueId?: string;
+  campaignId?: string;
+}): Record<string, unknown> {
+  return {
+    contractVersion: SESSION_LIFECYCLE_CLI_CONTRACT_VERSION,
+    action: 'begin_incremental',
+    input: {
+      sessionId: input.sessionId,
+      dbPath: input.dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      campaignId: input.campaignId,
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: input.agentId,
+      host: TEST_HOST_ROUTING_CONTEXT.host,
+      hostCapabilities: TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
+      ...(input.preferredIssueId === undefined
+        ? {}
+        : { preferredIssueId: input.preferredIssueId }),
+    },
+  };
+}
+
+function buildBeginRecoveryCommand(input: {
+  sessionId: string;
+  dbPath: string;
+  agentId: string;
+  preferredIssueId?: string;
+  campaignId?: string;
+  recoverySummary?: string;
+  recoveryNextStep?: string;
+}): Record<string, unknown> {
+  return {
+    contractVersion: SESSION_LIFECYCLE_CLI_CONTRACT_VERSION,
+    action: 'begin_recovery',
+    input: {
+      sessionId: input.sessionId,
+      dbPath: input.dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      campaignId: input.campaignId,
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: input.agentId,
+      host: TEST_HOST_ROUTING_CONTEXT.host,
+      hostCapabilities: TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
+      recoverySummary:
+        input.recoverySummary ?? 'Recover the flagged issue with a fresh lease.',
+      recoveryNextStep:
+        input.recoveryNextStep ?? 'Continue under the fresh recovery lease.',
+      ...(input.preferredIssueId === undefined
+        ? {}
+        : { preferredIssueId: input.preferredIssueId }),
+    },
+  };
+}
+
+function withCliContractVersion(command: Record<string, unknown>): Record<string, unknown> {
+  if ('contractVersion' in command) {
+    return command;
+  }
+
+  return {
+    contractVersion: SESSION_LIFECYCLE_CLI_CONTRACT_VERSION,
+    ...command,
+  };
 }
 
 function matchesScope(

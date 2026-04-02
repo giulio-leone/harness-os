@@ -10,6 +10,8 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { WorkloadProfileId } from '../contracts/workload-profiles.js';
+
 const requireFromHere = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -50,6 +52,7 @@ export interface HarnessMcpServerDefinitionInput {
   mem0ModulePath?: string;
   ollamaBaseUrl?: string;
   mem0EmbedModel?: string;
+  workloadProfileId?: WorkloadProfileId;
 }
 
 interface JsonMcpConfig {
@@ -99,6 +102,10 @@ export function buildHarnessMcpEnvironment(
       'AGENT_HARNESS_MEM0_MODULE_PATH',
       resolvePath(mem0ModulePath),
     ]);
+  }
+
+  if (input.workloadProfileId) {
+    envEntries.push(['HARNESS_WORKLOAD_PROFILE', input.workloadProfileId]);
   }
 
   return Object.fromEntries(envEntries);

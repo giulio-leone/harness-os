@@ -1,0 +1,14 @@
+LIVE QUEUE PROMOTION HELPER
+
+This wrapper calls the universal `promote_queue` action from agent-harness-core.
+
+Preview only (no mutation):
+  bash .harness/run-live-queue-promotion.sh
+
+Execute real queue promotion on the canonical live DB:
+  bash .harness/run-live-queue-promotion.sh --execute
+
+Outputs:
+  .harness/runtime/live-queue-promotion-preview.json
+  .harness/runtime/live-queue-promotion-result.json
+  .harness/runtime/live-queue-promotion-overview.json

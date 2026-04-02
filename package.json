@@ -1,6 +1,6 @@
 {
   "name": "harness-os",
-  "version": "2.0.2",
+  "version": "8.0.0",
   "description": "The operating system for autonomous AI agents. SQLite-backed lifecycle orchestration, canonical state, and plug-and-play multi-host integration.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -33,8 +33,12 @@
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"const fs=require('node:fs');fs.copyFileSync('src/db/sqlite.schema.sql','dist/db/sqlite.schema.sql');for(const entry of fs.readdirSync('dist/bin')){if(entry.endsWith('.js'))fs.chmodSync('dist/bin/'+entry,0o755);}\"",
+    "contracts:render": "tsx scripts/render-public-contracts.ts",
+    "skills:render": "tsx scripts/render-skill-bundle-manifest.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node scripts/run-tests.js",
+    "test:packed-artifact": "npm run build && node --disable-warning=ExperimentalWarning --test dist/test/packed-artifact.test.js",
+    "verify:release": "npm run typecheck && npm test",
     "init": "bash scripts/init.sh",
     "setup": "npx tsx src/bin/agent-harness-setup.ts",
     "sync": "npx tsx src/bin/agent-harness-sync.ts",

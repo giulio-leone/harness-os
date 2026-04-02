@@ -1,0 +1,8 @@
+version: 1
+workspace: consumer-workspace-template
+mode: live-claim-package
+artifacts:
+  liveCatalog: .harness/live-mission-catalog.json
+  promptFixture: .harness/fixtures/template.prompt.txt
+  claimMetadata: .harness/runtime/generated/live-claim.metadata.json
+  previewSummary: .harness/runtime/live-claim-preview-summary.json

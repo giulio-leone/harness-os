@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "bindings": [
+    {
+      "id": "research-binding",
+      "promptFixtureId": "research-prompt",
+      "promptFixturePath": ".harness/fixtures/template.prompt.txt",
+      "domain": "research-insight-lifecycle",
+      "schemaPath": ".harness/schemas/domain-schema.json",
+      "workflowPath": ".harness/mission-workflows/workflow.json",
+      "sourceContext": [
+        "CONTEXT.MD",
+        "JOBS.MD",
+        "NETWORK.MD",
+        "research-brief.md",
+        "source-map.md"
+      ],
+      "requiredDomainEntities": [
+        "research_topics",
+        "findings",
+        "reviewers",
+        "synthesis_notes"
+      ],
+      "campaignBindings": [
+        {
+          "campaignId": "mission-research-discovery",
+          "issueIds": [
+            "issue-research-discovery-batch"
+          ],
+          "promptRules": [
+            "Capture the first structured batch from the chosen source set",
+            "Normalize findings into canonical research topics and evidence notes",
+            "Assign one next best action per topic"
+          ],
+          "requiredOutputs": [
+            "ranked research topics",
+            "evidence notes",
+            "next best action"
+          ]
+        },
+        {
+          "campaignId": "mission-research-synthesis",
+          "issueIds": [
+            "issue-research-synthesis-draft",
+            "issue-research-peer-review"
+          ],
+          "promptRules": [
+            "Draft the highest-value brief from the strongest evidence set",
+            "Attach the supporting artifact and external references",
+            "Preserve peer-review evidence or blocking context"
+          ],
+          "requiredOutputs": [
+            "draft brief",
+            "review package",
+            "updated next best action"
+          ]
+        },
+        {
+          "campaignId": "mission-research-handoff",
+          "issueIds": [
+            "issue-research-publish-handoff"
+          ],
+          "promptRules": [
+            "Publish the approved insight package",
+            "Capture open questions or follow-up monitoring notes",
+            "Set the next best action and publication timing"
+          ],
+          "requiredOutputs": [
+            "publication note",
+            "archive reference",
+            "next best action"
+          ]
+        }
+      ],
+      "validationSuites": [],
+      "requiredMemoryKinds": [
+        "research-summary",
+        "reviewer-summary",
+        "handoff-note"
+      ],
+      "operatingRules": [
+        "database-primary-source-of-truth",
+        "mem0-support-only",
+        "cite-primary-evidence",
+        "operator-defensible-output"
+      ]
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 {
+  "contractVersion": "6.0.0",
   "action": "promote_queue",
   "input": {
     "dbPath": "/absolute/path/to/harness.sqlite",

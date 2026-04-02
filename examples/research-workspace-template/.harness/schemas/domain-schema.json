@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "domain": "research-insight-lifecycle",
+  "promptFixtureId": "research-prompt",
+  "extendsHarnessCore": {
+    "projectKey": "research-workspace-template",
+    "workspaceKind": "bootstrap-template",
+    "tables": [
+      "workspaces",
+      "projects",
+      "campaigns",
+      "issues",
+      "runs",
+      "leases",
+      "checkpoints",
+      "events",
+      "artifacts",
+      "memory_links"
+    ]
+  },
+  "canonicalInvariants": [
+    "The database is the primary source of truth.",
+    "mem0 and other semantic memory layers are support-only retrieval surfaces.",
+    "Every published claim must be backed by cited evidence.",
+    "Summaries and decisions must remain operator-defensible."
+  ],
+  "entities": [
+    {
+      "name": "research_topics",
+      "description": "Canonical research questions or themes tracked before synthesis begins.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "question", "type": "text", "required": true },
+        { "name": "audience", "type": "text", "required": true },
+        { "name": "priority_tier", "type": "text", "required": true },
+        { "name": "current_state", "type": "text", "required": true },
+        { "name": "next_best_action", "type": "text", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "findings",
+      "description": "Evidence-backed findings linked to a research topic and harness issue.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "topic_id", "type": "text", "required": true },
+        { "name": "issue_id", "type": "text", "required": false },
+        { "name": "current_run_id", "type": "text", "required": false },
+        { "name": "finding_summary", "type": "text", "required": true },
+        { "name": "confidence", "type": "text", "required": true },
+        { "name": "source_count", "type": "integer", "required": true },
+        { "name": "next_best_action", "type": "text", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "reviewers",
+      "description": "Reviewers or stakeholders connected to one research topic.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "topic_id", "type": "text", "required": true },
+        { "name": "full_name", "type": "text", "required": true },
+        { "name": "role", "type": "text", "required": true },
+        { "name": "channel", "type": "text", "required": false },
+        { "name": "contact_url", "type": "text", "required": false },
+        { "name": "review_scope", "type": "text", "required": true },
+        { "name": "priority_rank", "type": "integer", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "synthesis_notes",
+      "description": "Compressed synthesis notes linked back to canonical findings and optional mem0 evidence.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "finding_id", "type": "text", "required": true },
+        { "name": "memory_link_id", "type": "text", "required": false },
+        { "name": "brief_summary", "type": "text", "required": true },
+        { "name": "risks", "type": "text", "required": true },
+        { "name": "recommendation", "type": "text", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from": "findings.topic_id",
+      "to": "research_topics.id",
+      "purpose": "Each finding belongs to one canonical research topic."
+    },
+    {
+      "from": "findings.issue_id",
+      "to": "issues.id",
+      "purpose": "Evidence state can be tied back to the currently leased issue."
+    },
+    {
+      "from": "reviewers.topic_id",
+      "to": "research_topics.id",
+      "purpose": "Reviewers stay scoped to a canonical research topic when relevant."
+    },
+    {
+      "from": "synthesis_notes.finding_id",
+      "to": "findings.id",
+      "purpose": "Synthesis notes remain linked to canonical evidence state."
+    },
+    {
+      "from": "synthesis_notes.memory_link_id",
+      "to": "memory_links.id",
+      "purpose": "Derived memory can point to optional mem0 evidence without replacing canonical data."
+    }
+  ],
+  "qualificationScoring": {
+    "dimensions": [
+      "evidence_quality",
+      "decision_impact",
+      "novelty",
+      "verification_effort",
+      "handoff_value"
+    ],
+    "tiers": [
+      { "name": "A", "description": "Highest-value and highest-confidence records." },
+      { "name": "B", "description": "Useful records worth active work." },
+      { "name": "C", "description": "Low-priority or controlled-volume records." }
+    ]
+  },
+  "stateMachine": {
+    "states": [
+      { "name": "discovered", "allowedNext": ["validated", "deprioritized"] },
+      { "name": "validated", "allowedNext": ["synthesized", "deprioritized"] },
+      { "name": "synthesized", "allowedNext": ["reviewed", "blocked"] },
+      { "name": "reviewed", "allowedNext": ["published", "synthesized", "blocked"] },
+      { "name": "published", "allowedNext": ["monitoring", "closed"] },
+      { "name": "monitoring", "allowedNext": ["closed", "synthesized"] },
+      { "name": "blocked", "allowedNext": ["validated", "synthesized", "closed"] }
+    ],
+    "terminalStates": [
+      "closed",
+      "deprioritized"
+    ]
+  },
+  "requiredSummaryFields": [
+    "Topic",
+    "Audience",
+    "Main finding",
+    "Evidence and confidence",
+    "Main risks",
+    "Reviewers",
+    "Actions completed",
+    "Current state",
+    "Next best action"
+  ]
+}

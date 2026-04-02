@@ -3,6 +3,7 @@ import type {
   MemoryScope,
   MemorySearchResult,
 } from './memory-contracts.js';
+import type { HarnessHostCapabilities } from './policy-contracts.js';
 import type { TaskStatus } from './task-domain.js';
 export type { TaskStatus } from './task-domain.js';
 
@@ -14,11 +15,15 @@ export interface InitializerSessionInput {
 }
 
 export interface InitializerSessionOutput {
-  progressPath: string;
-  featureListPath: string;
+  artifacts: SessionArtifactReference[];
   initScriptPath: string;
   smokeTestPassed: boolean;
   notes: string[];
+}
+
+export interface SessionArtifactReference {
+  kind: string;
+  path: string;
 }
 
 export interface IncrementalSessionInput {
@@ -26,15 +31,13 @@ export interface IncrementalSessionInput {
   dbPath: string;
   workspaceId: string;
   projectId: string;
-  progressPath: string;
-  featureListPath: string;
-  planPath: string;
-  syncManifestPath: string;
+  artifacts: SessionArtifactReference[];
   mem0Enabled: boolean;
   campaignId?: string;
   preferredIssueId?: string;
   agentId?: string;
-  host?: string;
+  host: string;
+  hostCapabilities: HarnessHostCapabilities;
   leaseTtlSeconds?: number;
   checkpointFreshnessSeconds?: number;
   memoryQuery?: string;
@@ -75,13 +78,6 @@ export interface SessionMemoryContext {
   recalledMemories: MemorySearchResult[];
 }
 
-export interface SessionArtifactPaths {
-  progressPath: string;
-  featureListPath: string;
-  planPath: string;
-  syncManifestPath: string;
-}
-
 export interface SessionContext {
   sessionId: string;
   dbPath: string;
@@ -90,13 +86,14 @@ export interface SessionContext {
   campaignId?: string;
   agentId: string;
   host: string;
+  hostCapabilities: HarnessHostCapabilities;
   runId: string;
   leaseId: string;
   leaseExpiresAt: string;
   issueId: string;
   issueTask: string;
   claimMode: 'claim' | 'resume' | 'recovery';
-  artifacts: SessionArtifactPaths;
+  artifacts: SessionArtifactReference[];
   scope: MemoryScope;
   currentTaskStatus: TaskStatus;
   currentCheckpointId: string;
@@ -108,6 +105,7 @@ export interface SessionCheckpointInput {
   summary: string;
   taskStatus: TaskStatus;
   nextStep: string;
+  blockedReason?: string;
   artifactIds?: string[];
   persistToMem0?: boolean;
   memoryKind?: MemoryKind;

@@ -6,14 +6,8 @@ import { dirname, resolve } from 'node:path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const CURRENT_SCHEMA_VERSION = 3;
-const MINIMUM_SUPPORTED_VERSION = 2;
-
-type MigrationFn = (connection: DatabaseSync) => void;
-
-const MIGRATIONS: ReadonlyMap<number, MigrationFn> = new Map([
-  [2, migrateV2ToV3],
-]);
+const CURRENT_SCHEMA_VERSION = 5;
+const MINIMUM_SUPPORTED_VERSION = 5;
 
 const REQUIRED_TABLES = [
   'workspaces',
@@ -41,9 +35,36 @@ const REQUIRED_INDEXES = [
 const REQUIRED_COLUMNS = {
   workspaces: ['name', 'kind', 'created_at', 'updated_at'],
   projects: ['workspace_id', 'key', 'name', 'domain', 'status', 'created_at', 'updated_at'],
-  campaigns: ['status', 'scope_json', 'updated_at'],
+  campaigns: ['status', 'scope_json', 'policy_json', 'updated_at'],
   runs: ['workspace_id', 'project_id', 'session_type', 'host', 'status', 'started_at'],
-  issues: ['project_id', 'campaign_id', 'task', 'priority', 'status', 'size', 'depends_on', 'created_at'],
+  milestones: [
+    'project_id',
+    'description',
+    'priority',
+    'status',
+    'depends_on',
+    'deadline_at',
+    'recipients_json',
+    'approvals_json',
+    'external_refs_json',
+    'blocked_reason',
+  ],
+  issues: [
+    'project_id',
+    'campaign_id',
+    'task',
+    'priority',
+    'status',
+    'size',
+    'depends_on',
+    'deadline_at',
+    'recipients_json',
+    'approvals_json',
+    'external_refs_json',
+    'policy_json',
+    'blocked_reason',
+    'created_at',
+  ],
   leases: ['workspace_id', 'project_id', 'issue_id', 'agent_id', 'status', 'acquired_at', 'expires_at', 'last_heartbeat_at'],
   checkpoints: ['task_status', 'next_step', 'artifact_ids_json'],
   artifacts: ['workspace_id', 'project_id', 'campaign_id', 'issue_id', 'metadata_json'],
@@ -123,59 +144,14 @@ export function ensureHarnessSchema(
 
   const version = getUserVersion(connection);
 
-  if (version === 0) {
+  if (version !== CURRENT_SCHEMA_VERSION) {
     throw new Error(
-      'Detected an unversioned harness database (corrupted or pre-release). ' +
-        `Only schema v${MINIMUM_SUPPORTED_VERSION}–v${CURRENT_SCHEMA_VERSION} are supported. ` +
-        'Recreate the harness database from scratch.',
+      `Harness schema version mismatch: expected v${CURRENT_SCHEMA_VERSION}, got v${version}. ` +
+        `Backward compatibility is disabled. Please recreate the harness database.`,
     );
-  }
-
-  if (version > CURRENT_SCHEMA_VERSION) {
-    throw new Error(
-      `Harness schema version ${version} is newer than this runtime ` +
-        `(supports up to v${CURRENT_SCHEMA_VERSION}). Upgrade the harness-os package.`,
-    );
-  }
-
-  if (version < MINIMUM_SUPPORTED_VERSION) {
-    throw new Error(
-      `Harness schema version ${version} is too old for in-place migration. ` +
-        `This runtime supports v${MINIMUM_SUPPORTED_VERSION}–v${CURRENT_SCHEMA_VERSION}. ` +
-        'Recreate the harness database from scratch.',
-    );
-  }
-
-  if (version < CURRENT_SCHEMA_VERSION) {
-    applyMigrations(connection, version);
   }
 
   validateCurrentSchema(connection);
-}
-
-function applyMigrations(connection: DatabaseSync, fromVersion: number): void {
-  for (let v = fromVersion; v < CURRENT_SCHEMA_VERSION; v++) {
-    const migrate = MIGRATIONS.get(v);
-
-    if (migrate === undefined) {
-      throw new Error(
-        `No migration defined for v${v} → v${v + 1}. ` +
-          `Recreate the database with schema v${CURRENT_SCHEMA_VERSION}.`,
-      );
-    }
-
-    migrate(connection);
-    setUserVersion(connection, v + 1);
-  }
-}
-
-function migrateV2ToV3(connection: DatabaseSync): void {
-  if (hasTable(connection, 'leases') && !hasColumn(connection, 'leases', 'last_heartbeat_at')) {
-    connection.exec(`ALTER TABLE leases ADD COLUMN last_heartbeat_at TEXT`);
-  }
-  if (hasTable(connection, 'issues') && !hasColumn(connection, 'issues', 'created_at')) {
-    connection.exec(`ALTER TABLE issues ADD COLUMN created_at TEXT NOT NULL DEFAULT ''`);
-  }
 }
 
 function validateCurrentSchema(connection: DatabaseSync): void {

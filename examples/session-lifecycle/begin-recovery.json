@@ -1,15 +1,41 @@
 {
+  "contractVersion": "6.0.0",
   "action": "begin_recovery",
   "input": {
     "dbPath": "/absolute/path/to/harness.sqlite",
     "workspaceId": "workspace-1",
     "projectId": "project-1",
-    "progressPath": "/absolute/path/to/progress.md",
-    "featureListPath": "/absolute/path/to/feature-list.json",
-    "planPath": "/absolute/path/to/plan.md",
-    "syncManifestPath": "/absolute/path/to/SYNC_MANIFEST.yaml",
+    "artifacts": [
+      {
+        "kind": "session_handoff",
+        "path": "/absolute/path/to/progress.md"
+      },
+      {
+        "kind": "task_catalog",
+        "path": "/absolute/path/to/feature-list.json"
+      },
+      {
+        "kind": "execution_plan",
+        "path": "/absolute/path/to/plan.md"
+      },
+      {
+        "kind": "sync_manifest",
+        "path": "/absolute/path/to/SYNC_MANIFEST.yaml"
+      }
+    ],
     "mem0Enabled": true,
     "agentId": "copilot-cli",
+    "host": "local-host",
+    "hostCapabilities": {
+      "workloadClasses": [
+        "default",
+        "typescript"
+      ],
+      "capabilities": [
+        "node",
+        "sqlite"
+      ]
+    },
     "preferredIssueId": "issue-needs-recovery",
     "recoverySummary": "Recover the stale task by superseding the stale lease and reopening the task under a fresh recovery lease.",
     "recoveryNextStep": "Continue execution under the new recovery lease."

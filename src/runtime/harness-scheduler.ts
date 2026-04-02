@@ -3,14 +3,21 @@ import { readFileSync } from 'node:fs';
 
 import { z } from 'zod';
 
+import { harnessPolicySchema } from '../contracts/policy-contracts.js';
+import { harnessWorkflowMetadataSchema } from '../contracts/workflow-contracts.js';
+import { issuePrioritySchema } from '../contracts/task-domain.js';
 import {
   openHarnessDatabase,
   runInTransaction,
   runStatement,
   selectOne,
 } from '../db/store.js';
-
-const issuePriorityOrder = ['critical', 'high', 'medium', 'low'] as const;
+import { serializeHarnessPolicy } from './policy-engine.js';
+import {
+  serializeWorkItemApprovals,
+  serializeWorkItemExternalRefs,
+  serializeWorkItemRecipients,
+} from './work-item-metadata.js';
 
 export const harnessSchedulerJobSchema = z
   .object({
@@ -18,8 +25,13 @@ export const harnessSchedulerJobSchema = z
     cron: z.string().min(1),
     projectKey: z.string().min(1),
     campaignName: z.string().min(1),
-    priority: z.enum(issuePriorityOrder),
+    priority: issuePrioritySchema,
     size: z.string().min(1),
+    deadlineAt: harnessWorkflowMetadataSchema.shape.deadlineAt,
+    recipients: harnessWorkflowMetadataSchema.shape.recipients,
+    approvals: harnessWorkflowMetadataSchema.shape.approvals,
+    externalRefs: harnessWorkflowMetadataSchema.shape.externalRefs,
+    policy: harnessPolicySchema.optional(),
   })
   .strict();
 
@@ -140,19 +152,49 @@ export function runHarnessScheduler(
 
         runStatement(
           database.connection,
-          `INSERT INTO milestones (id, project_id, description, priority, status)
-           VALUES (?, ?, ?, ?, 'in_progress')`,
+          `INSERT INTO milestones (
+             id,
+             project_id,
+             description,
+             priority,
+             status,
+             deadline_at,
+             recipients_json,
+             approvals_json,
+             external_refs_json
+           )
+           VALUES (?, ?, ?, ?, 'in_progress', ?, ?, ?, ?)`,
           [
             milestoneId,
             project.id,
             `Scheduled task: ${job.task}`,
             job.priority,
+            job.deadlineAt ?? null,
+            serializeWorkItemRecipients(job.recipients),
+            serializeWorkItemApprovals(job.approvals),
+            serializeWorkItemExternalRefs(job.externalRefs),
           ],
         );
         runStatement(
           database.connection,
-          `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, '[]', ?)`,
+          `INSERT INTO issues (
+             id,
+             project_id,
+             campaign_id,
+             milestone_id,
+             task,
+             priority,
+             status,
+             size,
+             depends_on,
+             deadline_at,
+             recipients_json,
+             approvals_json,
+             external_refs_json,
+             policy_json,
+             created_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, '[]', ?, ?, ?, ?, ?, ?)`,
           [
             issueId,
             project.id,
@@ -161,6 +203,11 @@ export function runHarnessScheduler(
             job.task,
             job.priority,
             job.size,
+            job.deadlineAt ?? null,
+            serializeWorkItemRecipients(job.recipients),
+            serializeWorkItemApprovals(job.approvals),
+            serializeWorkItemExternalRefs(job.externalRefs),
+            serializeHarnessPolicy(job.policy),
             new Date().toISOString(),
           ],
         );

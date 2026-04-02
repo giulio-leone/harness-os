@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "catalogId": "research-workspace-template-live-v1",
+  "projectIntent": "Reference live catalog for a research workspace that moves from source discovery to synthesis and publication handoff.",
+  "sourceContext": [
+    "CONTEXT.MD",
+    "JOBS.MD",
+    "NETWORK.MD",
+    "research-brief.md",
+    "source-map.md"
+  ],
+  "workspace": {
+    "id": "workspace-template-research",
+    "name": "research-workspace-template",
+    "kind": "bootstrap-template"
+  },
+  "project": {
+    "id": "project-template-research",
+    "key": "research-workspace-template",
+    "name": "Research Workspace Template",
+    "domain": "research-insight-lifecycle",
+    "status": "active"
+  },
+  "campaigns": [
+    {
+      "id": "mission-research-discovery",
+      "name": "research-discovery",
+      "objective": "Capture primary sources and normalize them into a canonical backlog of research topics and findings.",
+      "status": "active",
+      "scope": {
+        "sources": ["industry reports", "expert interviews", "product docs"],
+        "qualityBar": "Every finding must cite a primary source and declare confidence.",
+        "sourceContext": ["CONTEXT.MD", "JOBS.MD", "source-map.md"]
+      }
+    },
+    {
+      "id": "mission-research-synthesis",
+      "name": "research-synthesis",
+      "objective": "Draft the insight brief, assemble evidence, and route it through peer review.",
+      "status": "active",
+      "scope": {
+        "executionBias": "evidence-first",
+        "supportAssets": ["research-brief.md", "source-map.md"],
+        "sourceContext": ["CONTEXT.MD", "JOBS.MD", "research-brief.md"]
+      }
+    },
+    {
+      "id": "mission-research-handoff",
+      "name": "research-handoff",
+      "objective": "Publish the approved brief and capture open questions or follow-up monitoring work.",
+      "status": "active",
+      "scope": {
+        "channels": ["exec-review", "insight-archive"],
+        "sourceContext": ["CONTEXT.MD", "NETWORK.MD", "research-brief.md"]
+      }
+    }
+  ],
+  "issues": [
+    {
+      "id": "issue-research-discovery-batch",
+      "campaignId": "mission-research-discovery",
+      "task": "Capture the first batch of sources, extract findings, and rank the top research questions.",
+      "priority": "high",
+      "status": "ready",
+      "size": "S",
+      "dependsOn": [],
+      "nextBestAction": "Use the ranked findings to unlock the first synthesis brief.",
+      "deadlineAt": "2026-05-05T16:00:00.000Z",
+      "recipients": [
+        { "id": "lead-analyst", "kind": "person", "label": "Lead analyst", "role": "research-lead" }
+      ],
+      "externalRefs": [
+        { "id": "source-board", "kind": "board", "value": "research://boards/q2-adoption-scan", "label": "Source board" }
+      ]
+    },
+    {
+      "id": "issue-research-synthesis-draft",
+      "campaignId": "mission-research-synthesis",
+      "task": "Draft the research brief from the highest-confidence findings and link the supporting evidence.",
+      "priority": "medium",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-research-discovery-batch"
+      ],
+      "nextBestAction": "Promote this issue after the discovery batch is captured and ranked.",
+      "deadlineAt": "2026-05-06T11:00:00.000Z",
+      "recipients": [
+        { "id": "lead-analyst", "kind": "person", "label": "Lead analyst", "role": "author" },
+        { "id": "peer-reviewer", "kind": "person", "label": "Peer reviewer", "role": "reviewer" }
+      ],
+      "approvals": [
+        {
+          "id": "peer-review-gate",
+          "label": "Peer review sign-off",
+          "recipientIds": ["peer-reviewer"],
+          "required": true,
+          "state": "pending",
+          "note": "Required before the brief is distributed outside the research team."
+        }
+      ],
+      "externalRefs": [
+        { "id": "brief-doc", "kind": "document", "value": "research://briefs/q2-adoption", "label": "Draft brief" },
+        { "id": "evidence-folder", "kind": "folder", "value": "research://evidence/q2-adoption", "label": "Evidence folder" }
+      ]
+    },
+    {
+      "id": "issue-research-peer-review",
+      "campaignId": "mission-research-synthesis",
+      "task": "Run peer review, capture requested changes, and update approval state for the draft brief.",
+      "priority": "medium",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-research-synthesis-draft"
+      ],
+      "nextBestAction": "Claim this issue when the draft brief is ready for review.",
+      "deadlineAt": "2026-05-06T18:00:00.000Z",
+      "recipients": [
+        { "id": "peer-reviewer", "kind": "person", "label": "Peer reviewer", "role": "reviewer" },
+        { "id": "insight-owner", "kind": "person", "label": "Insight owner", "role": "stakeholder" }
+      ],
+      "approvals": [
+        {
+          "id": "peer-review-gate",
+          "label": "Peer review sign-off",
+          "recipientIds": ["peer-reviewer"],
+          "required": true,
+          "state": "pending"
+        }
+      ],
+      "externalRefs": [
+        { "id": "review-doc", "kind": "document", "value": "research://reviews/q2-adoption", "label": "Review notes" }
+      ]
+    },
+    {
+      "id": "issue-research-publish-handoff",
+      "campaignId": "mission-research-handoff",
+      "task": "Publish the approved brief, archive the source bundle, and capture follow-up questions for the next cycle.",
+      "priority": "low",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-research-peer-review"
+      ],
+      "nextBestAction": "Promote this issue when the peer-review gate is complete.",
+      "deadlineAt": "2026-05-07T12:00:00.000Z",
+      "recipients": [
+        { "id": "insight-owner", "kind": "person", "label": "Insight owner", "role": "audience-owner" }
+      ],
+      "externalRefs": [
+        { "id": "archive", "kind": "archive", "value": "research://archives/q2-adoption", "label": "Insight archive" }
+      ]
+    }
+  ]
+}

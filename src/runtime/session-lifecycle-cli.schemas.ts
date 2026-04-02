@@ -6,6 +6,16 @@ import {
   publicMemoryRecordSchema,
 } from '../contracts/memory-contracts.js';
 import { taskStatusSchema } from '../contracts/task-domain.js';
+import { harnessHostCapabilitiesSchema } from '../contracts/policy-contracts.js';
+
+export const SESSION_LIFECYCLE_CLI_CONTRACT_VERSION = '6.0.0' as const;
+
+export const sessionArtifactReferenceSchema = z
+  .object({
+    kind: z.string().min(1),
+    path: z.string().min(1),
+  })
+  .strict();
 
 export const sessionMemoryContextSchema = z
   .object({
@@ -26,20 +36,14 @@ export const sessionContextSchema = z
     campaignId: z.string().min(1).optional(),
     agentId: z.string().min(1),
     host: z.string().min(1),
+    hostCapabilities: harnessHostCapabilitiesSchema,
     runId: z.string().min(1),
     leaseId: z.string().min(1),
     leaseExpiresAt: z.string().datetime({ offset: true }),
     issueId: z.string().min(1),
     issueTask: z.string().min(1),
     claimMode: z.enum(['claim', 'resume', 'recovery']),
-    artifacts: z
-      .object({
-        progressPath: z.string().min(1),
-        featureListPath: z.string().min(1),
-        planPath: z.string().min(1),
-        syncManifestPath: z.string().min(1),
-      })
-      .strict(),
+    artifacts: z.array(sessionArtifactReferenceSchema).min(1),
     scope: z
       .object({
         workspace: z.string().min(1),
@@ -67,15 +71,13 @@ export const incrementalSessionInputSchema = z
     dbPath: z.string().min(1).optional(),
     workspaceId: z.string().min(1),
     projectId: z.string().min(1),
-    progressPath: z.string().min(1),
-    featureListPath: z.string().min(1),
-    planPath: z.string().min(1),
-    syncManifestPath: z.string().min(1),
+    artifacts: z.array(sessionArtifactReferenceSchema).min(1),
     mem0Enabled: z.boolean(),
     campaignId: z.string().min(1).optional(),
     preferredIssueId: z.string().min(1).optional(),
     agentId: z.string().min(1).optional(),
-    host: z.string().min(1).optional(),
+    host: z.string().min(1),
+    hostCapabilities: harnessHostCapabilitiesSchema,
     leaseTtlSeconds: z.number().int().positive().optional(),
     checkpointFreshnessSeconds: z.number().int().positive().optional(),
     memoryQuery: z.string().min(1).optional(),
@@ -90,12 +92,13 @@ export const recoverySessionInputSchema = incrementalSessionInputSchema
   })
   .strict();
 
-export const sessionCheckpointInputSchema = z
+const sessionCheckpointInputBaseSchema = z
   .object({
     title: z.string().min(1),
     summary: z.string().min(1),
     taskStatus: taskStatusSchema,
     nextStep: z.string().min(1),
+    blockedReason: z.string().min(1).optional(),
     artifactIds: z.array(z.string().min(1)).optional(),
     persistToMem0: z.boolean().optional(),
     memoryKind: memoryKindSchema.optional(),
@@ -104,27 +107,58 @@ export const sessionCheckpointInputSchema = z
   })
   .strict();
 
-export const sessionCloseInputSchema = sessionCheckpointInputSchema
-  .extend({
-    releaseLease: z.boolean().optional(),
-  })
-  .strict();
+function withBlockedReasonValidation<
+  TSchema extends z.ZodType<{
+    taskStatus: z.infer<typeof taskStatusSchema>;
+    blockedReason?: string;
+  }>
+>(schema: TSchema): TSchema {
+  return schema.superRefine((input, ctx) => {
+    if (input.blockedReason !== undefined && input.taskStatus !== 'blocked') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['blockedReason'],
+        message: 'blockedReason can only be provided when taskStatus is blocked.',
+      });
+    }
+  }) as TSchema;
+}
 
-export const inspectOverviewInputSchema = z
+export const sessionCheckpointInputSchema = withBlockedReasonValidation(
+  sessionCheckpointInputBaseSchema,
+);
+
+export const sessionCloseInputSchema = withBlockedReasonValidation(
+  sessionCheckpointInputBaseSchema
+    .extend({
+      releaseLease: z.boolean().optional(),
+    })
+    .strict(),
+);
+
+export const inspectExportInputSchema = z
   .object({
     dbPath: z.string().min(1).optional(),
     projectId: z.string().min(1),
     campaignId: z.string().min(1).optional(),
     runLimit: z.number().int().positive().max(100).optional(),
+    eventLimit: z.number().int().positive().max(100).optional(),
   })
   .strict();
 
-export const inspectIssueInputSchema = z
+export const inspectAuditInputSchema = z
   .object({
     dbPath: z.string().min(1).optional(),
     issueId: z.string().min(1),
-    includeEvents: z.boolean().optional(),
     eventLimit: z.number().int().positive().max(100).optional(),
+  })
+  .strict();
+
+export const inspectHealthSnapshotInputSchema = z
+  .object({
+    dbPath: z.string().min(1).optional(),
+    projectId: z.string().min(1),
+    campaignId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -139,18 +173,21 @@ export const queuePromotionInputSchema = z
 export const sessionLifecycleCommandSchema = z.discriminatedUnion('action', [
   z
     .object({
+      contractVersion: z.literal(SESSION_LIFECYCLE_CLI_CONTRACT_VERSION),
       action: z.literal('begin_incremental'),
       input: incrementalSessionInputSchema,
     })
     .strict(),
   z
     .object({
+      contractVersion: z.literal(SESSION_LIFECYCLE_CLI_CONTRACT_VERSION),
       action: z.literal('begin_recovery'),
       input: recoverySessionInputSchema,
     })
     .strict(),
   z
     .object({
+      contractVersion: z.literal(SESSION_LIFECYCLE_CLI_CONTRACT_VERSION),
       action: z.literal('checkpoint'),
       context: sessionContextSchema,
       input: sessionCheckpointInputSchema,
@@ -158,6 +195,7 @@ export const sessionLifecycleCommandSchema = z.discriminatedUnion('action', [
     .strict(),
   z
     .object({
+      contractVersion: z.literal(SESSION_LIFECYCLE_CLI_CONTRACT_VERSION),
       action: z.literal('close'),
       context: sessionContextSchema,
       input: sessionCloseInputSchema,
@@ -165,18 +203,28 @@ export const sessionLifecycleCommandSchema = z.discriminatedUnion('action', [
     .strict(),
   z
     .object({
-      action: z.literal('inspect_overview'),
-      input: inspectOverviewInputSchema,
+      contractVersion: z.literal(SESSION_LIFECYCLE_CLI_CONTRACT_VERSION),
+      action: z.literal('inspect_export'),
+      input: inspectExportInputSchema,
     })
     .strict(),
   z
     .object({
-      action: z.literal('inspect_issue'),
-      input: inspectIssueInputSchema,
+      contractVersion: z.literal(SESSION_LIFECYCLE_CLI_CONTRACT_VERSION),
+      action: z.literal('inspect_audit'),
+      input: inspectAuditInputSchema,
     })
     .strict(),
   z
     .object({
+      contractVersion: z.literal(SESSION_LIFECYCLE_CLI_CONTRACT_VERSION),
+      action: z.literal('inspect_health_snapshot'),
+      input: inspectHealthSnapshotInputSchema,
+    })
+    .strict(),
+  z
+    .object({
+      contractVersion: z.literal(SESSION_LIFECYCLE_CLI_CONTRACT_VERSION),
       action: z.literal('promote_queue'),
       input: queuePromotionInputSchema,
     })

@@ -65,18 +65,26 @@ export class SessionLifecycleAdapter {
             command.input,
           ),
         };
-      case 'inspect_overview':
+      case 'inspect_export':
         return {
           action: command.action,
-          result: this.inspector.inspectOverview({
+          result: this.inspector.inspectExport({
             ...command.input,
             dbPath: resolveDbPath(command.input.dbPath),
           }),
         };
-      case 'inspect_issue':
+      case 'inspect_audit':
         return {
           action: command.action,
-          result: this.inspector.inspectIssue({
+          result: this.inspector.inspectAudit({
+            ...command.input,
+            dbPath: resolveDbPath(command.input.dbPath),
+          }),
+        };
+      case 'inspect_health_snapshot':
+        return {
+          action: command.action,
+          result: this.inspector.inspectHealthSnapshot({
             ...command.input,
             dbPath: resolveDbPath(command.input.dbPath),
           }),

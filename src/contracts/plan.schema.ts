@@ -5,6 +5,7 @@ import {
   taskStatusSchema,
   tShirtSizeSchema,
 } from './task-domain.js';
+import { harnessWorkflowMetadataSchema } from './workflow-contracts.js';
 
 export const IssuePrioritySchema = issuePrioritySchema;
 export const IssueStatusSchema = taskStatusSchema;
@@ -19,6 +20,10 @@ export const IssueSchema: z.ZodType<any> = z.lazy(() =>
     status: IssueStatusSchema,
     size: TShirtSizeSchema,
     depends_on: z.array(z.string()),
+    deadlineAt: harnessWorkflowMetadataSchema.shape.deadlineAt,
+    recipients: harnessWorkflowMetadataSchema.shape.recipients,
+    approvals: harnessWorkflowMetadataSchema.shape.approvals,
+    externalRefs: harnessWorkflowMetadataSchema.shape.externalRefs,
     children: z.record(z.string(), IssueSchema).default({}),
   })
 );
@@ -29,6 +34,10 @@ export const MilestoneSchema = z.object({
   priority: IssuePrioritySchema,
   status: MilestoneStatusSchema,
   depends_on: z.array(z.string()),
+  deadlineAt: harnessWorkflowMetadataSchema.shape.deadlineAt,
+  recipients: harnessWorkflowMetadataSchema.shape.recipients,
+  approvals: harnessWorkflowMetadataSchema.shape.approvals,
+  externalRefs: harnessWorkflowMetadataSchema.shape.externalRefs,
   issues: z.record(z.string(), IssueSchema),
 });
 

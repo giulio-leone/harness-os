@@ -2,6 +2,8 @@
 
 This template extracts the reusable bootstrap surface from a real consumer workspace without carrying over live proof artifacts, personal assets, or machine-specific paths.
 
+It is the generic reference workspace for the `assistant` workload profile when one host needs the full bundled skill surface instead of a narrower specialization.
+
 ## What is included
 
 - portable bootstrap scripts
@@ -9,6 +11,12 @@ This template extracts the reusable bootstrap surface from a real consumer works
 - prompt/schema/workflow placeholders
 - a template live catalog with dependency-driven issues
 - preview-first wrappers for dry-run, live claim, and queue promotion
+
+## Best paired workload profile
+
+```bash
+harness-install-mcp --host copilot --workload-profile assistant
+```
 
 ## What you must customize
 

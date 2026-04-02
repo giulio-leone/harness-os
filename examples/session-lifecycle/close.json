@@ -1,4 +1,5 @@
 {
+  "contractVersion": "6.0.0",
   "action": "close",
   "context": {
     "sessionId": "session-001",
@@ -7,12 +8,40 @@
     "projectId": "project-1",
     "agentId": "copilot-cli",
     "host": "local-host",
+    "hostCapabilities": {
+      "workloadClasses": [
+        "default",
+        "typescript"
+      ],
+      "capabilities": [
+        "node",
+        "sqlite"
+      ]
+    },
     "runId": "session-001",
     "leaseId": "lease-001",
     "leaseExpiresAt": "2026-03-21T00:30:00.000Z",
     "issueId": "issue-1",
     "issueTask": "Stabilize lifecycle runtime",
     "claimMode": "claim",
+    "artifacts": [
+      {
+        "kind": "session_handoff",
+        "path": "/absolute/path/to/progress.md"
+      },
+      {
+        "kind": "task_catalog",
+        "path": "/absolute/path/to/feature-list.json"
+      },
+      {
+        "kind": "execution_plan",
+        "path": "/absolute/path/to/plan.md"
+      },
+      {
+        "kind": "sync_manifest",
+        "path": "/absolute/path/to/SYNC_MANIFEST.yaml"
+      }
+    ],
     "scope": {
       "workspace": "workspace-1",
       "project": "project-1",

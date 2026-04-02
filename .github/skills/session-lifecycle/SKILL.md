@@ -1,7 +1,7 @@
 ---
 name: session-lifecycle
 description: "Operational session protocol for task-scoped leases, reconciliation, checkpoints, inspection, queue promotion, and handoff across long-running work."
-version: "2.0.1"
+version: "6.0.0"
 ---
 
 # Session Lifecycle
@@ -29,6 +29,7 @@ Enforce the operational protocol for long-running work when a single task or lea
 9. mem0 is read on begin or recovery and written only on significant checkpoints or close, with canonical scope tags and links back to SQLite evidence.
 10. Queue promotion belongs to the lifecycle layer: eligible dependent issues may be promoted automatically on `close(done)` or explicitly through `promote_queue`, and promotion must respect both issue-level and milestone-level dependency gates.
 11. New queue work must be imported through the canonical batch-first `harness_orchestrator(action: "plan_issues")` contract using `milestones[]`; do not rely on the removed legacy single-milestone payload.
+12. Host-routed claims are explicit: `begin_incremental`, `begin_recovery`, and host-aware `next_action` calls must carry `host` plus `hostCapabilities` so workload-class dispatch stays deterministic and explainable.
 
 ## Runtime Surface
 The verified runtime in `agent-harness-core` exposes:
@@ -36,8 +37,9 @@ The verified runtime in `agent-harness-core` exposes:
 - `begin_recovery`
 - `checkpoint`
 - `close`
-- `inspect_overview`
-- `inspect_issue`
+- `inspect_export`
+- `inspect_audit`
+- `inspect_health_snapshot`
 - `promote_queue`
 
 Host-facing surfaces:
@@ -51,13 +53,13 @@ Example fixtures live under `examples/session-lifecycle/`.
 1. Read the global `AGENTS.MD` contract and any explicit local `AGENTS.md` overrides.
 2. Run reconciliation before selecting work: inspect `in_progress` issues, lease expiry, and checkpoint freshness.
 3. Resolve or escalate stale work first. Do not claim new work while recovery remains open.
-4. Select the next ready issue from SQLite and claim or resume its lease.
+4. Provide explicit host routing context, then select the next ready issue from SQLite and claim or resume its lease.
 5. Write the initial checkpoint immediately after claim.
 6. Load mem0 context if available and relevant for begin or recovery.
 7. Hand execution to the relevant project or domain skill for the assigned issue only.
 8. Write a checkpoint on every `task_status` change.
 9. On `close(done)`, allow lifecycle-driven queue promotion to advance newly eligible dependent issues and newly eligible dependent milestones.
-10. Use `inspect_overview` or `inspect_issue` for read-only state inspection; do not mutate canonical state from ad-hoc scripts when inspection is enough.
+10. Use `inspect_export`, `inspect_audit`, or `inspect_health_snapshot` for read-only state inspection; do not mutate canonical state from ad-hoc scripts when inspection is enough.
 11. Before release, close, or handoff, write the final checkpoint and persist any allowed mem0 summary.
 
 ## Implementation Hooks
@@ -92,6 +94,10 @@ Example fixtures live under `examples/session-lifecycle/`.
 - `interaction-loop` — governs decision checkpoints with the user
 
 ## Version Notes
+- `6.0.0` — replaced the coding-specific `progressPath` / `featureListPath` / `planPath` / `syncManifestPath` claim contract with a generic `artifacts[{ kind, path }]` surface while keeping host-aware routing requirements unchanged.
+- `5.0.0` — made host-aware dispatch a hard public contract: `begin_incremental`, `begin_recovery`, and host-aware `next_action` calls now require explicit `host` and `hostCapabilities`, and lifecycle dispatch enforces policy-driven workload-class routing.
+- `4.0.0` — hard-cut the public observability contract to `inspect_export`, `inspect_audit`, and `inspect_health_snapshot`, and require `contractVersion: "4.0.0"` on every session-lifecycle CLI payload.
+- `3.0.0` — replaced the old `inspect_overview` / `inspect_issue` read-only surface with `inspect_export`, `inspect_audit`, and `inspect_health_snapshot` so observability exports, audit trails, and health snapshots are first-class runtime contracts.
 - `2.0.1` — `harness_session(action: "begin")` and `begin_recovery` now auto-generate `sessionId` when omitted, so MCP callers no longer fail on missing run IDs.
 - `2.0.0` — made queue planning batch-first only, documented milestone-gated promotion, and removed the legacy single-milestone import payload from the skill contract.
 - `1.1.0` — promoted `agent-harness-core` to the repo-native source of truth, documented `inspect_overview`, `inspect_issue`, explicit `promote_queue`, and automatic queue promotion on `close(done)`.

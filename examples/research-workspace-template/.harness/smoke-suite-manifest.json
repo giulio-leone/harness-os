@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "projectId": "research-workspace-template",
+  "verificationMode": "summary-checks",
+  "runner": ".harness/run-smoke-suites.js",
+  "suites": []
+}

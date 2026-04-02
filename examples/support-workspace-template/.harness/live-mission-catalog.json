@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "catalogId": "support-workspace-template-live-v1",
+  "projectIntent": "Reference live catalog for a support workspace that moves from case intake to resolution and customer follow-through.",
+  "sourceContext": [
+    "CONTEXT.MD",
+    "JOBS.MD",
+    "NETWORK.MD",
+    "case-brief.md",
+    "escalation-notes.md"
+  ],
+  "workspace": {
+    "id": "workspace-template-support",
+    "name": "support-workspace-template",
+    "kind": "bootstrap-template"
+  },
+  "project": {
+    "id": "project-template-support",
+    "key": "support-workspace-template",
+    "name": "Support Workspace Template",
+    "domain": "support-case-lifecycle",
+    "status": "active"
+  },
+  "campaigns": [
+    {
+      "id": "mission-support-triage",
+      "name": "support-triage",
+      "objective": "Capture support cases and normalize them into a canonical queue with clear next actions.",
+      "status": "active",
+      "scope": {
+        "sources": ["ticket queues", "chat escalations", "email handoffs"],
+        "qualityBar": "Every resolution path must include customer-safe wording and escalation criteria.",
+        "sourceContext": ["CONTEXT.MD", "JOBS.MD", "NETWORK.MD"]
+      }
+    },
+    {
+      "id": "mission-support-resolution",
+      "name": "support-resolution",
+      "objective": "Prepare the investigation plan, collect approvals when needed, and execute the support response.",
+      "status": "active",
+      "scope": {
+        "executionBias": "customer-safe",
+        "supportAssets": ["case-brief.md", "escalation-notes.md"],
+        "sourceContext": ["CONTEXT.MD", "JOBS.MD", "case-brief.md", "escalation-notes.md"]
+      }
+    },
+    {
+      "id": "mission-support-follow-up",
+      "name": "support-follow-up",
+      "objective": "Confirm resolution, capture knowledge-base follow-up, and preserve the customer handoff.",
+      "status": "active",
+      "scope": {
+        "channels": ["support-escalations", "customer-success"],
+        "sourceContext": ["CONTEXT.MD", "NETWORK.MD", "case-brief.md"]
+      }
+    }
+  ],
+  "issues": [
+    {
+      "id": "issue-support-intake-triage",
+      "campaignId": "mission-support-triage",
+      "task": "Triage the first batch of cases and assign the next best action for each one.",
+      "priority": "high",
+      "status": "ready",
+      "size": "S",
+      "dependsOn": [],
+      "nextBestAction": "Use the ranked case queue to unlock the first investigation plan.",
+      "deadlineAt": "2026-05-05T10:00:00.000Z",
+      "recipients": [
+        { "id": "case-owner", "kind": "person", "label": "Case owner", "role": "triage-owner" }
+      ],
+      "externalRefs": [
+        { "id": "ticket-queue", "kind": "queue", "value": "support://queues/p1-triage", "label": "Priority queue" }
+      ]
+    },
+    {
+      "id": "issue-support-investigation-plan",
+      "campaignId": "mission-support-resolution",
+      "task": "Prepare the investigation plan, escalation path, and response package for the highest-priority case.",
+      "priority": "medium",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-support-intake-triage"
+      ],
+      "nextBestAction": "Promote this issue after intake triage ranks the first case batch.",
+      "deadlineAt": "2026-05-05T12:00:00.000Z",
+      "recipients": [
+        { "id": "case-owner", "kind": "person", "label": "Case owner", "role": "owner" },
+        { "id": "escalation-manager", "kind": "person", "label": "Escalation manager", "role": "approver" }
+      ],
+      "approvals": [
+        {
+          "id": "escalation-gate",
+          "label": "Escalation approval",
+          "recipientIds": ["escalation-manager"],
+          "required": true,
+          "state": "pending",
+          "note": "Required before contacting an external dependency or promising a workaround."
+        }
+      ],
+      "externalRefs": [
+        { "id": "ticket", "kind": "ticket", "value": "support://cases/p1-auth-loop", "label": "Primary ticket" },
+        { "id": "kb-draft", "kind": "document", "value": "support://kb/drafts/auth-loop", "label": "KB draft" }
+      ]
+    },
+    {
+      "id": "issue-support-response-execute",
+      "campaignId": "mission-support-resolution",
+      "task": "Execute the approved response, preserve customer-safe evidence, and block explicitly if escalation fails.",
+      "priority": "medium",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-support-investigation-plan"
+      ],
+      "nextBestAction": "Claim this issue when the investigation plan is approved.",
+      "deadlineAt": "2026-05-05T15:00:00.000Z",
+      "recipients": [
+        { "id": "case-owner", "kind": "person", "label": "Case owner", "role": "executor" },
+        { "id": "customer-success", "kind": "group", "label": "Customer success", "role": "stakeholder" }
+      ],
+      "approvals": [
+        {
+          "id": "escalation-gate",
+          "label": "Escalation approval",
+          "recipientIds": ["case-owner"],
+          "required": true,
+          "state": "approved"
+        }
+      ],
+      "externalRefs": [
+        { "id": "response-draft", "kind": "message", "value": "support://responses/p1-auth-loop", "label": "Customer response draft" }
+      ]
+    },
+    {
+      "id": "issue-support-resolution-confirm",
+      "campaignId": "mission-support-follow-up",
+      "task": "Confirm resolution, capture KB follow-up, and record any remaining customer actions.",
+      "priority": "low",
+      "status": "pending",
+      "size": "S",
+      "dependsOn": [
+        "issue-support-response-execute"
+      ],
+      "nextBestAction": "Promote this issue when the support response has been executed.",
+      "deadlineAt": "2026-05-06T09:00:00.000Z",
+      "recipients": [
+        { "id": "case-owner", "kind": "person", "label": "Case owner", "role": "owner" }
+      ],
+      "externalRefs": [
+        { "id": "kb-entry", "kind": "kb", "value": "support://kb/auth-loop", "label": "KB entry" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "bindings": [
+    {
+      "id": "support-binding",
+      "promptFixtureId": "support-prompt",
+      "promptFixturePath": ".harness/fixtures/template.prompt.txt",
+      "domain": "support-case-lifecycle",
+      "schemaPath": ".harness/schemas/domain-schema.json",
+      "workflowPath": ".harness/mission-workflows/workflow.json",
+      "sourceContext": [
+        "CONTEXT.MD",
+        "JOBS.MD",
+        "NETWORK.MD",
+        "case-brief.md",
+        "escalation-notes.md"
+      ],
+      "requiredDomainEntities": [
+        "cases",
+        "responses",
+        "stakeholders",
+        "kb_notes"
+      ],
+      "campaignBindings": [
+        {
+          "campaignId": "mission-support-triage",
+          "issueIds": [
+            "issue-support-triage-batch"
+          ],
+          "promptRules": [
+            "Capture the first structured batch from the chosen support source",
+            "Normalize the captured records into canonical case state",
+            "Assign one next best action per case"
+          ],
+          "requiredOutputs": [
+            "ranked cases",
+            "priority signal",
+            "next best action"
+          ]
+        },
+        {
+          "campaignId": "mission-support-resolution",
+          "issueIds": [
+            "issue-support-investigation-plan",
+            "issue-support-response-execute"
+          ],
+          "promptRules": [
+            "Prepare the investigation package and escalation path",
+            "Record the approval state and response chosen",
+            "Preserve customer-safe evidence or blocking context"
+          ],
+          "requiredOutputs": [
+            "investigation plan",
+            "response evidence",
+            "updated next best action"
+          ]
+        },
+        {
+          "campaignId": "mission-support-follow-up",
+          "issueIds": [
+            "issue-support-resolution-confirm"
+          ],
+          "promptRules": [
+            "Record the customer follow-through state",
+            "Capture any knowledge-base or stakeholder note",
+            "Set the next best action and follow-up timing"
+          ],
+          "requiredOutputs": [
+            "follow-up note",
+            "kb update",
+            "next best action"
+          ]
+        }
+      ],
+      "validationSuites": [],
+      "requiredMemoryKinds": [
+        "case-summary",
+        "escalation-summary",
+        "follow-up-note"
+      ],
+      "operatingRules": [
+        "database-primary-source-of-truth",
+        "mem0-support-only",
+        "customer-safe-summary-required",
+        "operator-defensible-output"
+      ]
+    }
+  ]
+}

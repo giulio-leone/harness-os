@@ -1,9 +1,9 @@
 {
-  "action": "inspect_issue",
+  "contractVersion": "6.0.0",
+  "action": "inspect_audit",
   "input": {
     "dbPath": "/absolute/path/to/harness.sqlite",
     "issueId": "issue-1",
-    "includeEvents": true,
-    "eventLimit": 20
+    "eventLimit": 50
   }
 }

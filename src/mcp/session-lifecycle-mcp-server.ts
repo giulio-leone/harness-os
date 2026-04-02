@@ -5,14 +5,12 @@ import { fileURLToPath } from 'node:url';
 
 import { z } from 'zod';
 
+import type { HarnessHostCapabilities } from '../contracts/policy-contracts.js';
+import type { WorkloadProfileId } from '../contracts/workload-profiles.js';
 import { SessionLifecycleAdapter } from '../runtime/session-lifecycle-adapter.js';
 import { loadDefaultMem0Adapter } from '../runtime/default-mem0-loader.js';
 import {
   createHarnessCampaign,
-  harnessCreateCampaignInputSchema,
-  harnessInitWorkspaceInputSchema,
-  harnessPlanIssuesInputSchema,
-  harnessRollbackIssueInputSchema,
   initHarnessWorkspace,
   planHarnessIssues,
   rollbackHarnessIssue,
@@ -27,15 +25,27 @@ import {
   SessionTokenStore,
 } from '../runtime/harness-agentic-helpers.js';
 import { getHarnessCapabilityCatalog } from '../runtime/harness-capability-catalog.js';
+import {
+  buildIssuePolicySurface,
+  evaluateIssueDispatchState,
+  normalizeHarnessHostCapabilities,
+  sortIssuesForDispatch,
+} from '../runtime/policy-engine.js';
+import { buildWorkItemMetadataSurface } from '../runtime/work-item-metadata.js';
+import { isWorkloadProfileId } from '../runtime/workload-profile-registry.js';
+import {
+  getHarnessToolContract,
+  getHarnessToolInputJsonSchema,
+  harnessAdminInputSchema,
+  harnessArtifactsInputSchema,
+  harnessInspectorInputSchema,
+  harnessOrchestratorInputSchema,
+  harnessSessionInputSchema,
+} from '../runtime/harness-tool-contracts.js';
 import type { SessionContext } from '../contracts/session-contracts.js';
 import {
   incrementalSessionInputSchema,
-  inspectIssueInputSchema,
-  inspectOverviewInputSchema,
-  queuePromotionInputSchema,
-  recoverySessionInputSchema,
-  sessionCheckpointInputSchema,
-  sessionCloseInputSchema,
+  SESSION_LIFECYCLE_CLI_CONTRACT_VERSION,
 } from '../runtime/session-lifecycle-cli.schemas.js';
 import {
   openHarnessDatabase,
@@ -88,80 +98,14 @@ const toolCallParamsSchema = z
   })
   .passthrough();
 
-// ─── Checkpoint / Close shared input schema (JSON Schema) ────────
-
-const checkpointInputJsonSchema = {
-  type: 'object',
-  properties: {
-    title: { type: 'string' },
-    summary: { type: 'string' },
-    taskStatus: {
-      type: 'string',
-      enum: ['pending', 'ready', 'in_progress', 'blocked', 'needs_recovery', 'done', 'failed'],
-    },
-    nextStep: { type: 'string' },
-    artifactIds: { type: 'array', items: { type: 'string' } },
-    persistToMem0: { type: 'boolean' },
-    memoryKind: {
-      type: 'string',
-      enum: ['decision', 'preference', 'summary', 'artifact_context', 'note'],
-    },
-    memoryContent: { type: 'string' },
-    metadata: { type: 'object' },
-  },
-  required: ['title', 'summary', 'taskStatus', 'nextStep'],
-} as const;
-
-const closeInputJsonSchema = {
-  ...checkpointInputJsonSchema,
-  properties: {
-    ...checkpointInputJsonSchema.properties,
-    releaseLease: { type: 'boolean' },
-  },
-} as const;
-
-// ─── Begin session shared properties (JSON Schema) ───────────────
-
-const beginSessionProperties = {
-  sessionId: {
-    type: 'string',
-    description: 'Optional caller-provided run identifier. Auto-generated when omitted.',
-  },
-  dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
-  workspaceId: { type: 'string' },
-  projectId: { type: 'string' },
-  progressPath: { type: 'string' },
-  featureListPath: { type: 'string' },
-  planPath: { type: 'string' },
-  syncManifestPath: { type: 'string' },
-  mem0Enabled: { type: 'boolean' },
-  campaignId: { type: 'string' },
-  preferredIssueId: { type: 'string' },
-  agentId: { type: 'string' },
-  host: { type: 'string' },
-  leaseTtlSeconds: { type: 'integer', minimum: 1 },
-  checkpointFreshnessSeconds: { type: 'integer', minimum: 1 },
-  memoryQuery: { type: 'string' },
-  memorySearchLimit: { type: 'integer', minimum: 1, maximum: 25 },
-} as const;
-
 // ─── Server ─────────────────────────────────────────────────────────
-
-/** Strip the 'action' key from args before forwarding to .strict() Zod schemas. */
-function stripAction(args: unknown): unknown {
-  if (args && typeof args === 'object' && 'action' in args) {
-    const { action: _, ...rest } = args as Record<string, unknown>;
-    return rest;
-  }
-  return args;
-}
 
 const HARNESS_INSTRUCTIONS = `You are connected to the agent-harness lifecycle server — an Agentic OS for autonomous task execution.
 
 This server exposes 5 tools, each covering a specific domain. Use the "action" parameter to select the operation.
 
 TOOLS:
-1. harness_inspector  — Read-only observation. Actions: capabilities, get_context, next_action, overview, issue, health.
+1. harness_inspector  — Read-only observation. Actions: capabilities, get_context, next_action, export, audit, health_snapshot.
 2. harness_orchestrator — Setup & queue management. Actions: init_workspace, create_campaign, plan_issues, promote_queue, rollback_issue.
 3. harness_session — Execution lifecycle. Actions: begin, begin_recovery, checkpoint, close, advance, heartbeat.
 4. harness_artifacts — Persistent state registry. Actions: save, list.
@@ -170,8 +114,8 @@ TOOLS:
 ORIENTATION (call first in any new session):
 - harness_inspector(action: "capabilities") → discover tool map, bundled skills, mem0 availability
 - harness_inspector(action: "get_context") → see workspace, project, campaign, queue status
-- harness_inspector(action: "next_action") → get directive on exactly what to call next
-- harness_inspector(action: "health") → operational metrics (queue depth, stale leases, checkpoint freshness)
+- harness_inspector(action: "next_action", host, hostCapabilities) → get the next host-aware directive
+- harness_inspector(action: "health_snapshot") → operational health, alerts, stale leases, and policy breach metrics
 
 SETUP (one-time, when no workspace/project exists):
 1. harness_orchestrator(action: "init_workspace")
@@ -180,7 +124,7 @@ SETUP (one-time, when no workspace/project exists):
 
 EXECUTION LOOP (repeated):
 4. harness_orchestrator(action: "promote_queue")
-5. harness_session(action: "begin") → claims next ready task, returns sessionToken
+5. harness_session(action: "begin") → claims the next task dispatchable to the provided host routing context, returns sessionToken
 6. [Do the work described in the issued task]
 7. harness_session(action: "checkpoint") → save progress (pass sessionToken)
 8. harness_session(action: "heartbeat") → renew lease for long-running tasks (pass sessionToken)
@@ -189,7 +133,7 @@ EXECUTION LOOP (repeated):
 
 RECOVERY:
 - harness_orchestrator(action: "rollback_issue") → reset stuck issue to pending
-- harness_session(action: "begin_recovery") → claim a needs_recovery issue
+- harness_session(action: "begin_recovery") → claim a needs_recovery issue for the provided host routing context
 
 MAINTENANCE:
 - harness_admin(action: "reconcile") → force reconciliation of stale leases
@@ -203,6 +147,7 @@ RULES:
 - dbPath is optional: set HARNESS_DB_PATH env var to avoid passing it every call.
 - Tools accept human-readable names (projectName, campaignName) instead of UUIDs, but ambiguous scope must be resolved explicitly with workspaceId or projectId.
 - Always pass the short \`sessionToken\` returned by begin to checkpoint/close/advance/heartbeat, NOT the heavy context.
+- \`next_action\`, \`begin\`, and \`begin_recovery\` require explicit host routing context (\`host\` + \`hostCapabilities\`) so dispatch remains configurable and explainable.
 - Every response includes _meta.nextTools and _meta.hint telling you what to do next.`;
 
 export class SessionLifecycleMcpServer {
@@ -310,50 +255,28 @@ export class SessionLifecycleMcpServer {
   // ─── Tool Definitions ───────────────────────────────────────────
 
   private buildTools(): ToolDefinition[] {
+    const inspectorContract = getHarnessToolContract('harness_inspector');
+    const orchestratorContract = getHarnessToolContract('harness_orchestrator');
+    const sessionContract = getHarnessToolContract('harness_session');
+    const artifactsContract = getHarnessToolContract('harness_artifacts');
+    const adminContract = getHarnessToolContract('harness_admin');
+
     return [
       // ── 1. harness_inspector ──────────────────────────────────────
       {
-        name: 'harness_inspector',
-        description:
-          'Read-only observation of the Harness state. Actions: capabilities (discover tools, bundled skills, mem0 status — call FIRST), get_context (workspace/project/queue status), next_action (NBA engine — tells you exactly what tool to call next), overview (task dashboard by project), issue (deep-dive into a specific issue), health (operational metrics — queue depth, stale leases, checkpoint freshness).',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            action: {
-              type: 'string',
-              enum: ['capabilities', 'get_context', 'next_action', 'overview', 'issue', 'health'],
-              description: 'The inspection action to perform.',
-            },
-            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
-            workspaceId: { type: 'string', description: 'Workspace UUID used to disambiguate project resolution.' },
-            projectId: { type: 'string', description: 'Project UUID (or use projectName instead).' },
-            projectName: { type: 'string', description: 'Human-readable project name (alternative to projectId).' },
-            campaignId: { type: 'string' },
-            issueId: { type: 'string', description: 'Required for action "issue".' },
-            includeEvents: { type: 'boolean', description: 'For action "issue": include lifecycle events.' },
-            eventLimit: { type: 'integer', minimum: 1, maximum: 100, description: 'For action "issue": max events.' },
-            runLimit: { type: 'integer', minimum: 1, maximum: 100, description: 'For action "overview": max runs.' },
-          },
-          required: ['action'],
-        },
+        name: inspectorContract.name,
+        description: inspectorContract.description,
+        inputSchema: getHarnessToolInputJsonSchema(inspectorContract.name),
         handler: async (args) => {
-          const parsed = z.object({
-            action: z.enum(['capabilities', 'get_context', 'next_action', 'overview', 'issue', 'health']),
-            dbPath: z.string().optional(),
-            workspaceId: z.string().optional(),
-            projectId: z.string().optional(),
-            projectName: z.string().optional(),
-            campaignId: z.string().optional(),
-            issueId: z.string().optional(),
-            includeEvents: z.boolean().optional(),
-            eventLimit: z.number().int().positive().max(100).optional(),
-            runLimit: z.number().int().positive().max(100).optional(),
-          }).parse(args);
+          const parsed = harnessInspectorInputSchema.parse(args);
 
           switch (parsed.action) {
             case 'capabilities': {
+              const activeWorkloadProfileId = resolveActiveWorkloadProfile();
               return {
-                ...getHarnessCapabilityCatalog(),
+                ...getHarnessCapabilityCatalog({
+                  workloadProfileId: activeWorkloadProfileId,
+                }),
                 mem0: await inspectMem0Status(this.mem0AdapterLoader),
                 ...buildMeta(
                   ['harness_inspector', 'harness_session', 'harness_orchestrator'],
@@ -377,9 +300,11 @@ export class SessionLifecycleMcpServer {
                 workspaceId: parsed.workspaceId,
                 projectId: parsed.projectId,
                 projectName: parsed.projectName,
+                host: parsed.host,
+                hostCapabilities: parsed.hostCapabilities,
               });
 
-            case 'overview': {
+            case 'export': {
               const dbPath = resolveDbPath(parsed.dbPath);
               const db = openHarnessDatabase({ dbPath });
               try {
@@ -388,13 +313,23 @@ export class SessionLifecycleMcpServer {
                   projectName: parsed.projectName,
                   workspaceId: parsed.workspaceId,
                 });
-                const result = await this.adapter.execute({
-                  action: 'inspect_overview',
-                  input: { dbPath, projectId, campaignId: parsed.campaignId, runLimit: parsed.runLimit },
-                }) as { result: Record<string, unknown> };
-                const counts = result.result['counts'] as Record<string, number> | undefined;
-                const readyCount = counts?.['readyIssues'] ?? 0;
-                const recoveryCount = counts?.['recoveryIssues'] ?? 0;
+                const result = await this.adapter.execute(withCliContractVersion({
+                  action: 'inspect_export',
+                  input: {
+                    dbPath,
+                    projectId,
+                    campaignId: parsed.campaignId,
+                    runLimit: parsed.runLimit,
+                    eventLimit: parsed.eventLimit,
+                  },
+                })) as { result: Record<string, unknown> };
+                const queue = result.result['queue'] as Record<string, unknown> | undefined;
+                const readyCount = Array.isArray(queue?.['readyIssues'])
+                  ? queue['readyIssues'].length
+                  : 0;
+                const recoveryCount = Array.isArray(queue?.['recoveryIssues'])
+                  ? queue['recoveryIssues'].length
+                  : 0;
 
                 let hint = '';
                 if (recoveryCount > 0) {
@@ -414,29 +349,17 @@ export class SessionLifecycleMcpServer {
               }
             }
 
-            case 'issue': {
-              if (!parsed.issueId) {
-                throw new AgenticToolError(
-                  'issueId is required for action "issue".',
-                  'Provide the issueId parameter when using action "issue".',
-                  'harness_inspector',
-                );
-              }
-              const input = inspectIssueInputSchema.parse({
-                dbPath: parsed.dbPath,
-                issueId: parsed.issueId,
-                includeEvents: parsed.includeEvents,
-                eventLimit: parsed.eventLimit,
-              });
-              const dbPath = resolveDbPath(input.dbPath);
-              const result = await this.adapter.execute({
-                action: 'inspect_issue',
+            case 'audit': {
+              const dbPath = resolveDbPath(parsed.dbPath);
+              const { action: _action, ...input } = parsed;
+              const result = await this.adapter.execute(withCliContractVersion({
+                action: 'inspect_audit',
                 input: { ...input, dbPath },
-              }) as { result: Record<string, unknown> };
+              })) as { result: Record<string, unknown> };
               const issue = result.result['issue'] as Record<string, unknown> | undefined;
               const status = issue?.['status'] as string | undefined;
 
-              let hint = 'Issue details loaded.';
+              let hint = 'Issue audit loaded.';
               if (status === 'needs_recovery') {
                 hint = 'This issue needs recovery. Call harness_session(action: "begin_recovery") with this issueId.';
               } else if (status === 'failed') {
@@ -449,7 +372,7 @@ export class SessionLifecycleMcpServer {
               };
             }
 
-            case 'health': {
+            case 'health_snapshot': {
               const dbPath = resolveDbPath(parsed.dbPath);
               const db = openHarnessDatabase({ dbPath });
               try {
@@ -458,21 +381,25 @@ export class SessionLifecycleMcpServer {
                   projectName: parsed.projectName,
                   workspaceId: parsed.workspaceId,
                 });
-                const inspector = new (await import('../runtime/session-lifecycle-inspector.js')).SessionLifecycleInspector();
-                const health = inspector.inspectHealth({
-                  dbPath,
-                  projectId,
-                  campaignId: parsed.campaignId,
-                });
+                const result = await this.adapter.execute(withCliContractVersion({
+                  action: 'inspect_health_snapshot',
+                  input: {
+                    dbPath,
+                    projectId,
+                    campaignId: parsed.campaignId,
+                  },
+                })) as { result: Record<string, unknown> };
 
-                const staleCount = (health['leases'] as Record<string, unknown>)?.['stale'] as number ?? 0;
-                let hint = 'Health metrics loaded.';
+                const staleCount =
+                  ((result.result['leases'] as Record<string, unknown> | undefined)?.['staleCount'] as number | undefined)
+                  ?? 0;
+                let hint = 'Health snapshot loaded.';
                 if (staleCount > 0) {
                   hint = `${staleCount} stale lease(s) detected. Run harness_admin(action: "reconcile") or harness_orchestrator(action: "promote_queue").`;
                 }
 
                 return {
-                  ...health,
+                  ...result,
                   ...buildMeta(['harness_admin', 'harness_orchestrator'], hint),
                 };
               } finally {
@@ -485,115 +412,34 @@ export class SessionLifecycleMcpServer {
 
       // ── 2. harness_orchestrator ───────────────────────────────────
       {
-        name: 'harness_orchestrator',
-        description:
-          'Setup, configuration, and queue management. Actions: init_workspace (create DB and workspace), create_campaign (register project + campaign — idempotent), plan_issues (inject a canonical milestone batch into the queue), promote_queue (unlock tasks whose issue and milestone deps are done), rollback_issue (emergency reset of stuck issue to pending).',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            action: {
-              type: 'string',
-              enum: ['init_workspace', 'create_campaign', 'plan_issues', 'promote_queue', 'rollback_issue'],
-              description: 'The orchestrator action to perform.',
-            },
-            // init_workspace
-            workspaceName: { type: 'string', description: 'For action "init_workspace": name of the workspace.' },
-            // create_campaign
-            workspaceId: { type: 'string', description: 'For "create_campaign": optional, auto-resolved if only one workspace exists.' },
-            projectName: { type: 'string', description: 'For "create_campaign"/"plan_issues": human-readable project name.' },
-            campaignName: { type: 'string', description: 'For "create_campaign"/"plan_issues": campaign name.' },
-            objective: { type: 'string', description: 'For "create_campaign": campaign objective.' },
-            // plan_issues
-            projectId: { type: 'string', description: 'Project UUID (or use projectName instead).' },
-            campaignId: { type: 'string', description: 'Campaign UUID (or use campaignName instead).' },
-            milestones: {
-              type: 'array',
-              description: 'For "plan_issues": canonical array of milestones. Use this shape even for a single milestone import.',
-              items: {
-                type: 'object',
-                properties: {
-                  milestone_key: { type: 'string', description: 'Stable local key used by depends_on_milestone_keys within this batch.' },
-                  description: { type: 'string', description: 'Milestone description.' },
-                  depends_on_milestone_ids: {
-                    type: 'array',
-                    description: 'Existing milestone IDs that must complete before this milestone can unlock.',
-                    items: { type: 'string' },
-                  },
-                  depends_on_milestone_keys: {
-                    type: 'array',
-                    description: 'Local milestone keys in the same batch that must complete before this milestone can unlock.',
-                    items: { type: 'string' },
-                  },
-                  issues: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        task: { type: 'string' },
-                        priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
-                        size: { type: 'string' },
-                        depends_on_indices: {
-                          type: 'array',
-                          items: { type: 'number' },
-                          description: 'Indices of earlier issues in the same milestone this task depends on.',
-                        },
-                      },
-                      required: ['task', 'priority', 'size'],
-                    },
-                  },
-                },
-                required: ['milestone_key', 'description', 'issues'],
-              },
-            },
-            // rollback_issue
-            issueId: { type: 'string', description: 'For "rollback_issue": the issue to reset.' },
-            // shared
-            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
-          },
-          required: ['action'],
-        },
+        name: orchestratorContract.name,
+        description: orchestratorContract.description,
+        inputSchema: getHarnessToolInputJsonSchema(orchestratorContract.name),
         handler: async (args) => {
-          const parsed = z.object({
-            action: z.enum(['init_workspace', 'create_campaign', 'plan_issues', 'promote_queue', 'rollback_issue']),
-          }).passthrough().parse(args);
+          const parsed = harnessOrchestratorInputSchema.parse(args);
 
           switch (parsed.action) {
-            case 'init_workspace': {
-              const stripped = stripAction(args);
-              return initHarnessWorkspace(
-                harnessInitWorkspaceInputSchema.parse(stripped),
-              );
-            }
+            case 'init_workspace':
+              return initHarnessWorkspace(parsed);
 
             case 'create_campaign':
-              return createHarnessCampaign(
-                harnessCreateCampaignInputSchema.parse(stripAction(args)),
-              );
+              return createHarnessCampaign(parsed);
 
             case 'plan_issues':
-              return planHarnessIssues(
-                harnessPlanIssuesInputSchema.parse(stripAction(args)),
-              );
+              return planHarnessIssues(parsed);
 
             case 'promote_queue': {
-              const pArgs = z.object({
-                dbPath: z.string().optional(),
-                projectId: z.string().optional(),
-                projectName: z.string().optional(),
-                action: z.string().optional(),
-                campaignId: z.string().optional(),
-              }).parse(args);
-              const dbPath = resolveDbPath(pArgs.dbPath);
+              const dbPath = resolveDbPath(parsed.dbPath);
               const db = openHarnessDatabase({ dbPath });
               try {
                 const projectId = resolveProjectId(db.connection, {
-                  projectId: pArgs.projectId,
-                  projectName: pArgs.projectName,
+                  projectId: parsed.projectId,
+                  projectName: parsed.projectName,
                 });
-                const result = await this.adapter.execute({
+                const result = await this.adapter.execute(withCliContractVersion({
                   action: 'promote_queue',
-                  input: { dbPath, projectId, campaignId: pArgs.campaignId },
-                }) as { result: { promotedIssueIds?: string[] } };
+                  input: { dbPath, projectId, campaignId: parsed.campaignId },
+                })) as { result: { promotedIssueIds?: string[] } };
                 const promotedIds = result.result.promotedIssueIds ?? [];
 
                 return {
@@ -613,57 +459,30 @@ export class SessionLifecycleMcpServer {
             }
 
             case 'rollback_issue':
-              return rollbackHarnessIssue(
-                harnessRollbackIssueInputSchema.parse(stripAction(args)),
-              );
+              {
+                const { action: _action, ...input } = parsed;
+                return rollbackHarnessIssue(input);
+              }
           }
         },
       },
 
       // ── 3. harness_session ────────────────────────────────────────
       {
-        name: 'harness_session',
-        description:
-          'Execution lifecycle for worker agents. Actions: begin (claim next ready task — returns sessionToken), begin_recovery (claim a needs_recovery task), checkpoint (save progress — pass sessionToken), close (mark task done/failed — pass sessionToken), advance (atomic close + begin next — pass sessionToken, preferred over close + begin), heartbeat (renew lease TTL for long-running tasks — pass sessionToken).',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            action: {
-              type: 'string',
-              enum: ['begin', 'begin_recovery', 'checkpoint', 'close', 'advance', 'heartbeat'],
-              description: 'The session lifecycle action to perform.',
-            },
-            // begin / begin_recovery
-            ...beginSessionProperties,
-            recoverySummary: { type: 'string', description: 'For "begin_recovery": summary of the recovery context.' },
-            recoveryNextStep: { type: 'string', description: 'For "begin_recovery": next step after recovery.' },
-            // checkpoint / close / advance
-            dbPath: { type: 'string', description: 'Optional for checkpoint/close/advance when resolving a persisted sessionToken after restart.' },
-            sessionToken: { type: 'string', description: 'For checkpoint/close/advance: the token returned by begin.' },
-            input: {
-              ...checkpointInputJsonSchema,
-              description: 'For checkpoint: progress data to save.',
-            },
-            closeInput: {
-              ...closeInputJsonSchema,
-              description: 'For close/advance: closing data including task status.',
-            },
-          },
-          required: ['action'],
-        },
+        name: sessionContract.name,
+        description: sessionContract.description,
+        inputSchema: getHarnessToolInputJsonSchema(sessionContract.name),
         handler: async (args) => {
-          const parsed = z.object({
-            action: z.enum(['begin', 'begin_recovery', 'checkpoint', 'close', 'advance', 'heartbeat']),
-          }).passthrough().parse(args);
+          const parsed = harnessSessionInputSchema.parse(args);
 
           switch (parsed.action) {
             case 'begin': {
-              const input = incrementalSessionInputSchema.parse(stripAction(args));
+              const { action: _action, ...input } = parsed;
               const dbPath = resolveDbPath(input.dbPath);
-              const result = (await this.adapter.execute({
+              const result = (await this.adapter.execute(withCliContractVersion({
                 action: 'begin_incremental',
                 input: { ...input, dbPath },
-              })) as { context: SessionContext };
+              }))) as { context: SessionContext };
               const sessionToken = this.tokenStore.store(
                 result.context as unknown as Record<string, unknown>,
                 { ...input, dbPath } as Record<string, unknown>,
@@ -679,12 +498,12 @@ export class SessionLifecycleMcpServer {
             }
 
             case 'begin_recovery': {
-              const input = recoverySessionInputSchema.parse(stripAction(args));
+              const { action: _action, ...input } = parsed;
               const dbPath = resolveDbPath(input.dbPath);
-              const result = (await this.adapter.execute({
+              const result = (await this.adapter.execute(withCliContractVersion({
                 action: 'begin_recovery',
                 input: { ...input, dbPath },
-              })) as { context: SessionContext };
+              }))) as { context: SessionContext };
               const sessionToken = this.tokenStore.store(
                 result.context as unknown as Record<string, unknown>,
                 { ...input, dbPath } as Record<string, unknown>,
@@ -700,31 +519,22 @@ export class SessionLifecycleMcpServer {
             }
 
             case 'checkpoint': {
-              const cpParsed = z
-                .object({
-                  dbPath: z.string().optional(),
-                  sessionToken: z.string(),
-                  input: sessionCheckpointInputSchema,
-                })
-                .passthrough()
-                .parse(args);
-
-               const session = this.tokenStore.resolve(
-                 cpParsed.sessionToken,
-                 cpParsed.dbPath,
+              const session = this.tokenStore.resolve(
+                 parsed.sessionToken,
+                 parsed.dbPath,
                );
                const context = session.context as unknown as SessionContext;
-               const dbPath = resolveDbPath(context.dbPath ?? cpParsed.dbPath);
-               const result = (await this.adapter.execute({
-                 action: 'checkpoint',
-                 context: { ...context, dbPath },
-                input: cpParsed.input,
-              })) as { result: { checkpoint: { id: string } } };
+               const dbPath = resolveDbPath(context.dbPath ?? parsed.dbPath);
+                const result = (await this.adapter.execute(withCliContractVersion({
+                   action: 'checkpoint',
+                   context: { ...context, dbPath },
+                  input: parsed.input,
+                }))) as { result: { checkpoint: { id: string } } };
 
-               this.tokenStore.updateContext(cpParsed.sessionToken, {
-                 currentCheckpointId: result.result.checkpoint.id,
-                 currentTaskStatus: cpParsed.input.taskStatus,
-               }, dbPath);
+               this.tokenStore.updateContext(parsed.sessionToken, {
+                  currentCheckpointId: result.result.checkpoint.id,
+                  currentTaskStatus: parsed.input.taskStatus,
+                }, dbPath);
 
               return {
                 ...result,
@@ -736,32 +546,23 @@ export class SessionLifecycleMcpServer {
             }
 
             case 'close': {
-              const clParsed = z
-                .object({
-                  dbPath: z.string().optional(),
-                  sessionToken: z.string(),
-                  closeInput: sessionCloseInputSchema,
-                })
-                .passthrough()
-                .parse(args);
-
                const session = this.tokenStore.resolve(
-                 clParsed.sessionToken,
-                 clParsed.dbPath,
+                 parsed.sessionToken,
+                 parsed.dbPath,
                );
                const context = session.context as unknown as SessionContext;
-               const dbPath = resolveDbPath(context.dbPath ?? clParsed.dbPath);
+               const dbPath = resolveDbPath(context.dbPath ?? parsed.dbPath);
 
-               const executed = (await this.adapter.execute({
-                 action: 'close',
-                 context: { ...context, dbPath },
-                 input: clParsed.closeInput,
-               })) as { result: Record<string, unknown> };
+                const executed = (await this.adapter.execute(withCliContractVersion({
+                   action: 'close',
+                   context: { ...context, dbPath },
+                   input: parsed.closeInput,
+                 }))) as { result: Record<string, unknown> };
 
-               this.tokenStore.remove(clParsed.sessionToken, dbPath);
+               this.tokenStore.remove(parsed.sessionToken, dbPath);
 
-               const promotedIds =
-                 (executed.result['promotedIssueIds'] as string[] | undefined) ?? [];
+                const promotedIds =
+                  (executed.result['promotedIssueIds'] as string[] | undefined) ?? [];
                const hint =
                  promotedIds.length > 0
                    ? `Session closed. ${promotedIds.length} dependent task(s) promoted. Call harness_session(action: "begin") to pick up next.`
@@ -779,29 +580,20 @@ export class SessionLifecycleMcpServer {
             }
 
             case 'advance': {
-              const advParsed = z
-                .object({
-                  dbPath: z.string().optional(),
-                  sessionToken: z.string(),
-                  closeInput: sessionCloseInputSchema,
-                })
-                .passthrough()
-                .parse(args);
+                const session = this.tokenStore.resolve(
+                  parsed.sessionToken,
+                  parsed.dbPath,
+                );
+                const context = session.context as unknown as SessionContext;
+                const dbPath = resolveDbPath(context.dbPath ?? parsed.dbPath);
+                const nextBeginInput = buildNextIncrementalInput(session.beginInput, dbPath);
+                const advanced = await this.adapter.advanceSession(
+                  { ...context, dbPath },
+                  parsed.closeInput,
+                  { ...nextBeginInput, dbPath },
+                );
 
-               const session = this.tokenStore.resolve(
-                 advParsed.sessionToken,
-                 advParsed.dbPath,
-               );
-               const context = session.context as unknown as SessionContext;
-               const dbPath = resolveDbPath(context.dbPath ?? advParsed.dbPath);
-               const nextBeginInput = buildNextIncrementalInput(session.beginInput, dbPath);
-               const advanced = await this.adapter.advanceSession(
-                 { ...context, dbPath },
-                 advParsed.closeInput,
-                 { ...nextBeginInput, dbPath },
-               );
-
-               this.tokenStore.remove(advParsed.sessionToken, dbPath);
+                this.tokenStore.remove(parsed.sessionToken, dbPath);
 
                if (!advanced.advanced || advanced.nextContext === undefined) {
                  const promotedIds = advanced.closeResult.promotedIssueIds ?? [];
@@ -838,31 +630,22 @@ export class SessionLifecycleMcpServer {
                    'Advanced to next session! Do the work, then call harness_session(action: "checkpoint") or harness_session(action: "advance").',
                  ),
                };
-             }
+              }
 
-            case 'heartbeat': {
-              const hbParsed = z
-                .object({
-                  dbPath: z.string().optional(),
-                  sessionToken: z.string(),
-                  leaseTtlSeconds: z.number().int().positive().optional(),
-                })
-                .passthrough()
-                .parse(args);
-
-              const session = this.tokenStore.resolve(
-                hbParsed.sessionToken,
-                hbParsed.dbPath,
-              );
-              const context = session.context as unknown as SessionContext;
-              const dbPath = resolveDbPath(context.dbPath ?? hbParsed.dbPath);
-              const db = openHarnessDatabase({ dbPath });
-              try {
-                const { renewLease } = await import('../db/lease-manager.js');
-                const extensionSeconds = hbParsed.leaseTtlSeconds ?? 3600;
-                const result = renewLease(
-                  db.connection,
-                  context.leaseId,
+             case 'heartbeat': {
+               const session = this.tokenStore.resolve(
+                 parsed.sessionToken,
+                 parsed.dbPath,
+               );
+               const context = session.context as unknown as SessionContext;
+               const dbPath = resolveDbPath(context.dbPath ?? parsed.dbPath);
+               const db = openHarnessDatabase({ dbPath });
+               try {
+                 const { renewLease } = await import('../db/lease-manager.js');
+                 const extensionSeconds = parsed.leaseTtlSeconds ?? 3600;
+                 const result = renewLease(
+                   db.connection,
+                   context.leaseId,
                   extensionSeconds,
                 );
                 return {
@@ -883,42 +666,11 @@ export class SessionLifecycleMcpServer {
 
       // ── 4. harness_artifacts ──────────────────────────────────────
       {
-        name: 'harness_artifacts',
-        description:
-          'Persistent state registry for files like browser cookies, screenshots, or design documents. Actions: save (register a file path to the Harness DB), list (find artifacts by project/issue/kind).',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            action: {
-              type: 'string',
-              enum: ['save', 'list'],
-              description: 'The artifact action to perform.',
-            },
-            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
-            projectId: { type: 'string', description: 'Project UUID (or use projectName).' },
-            projectName: { type: 'string', description: 'Human-readable project name.' },
-            campaignId: { type: 'string' },
-            issueId: { type: 'string' },
-            // save-specific
-            kind: { type: 'string', description: 'For "save": artifact kind (e.g. "browser_state", "screenshot", "auth_cookies").' },
-            path: { type: 'string', description: 'For "save": absolute path to the file.' },
-            metadata: { type: 'object', description: 'For "save": arbitrary JSON metadata.' },
-            // list-specific (kind also used for filtering)
-          },
-          required: ['action'],
-        },
+        name: artifactsContract.name,
+        description: artifactsContract.description,
+        inputSchema: getHarnessToolInputJsonSchema(artifactsContract.name),
         handler: async (args) => {
-          const parsed = z.object({
-            action: z.enum(['save', 'list']),
-            dbPath: z.string().optional(),
-            projectId: z.string().optional(),
-            projectName: z.string().optional(),
-            campaignId: z.string().optional(),
-            issueId: z.string().optional(),
-            kind: z.string().optional(),
-            path: z.string().optional(),
-            metadata: z.record(z.string(), z.unknown()).optional(),
-          }).parse(args);
+          const parsed = harnessArtifactsInputSchema.parse(args);
 
           const dbPath = resolveDbPath(parsed.dbPath);
           const db = openHarnessDatabase({ dbPath });
@@ -930,20 +682,6 @@ export class SessionLifecycleMcpServer {
 
             switch (parsed.action) {
               case 'save': {
-                if (!parsed.kind) {
-                  throw new AgenticToolError(
-                    'kind is required for action "save".',
-                    'Provide the kind parameter (e.g., "browser_state", "auth_cookies", "screenshot").',
-                    'harness_artifacts',
-                  );
-                }
-                if (!parsed.path) {
-                  throw new AgenticToolError(
-                    'path is required for action "save".',
-                    'Provide the absolute path to the file you want to register.',
-                    'harness_artifacts',
-                  );
-                }
                 const artifactId = randomUUID();
                 const now = new Date().toISOString();
                 // Get workspaceId from project
@@ -1045,49 +783,11 @@ export class SessionLifecycleMcpServer {
 
       // ── 5. harness_admin ──────────────────────────────────────────
       {
-        name: 'harness_admin',
-        description:
-          'Maintenance and administration. Actions: reconcile (force reconciliation of stale leases), drain (pause new claims for a campaign), archive (close all done issues and release leases for a campaign), cleanup (delete expired sessions, old events, and released leases older than retention days), mem0_snapshot (persist a project/milestone summary to mem0), mem0_rollup (compact detailed task memories into a higher-level summary).',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            action: {
-              type: 'string',
-              enum: ['reconcile', 'drain', 'archive', 'cleanup', 'mem0_snapshot', 'mem0_rollup'],
-              description: 'The admin action to perform.',
-            },
-            dbPath: { type: 'string', description: 'Optional if HARNESS_DB_PATH is set.' },
-            projectId: { type: 'string', description: 'Project UUID (or use projectName).' },
-            projectName: { type: 'string', description: 'Human-readable project name.' },
-            workspaceId: { type: 'string' },
-            campaignId: { type: 'string', description: 'Campaign UUID (or use campaignName).' },
-            campaignName: { type: 'string', description: 'Campaign name.' },
-            retentionDays: { type: 'integer', minimum: 1, description: 'For "cleanup": retention period in days (default 30).' },
-            checkpointFreshnessSeconds: { type: 'integer', minimum: 1, description: 'For "reconcile": freshness threshold (default 3600).' },
-            dryRun: { type: 'boolean', description: 'Preview what would happen without making changes.' },
-            // mem0_snapshot / mem0_rollup
-            content: { type: 'string', description: 'For "mem0_snapshot": the summary content to persist.' },
-            memoryKind: { type: 'string', enum: ['decision', 'preference', 'summary', 'artifact_context', 'note'], description: 'For mem0 actions: memory kind.' },
-            milestoneId: { type: 'string', description: 'For "mem0_rollup": milestone to roll up.' },
-          },
-          required: ['action'],
-        },
+        name: adminContract.name,
+        description: adminContract.description,
+        inputSchema: getHarnessToolInputJsonSchema(adminContract.name),
         handler: async (args) => {
-          const parsed = z.object({
-            action: z.enum(['reconcile', 'drain', 'archive', 'cleanup', 'mem0_snapshot', 'mem0_rollup']),
-            dbPath: z.string().optional(),
-            projectId: z.string().optional(),
-            projectName: z.string().optional(),
-            workspaceId: z.string().optional(),
-            campaignId: z.string().optional(),
-            campaignName: z.string().optional(),
-            retentionDays: z.number().int().positive().optional(),
-            checkpointFreshnessSeconds: z.number().int().positive().optional(),
-            dryRun: z.boolean().optional(),
-            content: z.string().optional(),
-            memoryKind: z.enum(['decision', 'preference', 'summary', 'artifact_context', 'note']).optional(),
-            milestoneId: z.string().optional(),
-          }).parse(args);
+          const parsed = harnessAdminInputSchema.parse(args);
 
           const dbPath = resolveDbPath(parsed.dbPath);
           const db = openHarnessDatabase({ dbPath });
@@ -1145,10 +845,16 @@ export class SessionLifecycleMcpServer {
                   [projectId, campaignId],
                 );
                 if (!dryRun) {
+                  const drainReason = `campaign_drain:${campaignId}`;
                   runStatement(
                     db.connection,
-                    `UPDATE issues SET status = 'blocked' WHERE project_id = ? AND campaign_id = ? AND status IN ('pending', 'ready')`,
-                    [projectId, campaignId],
+                    `UPDATE issues
+                     SET status = 'blocked',
+                         blocked_reason = ?
+                     WHERE project_id = ?
+                       AND campaign_id = ?
+                       AND status IN ('pending', 'ready')`,
+                    [drainReason, projectId, campaignId],
                   );
                   runStatement(
                     db.connection,
@@ -1463,6 +1169,15 @@ export class SessionLifecycleMcpServer {
   }
 }
 
+function resolveActiveWorkloadProfile(): WorkloadProfileId | undefined {
+  const configuredProfile = process.env['HARNESS_WORKLOAD_PROFILE'];
+  if (!configuredProfile || !isWorkloadProfileId(configuredProfile)) {
+    return undefined;
+  }
+
+  return configuredProfile;
+}
+
 // ─── Standalone functions ───────────────────────────────────────────
 
 interface StatusCountRow {
@@ -1488,24 +1203,134 @@ interface CampaignInfoRow {
   name: string;
   objective: string;
   status: string;
+  policy_json: string | null;
 }
 
 interface RecoveryIssueRow {
   id: string;
   task: string;
   priority: string;
+  status: string;
+  next_best_action: string | null;
+  blocked_reason: string | null;
+  created_at: string;
+  deadline_at: string | null;
+  recipients_json: string | null;
+  approvals_json: string | null;
+  external_refs_json: string | null;
+  policy_json: string | null;
+  campaign_policy_json: string | null;
 }
 
 interface ReadyIssueRow {
   id: string;
   task: string;
   priority: string;
+  status: string;
+  next_best_action: string | null;
+  blocked_reason: string | null;
+  created_at: string;
+  deadline_at: string | null;
+  recipients_json: string | null;
+  approvals_json: string | null;
+  external_refs_json: string | null;
+  policy_json: string | null;
+  campaign_policy_json: string | null;
+}
+
+interface BlockedIssueRow {
+  id: string;
+  task: string;
+  priority: string;
+  status: string;
+  next_best_action: string | null;
+  blocked_reason: string;
+  created_at: string;
+  deadline_at: string | null;
+  recipients_json: string | null;
+  approvals_json: string | null;
+  external_refs_json: string | null;
+  policy_json: string | null;
+  campaign_policy_json: string | null;
+}
+
+interface BlockedMilestoneRow {
+  id: string;
+  description: string;
+  priority: string;
+  status: string;
+  deadline_at: string | null;
+  recipients_json: string | null;
+  approvals_json: string | null;
+  external_refs_json: string | null;
+  blocked_reason: string;
 }
 
 interface ExpiredLeaseRow {
   id: string;
-  issue_id: string;
+  issue_id: string | null;
+  agent_id: string;
+  status: string;
   expires_at: string;
+  last_heartbeat_at: string | null;
+}
+
+interface IssueContextRow {
+  id: string;
+  task: string;
+  priority: string;
+  status: string;
+  blocked_reason: string | null;
+  next_best_action: string | null;
+  created_at: string;
+  deadline_at: string | null;
+  recipients_json: string | null;
+  approvals_json: string | null;
+  external_refs_json: string | null;
+  policy_json: string | null;
+  campaign_policy_json: string | null;
+}
+
+interface MilestoneContextRow {
+  id: string;
+  description: string;
+  priority: string;
+  status: string;
+  deadline_at: string | null;
+  recipients_json: string | null;
+  approvals_json: string | null;
+  external_refs_json: string | null;
+  blocked_reason: string | null;
+}
+
+interface LeaseContextRow {
+  id: string;
+  issue_id: string | null;
+  agent_id: string;
+  status: string;
+  expires_at: string;
+  last_heartbeat_at: string | null;
+}
+
+type NextActionStage =
+  | 'expired_lease'
+  | 'needs_recovery'
+  | 'ready_issue'
+  | 'dispatch_mismatch'
+  | 'blocked_issue'
+  | 'blocked_milestone'
+  | 'pending_promotion'
+  | 'idle';
+
+type NextActionBlockerRefType = 'issue' | 'milestone' | 'campaign' | 'lease' | 'unknown';
+
+interface ParsedBlockedReason {
+  code: string;
+  kind: string;
+  refId: string;
+  refType: NextActionBlockerRefType;
+  detail?: string;
+  summary: string;
 }
 
 function getHarnessContext(input: {
@@ -1617,7 +1442,10 @@ function getHarnessContext(input: {
     const project = resolvedProject ?? projects[0];
     const campaigns = selectAll<CampaignInfoRow>(
       database.connection,
-      `SELECT id, name, objective, status FROM campaigns WHERE project_id = ? ORDER BY created_at DESC`,
+      `SELECT id, name, objective, status, policy_json
+       FROM campaigns
+       WHERE project_id = ?
+       ORDER BY created_at DESC`,
       [project.id],
     );
     const activeCampaign =
@@ -1679,12 +1507,14 @@ function getHarnessContext(input: {
         name: campaign.name,
         objective: campaign.objective,
         status: campaign.status,
+        ...(buildCampaignPolicyContext(campaign) ?? {}),
       })),
       activeCampaign: activeCampaign
         ? {
             id: activeCampaign.id,
             name: activeCampaign.name,
             objective: activeCampaign.objective,
+            ...(buildCampaignPolicyContext(activeCampaign) ?? {}),
           }
         : null,
       queue,
@@ -1700,6 +1530,8 @@ function getNextAction(input: {
   workspaceId?: string;
   projectId?: string;
   projectName?: string;
+  host: string;
+  hostCapabilities: HarnessHostCapabilities;
 }): Record<string, unknown> {
   const dbPath = resolveDbPath(input.dbPath);
   const database = openHarnessDatabase({ dbPath });
@@ -1795,23 +1627,65 @@ function getNextAction(input: {
     }
 
     const now = new Date().toISOString();
+    const hostCapabilities = normalizeHarnessHostCapabilities(input.hostCapabilities);
 
     // Priority 1: Expired leases
       const expiredLeases = selectAll<ExpiredLeaseRow>(
         database.connection,
-        `SELECT id, issue_id, expires_at FROM leases
-        WHERE project_id = ? AND status = 'active' AND expires_at < ?
-       ORDER BY expires_at ASC LIMIT 1`,
-      [projectId!, now],
-    );
+        `SELECT id, issue_id, agent_id, status, expires_at, last_heartbeat_at FROM leases
+         WHERE project_id = ? AND status = 'active' AND expires_at < ?
+        ORDER BY expires_at ASC LIMIT 1`,
+       [projectId!, now],
+     );
 
     if (expiredLeases.length > 0) {
       const lease = expiredLeases[0];
+      const issueContext =
+        lease.issue_id === null
+          ? null
+          : selectIssueContext(database.connection, lease.issue_id);
       return {
         action: 'call_tool',
         tool: 'harness_session',
-        reason: `Lease ${lease.id} on issue ${lease.issue_id} expired at ${lease.expires_at}. Recovery needed.`,
-        suggestedPayload: { action: 'begin_recovery', preferredIssueId: lease.issue_id },
+        reason:
+          lease.issue_id === null
+            ? `Lease ${lease.id} expired at ${lease.expires_at}. Recovery needed before more work can be claimed.`
+            : `Lease ${lease.id} on issue ${lease.issue_id} expired at ${lease.expires_at}. Recovery needed.`,
+        suggestedPayload:
+          lease.issue_id === null
+            ? {
+                action: 'begin_recovery',
+                host: input.host,
+                hostCapabilities,
+              }
+            : {
+                action: 'begin_recovery',
+                preferredIssueId: lease.issue_id,
+                host: input.host,
+                hostCapabilities,
+              },
+        context: {
+          stage: 'expired_lease' satisfies NextActionStage,
+          priority: 1,
+          projectId,
+          host: mapHostRoutingContext(input.host, hostCapabilities),
+          issue: issueContext === null ? undefined : mapIssueDecisionContext(issueContext),
+          lease: mapLeaseDecisionContext(lease),
+          blocker: {
+            code: `lease_expired:${lease.id}`,
+            kind: 'lease_expired',
+            refId: lease.id,
+            refType: 'lease' satisfies NextActionBlockerRefType,
+            detail:
+              lease.issue_id === null
+                ? undefined
+                : `Issue ${lease.issue_id} cannot be resumed until recovery claims a fresh lease.`,
+            summary:
+              lease.issue_id === null
+                ? `lease ${lease.id} expired at ${lease.expires_at}`
+                : `lease ${lease.id} expired for issue ${lease.issue_id}`,
+          },
+        },
         ...buildMeta(['harness_session'], 'Expired lease detected. Call harness_session(action: "begin_recovery") to recover.'),
       };
     }
@@ -1819,44 +1693,293 @@ function getNextAction(input: {
     // Priority 2: needs_recovery issues
     const recoveryIssues = selectAll<RecoveryIssueRow>(
       database.connection,
-      `SELECT id, task, priority FROM issues WHERE project_id = ? AND status = 'needs_recovery'
-       ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
-       LIMIT 1`,
+      `SELECT
+         i.id,
+         i.task,
+         i.priority,
+         i.status,
+         i.next_best_action,
+         i.blocked_reason,
+         i.created_at,
+         i.deadline_at,
+         i.recipients_json,
+         i.approvals_json,
+         i.external_refs_json,
+         i.policy_json,
+         c.policy_json AS campaign_policy_json
+       FROM issues i
+       LEFT JOIN campaigns c ON c.id = i.campaign_id
+       WHERE i.project_id = ?
+         AND i.status = 'needs_recovery'
+       ORDER BY i.id ASC`,
       [projectId!],
     );
 
     if (recoveryIssues.length > 0) {
-      const issue = recoveryIssues[0];
+      const issue = selectDispatchableIssueForHost(recoveryIssues, hostCapabilities);
+
+      if (issue !== undefined) {
+        const leaseContext = selectLatestLeaseContextByIssue(database.connection, issue.id);
+        return {
+          action: 'call_tool',
+          tool: 'harness_session',
+          reason: `Issue "${issue.task}" (${issue.id}, priority: ${issue.priority}) needs recovery.`,
+          suggestedPayload: {
+            action: 'begin_recovery',
+            preferredIssueId: issue.id,
+            host: input.host,
+            hostCapabilities,
+          },
+          context: {
+            stage: 'needs_recovery' satisfies NextActionStage,
+            priority: 2,
+            projectId,
+            host: mapHostRoutingContext(input.host, hostCapabilities),
+            issue: mapIssueDecisionContext({
+              ...issue,
+              status: 'needs_recovery',
+            }),
+            dispatch: mapDispatchDecisionContext(issue, hostCapabilities),
+            lease: leaseContext === null ? undefined : mapLeaseDecisionContext(leaseContext),
+            blocker: {
+              code: `issue_needs_recovery:${issue.id}`,
+              kind: 'issue_needs_recovery',
+              refId: issue.id,
+              refType: 'issue' satisfies NextActionBlockerRefType,
+              summary: `issue ${issue.id} is waiting on a recovery claim`,
+            },
+          },
+          ...buildMeta(['harness_session'], 'Recovery issue found. Call harness_session(action: "begin_recovery").'),
+        };
+      }
+
+      const topRecoveryIssue = sortIssuesForDispatch(recoveryIssues)[0];
       return {
         action: 'call_tool',
-        tool: 'harness_session',
-        reason: `Issue "${issue.task}" (${issue.id}, priority: ${issue.priority}) needs recovery.`,
-        suggestedPayload: { action: 'begin_recovery', preferredIssueId: issue.id },
-        ...buildMeta(['harness_session'], 'Recovery issue found. Call harness_session(action: "begin_recovery").'),
+        tool: 'harness_inspector',
+        reason: `Recovery issues exist, but none match host "${input.host}" and its declared routing capabilities.`,
+        suggestedPayload: {
+          action: 'audit',
+          issueId: topRecoveryIssue?.id,
+        },
+        context: {
+          stage: 'dispatch_mismatch' satisfies NextActionStage,
+          priority: 2,
+          projectId,
+          host: mapHostRoutingContext(input.host, hostCapabilities),
+          blocker: {
+            code: `dispatch_mismatch:${input.host}:needs_recovery`,
+            kind: 'dispatch_mismatch',
+            refId: topRecoveryIssue?.id ?? input.host,
+            refType: topRecoveryIssue !== undefined ? ('issue' satisfies NextActionBlockerRefType) : ('unknown' satisfies NextActionBlockerRefType),
+            summary: `host ${input.host} cannot recover the currently queued recovery work`,
+          },
+          candidates: mapDispatchMismatchCandidates(recoveryIssues, hostCapabilities),
+        },
+        ...buildMeta(['harness_inspector'], 'No recovery issue matches this host context. Inspect the audit trail or choose a host with compatible routing capabilities.'),
       };
     }
 
     // Priority 3: Ready issues
     const readyIssues = selectAll<ReadyIssueRow>(
       database.connection,
-      `SELECT id, task, priority FROM issues WHERE project_id = ? AND status = 'ready'
-       ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
-       LIMIT 1`,
+      `SELECT
+         i.id,
+         i.task,
+         i.priority,
+         i.status,
+         i.next_best_action,
+         i.blocked_reason,
+         i.created_at,
+         i.deadline_at,
+         i.recipients_json,
+         i.approvals_json,
+         i.external_refs_json,
+         i.policy_json,
+         c.policy_json AS campaign_policy_json
+       FROM issues i
+       LEFT JOIN campaigns c ON c.id = i.campaign_id
+       WHERE i.project_id = ?
+         AND i.status = 'ready'
+       ORDER BY i.id ASC`,
       [projectId!],
     );
 
     if (readyIssues.length > 0) {
-      const issue = readyIssues[0];
+      const issue = selectDispatchableIssueForHost(readyIssues, hostCapabilities);
+
+      if (issue !== undefined) {
+        return {
+          action: 'call_tool',
+          tool: 'harness_session',
+          reason: `Task "${issue.task}" (${issue.id}, priority: ${issue.priority}) is ready to be claimed.`,
+          suggestedPayload: {
+            action: 'begin',
+            preferredIssueId: issue.id,
+            host: input.host,
+            hostCapabilities,
+          },
+          context: {
+            stage: 'ready_issue' satisfies NextActionStage,
+            priority: 3,
+            projectId,
+            host: mapHostRoutingContext(input.host, hostCapabilities),
+            issue: mapIssueDecisionContext({
+              ...issue,
+              status: 'ready',
+              blocked_reason: null,
+            }),
+            dispatch: mapDispatchDecisionContext(issue, hostCapabilities),
+          },
+          ...buildMeta(['harness_session'], 'Ready task available. Call harness_session(action: "begin").'),
+        };
+      }
+
       return {
         action: 'call_tool',
-        tool: 'harness_session',
-        reason: `Task "${issue.task}" (${issue.id}, priority: ${issue.priority}) is ready to be claimed.`,
-        suggestedPayload: { action: 'begin', preferredIssueId: issue.id },
-        ...buildMeta(['harness_session'], 'Ready task available. Call harness_session(action: "begin").'),
+        tool: 'harness_inspector',
+        reason: `Ready issues exist, but none match host "${input.host}" and its declared routing capabilities.`,
+        suggestedPayload: {
+          action: 'export',
+          projectId,
+        },
+        context: {
+          stage: 'dispatch_mismatch' satisfies NextActionStage,
+          priority: 3,
+          projectId,
+          host: mapHostRoutingContext(input.host, hostCapabilities),
+          blocker: {
+            code: `dispatch_mismatch:${input.host}:ready`,
+            kind: 'dispatch_mismatch',
+            refId: input.host,
+            refType: 'unknown' satisfies NextActionBlockerRefType,
+            summary: `host ${input.host} cannot claim the current ready work`,
+          },
+          candidates: mapDispatchMismatchCandidates(readyIssues, hostCapabilities),
+        },
+        ...buildMeta(['harness_inspector'], 'No ready issue matches this host context. Inspect the export or choose a host with compatible routing capabilities.'),
       };
     }
 
-    // Priority 4: Pending issues that might be promotable
+    // Priority 4: Work blocked by explicit blocker reasons
+    const blockedIssues = selectAll<BlockedIssueRow>(
+      database.connection,
+      `SELECT
+         i.id,
+         i.task,
+         i.priority,
+         i.status,
+         i.next_best_action,
+         i.blocked_reason,
+         i.created_at,
+         i.deadline_at,
+         i.recipients_json,
+         i.approvals_json,
+         i.external_refs_json,
+         i.policy_json,
+         c.policy_json AS campaign_policy_json
+       FROM issues i
+       LEFT JOIN campaigns c ON c.id = i.campaign_id
+       WHERE i.project_id = ?
+         AND i.status IN ('pending', 'blocked')
+         AND i.blocked_reason IS NOT NULL
+       ORDER BY CASE i.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, i.id ASC
+        LIMIT 1`,
+      [projectId!],
+    );
+
+    if (blockedIssues.length > 0) {
+      const issue = blockedIssues[0];
+      const blocker = parseBlockedReason(issue.blocked_reason);
+      const blockingIssue =
+        blocker.refType === 'issue'
+          ? selectIssueContext(database.connection, blocker.refId)
+          : null;
+      const blockingMilestone =
+        blocker.refType === 'milestone'
+          ? selectMilestoneContext(database.connection, blocker.refId)
+          : null;
+      return {
+        action: 'call_tool',
+        tool: 'harness_inspector',
+        reason: `Task "${issue.task}" (${issue.id}, priority: ${issue.priority}) is ${issue.status === 'blocked' ? 'blocked' : 'waiting'} on ${blocker.summary}.`,
+        suggestedPayload: { action: 'audit', issueId: issue.id },
+        context: {
+          stage: 'blocked_issue' satisfies NextActionStage,
+          priority: 4,
+          projectId,
+          issue: mapIssueDecisionContext({
+            ...issue,
+            next_best_action: null,
+          }),
+          blocker,
+          blockingIssue: blockingIssue === null ? undefined : mapIssueDecisionContext(blockingIssue),
+          blockingMilestone:
+            blockingMilestone === null
+              ? undefined
+              : mapMilestoneDecisionContext(blockingMilestone),
+        },
+        ...buildMeta(['harness_inspector'], 'Blocked task found. Inspect the issue audit trail to see the concrete blocker.'),
+      };
+    }
+
+    const blockedMilestones = selectAll<BlockedMilestoneRow>(
+      database.connection,
+      `SELECT
+         id,
+         description,
+         priority,
+         status,
+         deadline_at,
+         recipients_json,
+         approvals_json,
+         external_refs_json,
+         blocked_reason
+        FROM milestones
+        WHERE project_id = ?
+          AND status = 'blocked'
+          AND blocked_reason IS NOT NULL
+       ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, id ASC
+       LIMIT 1`,
+      [projectId!],
+    );
+
+    if (blockedMilestones.length > 0) {
+      const milestone = blockedMilestones[0];
+      const blocker = parseBlockedReason(milestone.blocked_reason);
+      const blockingIssue =
+        blocker.refType === 'issue'
+          ? selectIssueContext(database.connection, blocker.refId)
+          : null;
+      const blockingMilestone =
+        blocker.refType === 'milestone'
+          ? selectMilestoneContext(database.connection, blocker.refId)
+          : null;
+      return {
+        action: 'call_tool',
+        tool: 'harness_inspector',
+        reason: `Milestone "${milestone.description}" (${milestone.id}, priority: ${milestone.priority}) is blocked by ${blocker.summary}.`,
+        suggestedPayload: { action: 'export', projectId: projectId! },
+        context: {
+          stage: 'blocked_milestone' satisfies NextActionStage,
+          priority: 5,
+          projectId,
+          milestone: mapMilestoneDecisionContext({
+            ...milestone,
+            blocked_reason: milestone.blocked_reason,
+          }),
+          blocker,
+          blockingIssue: blockingIssue === null ? undefined : mapIssueDecisionContext(blockingIssue),
+          blockingMilestone:
+            blockingMilestone === null
+              ? undefined
+              : mapMilestoneDecisionContext(blockingMilestone),
+        },
+        ...buildMeta(['harness_inspector'], 'Blocked milestone found. Inspect the project export to see the concrete blocker.'),
+      };
+    }
+
+    // Priority 5: Pending issues that might be promotable
     const pendingCount = selectOne<{ cnt: number }>(
       database.connection,
       `SELECT COUNT(*) as cnt FROM issues WHERE project_id = ? AND status = 'pending'`,
@@ -1869,19 +1992,385 @@ function getNextAction(input: {
         tool: 'harness_orchestrator',
         reason: `${pendingCount.cnt} pending task(s) exist. Promote them to check if any dependencies are satisfied.`,
         suggestedPayload: { action: 'promote_queue' },
+        context: {
+          stage: 'pending_promotion' satisfies NextActionStage,
+          priority: 6,
+          projectId,
+          queue: {
+            pendingIssues: pendingCount.cnt,
+          },
+        },
         ...buildMeta(['harness_orchestrator'], 'Pending tasks exist. Call harness_orchestrator(action: "promote_queue") to check promotability.'),
       };
     }
 
-    // Priority 5: All done
+    // Priority 6: All done
     return {
       action: 'idle',
       reason: 'All tasks are complete or no tasks exist in the queue.',
+      context: {
+        stage: 'idle' satisfies NextActionStage,
+        priority: 7,
+        projectId,
+      },
       ...buildMeta(['harness_orchestrator', 'harness_inspector'], 'Queue is empty. Add more work with harness_orchestrator(action: "plan_issues").'),
     };
   } finally {
     database.close();
   }
+}
+
+function describeBlockedReason(reason: string): string {
+  return parseBlockedReason(reason).summary;
+}
+
+function parseBlockedReason(reason: string): ParsedBlockedReason {
+  const [kind, firstRef, ...rest] = reason.split(':');
+  const detail = rest.join(':') || undefined;
+
+  switch (kind) {
+    case 'issue_dependency':
+      return {
+        code: reason,
+        kind,
+        refId: firstRef,
+        refType: 'issue',
+        detail,
+        summary: `issue ${firstRef}`,
+      };
+    case 'milestone_dependency':
+      return {
+        code: reason,
+        kind,
+        refId: firstRef,
+        refType: 'milestone',
+        detail,
+        summary: `milestone ${firstRef}`,
+      };
+    case 'issue_needs_recovery':
+      return {
+        code: reason,
+        kind,
+        refId: firstRef,
+        refType: 'issue',
+        detail,
+        summary: `recovery of issue ${firstRef}`,
+      };
+    case 'issue_blocked':
+      return {
+        code: reason,
+        kind,
+        refId: firstRef,
+        refType: 'issue',
+        detail,
+        summary:
+          detail === undefined
+            ? `issue ${firstRef}`
+            : `issue ${firstRef} (${detail})`,
+      };
+    case 'campaign_drain':
+      return {
+        code: reason,
+        kind,
+        refId: firstRef,
+        refType: 'campaign',
+        detail,
+        summary: `campaign ${firstRef} drain`,
+      };
+    case 'lease_expired':
+      return {
+        code: reason,
+        kind,
+        refId: firstRef,
+        refType: 'lease',
+        detail,
+        summary: `lease ${firstRef} expired`,
+      };
+    case 'checkpoint_stale':
+      return {
+        code: reason,
+        kind,
+        refId: firstRef,
+        refType: 'lease',
+        detail,
+        summary: `lease ${firstRef} has stale checkpoint evidence`,
+      };
+    default:
+      return {
+        code: reason,
+        kind,
+        refId: firstRef,
+        refType: 'unknown',
+        detail,
+        summary: reason,
+      };
+  }
+}
+
+function selectIssueContext(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  issueId: string,
+): IssueContextRow | null {
+  return selectOne<IssueContextRow>(
+    connection,
+    `SELECT
+       i.id,
+       i.task,
+       i.priority,
+       i.status,
+       i.blocked_reason,
+       i.next_best_action,
+       i.created_at,
+       i.deadline_at,
+       i.recipients_json,
+       i.approvals_json,
+       i.external_refs_json,
+       i.policy_json,
+       c.policy_json AS campaign_policy_json
+     FROM issues i
+     LEFT JOIN campaigns c ON c.id = i.campaign_id
+     WHERE i.id = ?
+     LIMIT 1`,
+    [issueId],
+  );
+}
+
+function selectMilestoneContext(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  milestoneId: string,
+): MilestoneContextRow | null {
+  return selectOne<MilestoneContextRow>(
+    connection,
+     `SELECT
+        id,
+        description,
+        priority,
+        status,
+        deadline_at,
+        recipients_json,
+        approvals_json,
+        external_refs_json,
+        blocked_reason
+      FROM milestones
+      WHERE id = ?
+      LIMIT 1`,
+    [milestoneId],
+  );
+}
+
+function selectLatestLeaseContextByIssue(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  issueId: string,
+): LeaseContextRow | null {
+  return selectOne<LeaseContextRow>(
+    connection,
+    `SELECT id, issue_id, agent_id, status, expires_at, last_heartbeat_at
+     FROM leases
+     WHERE issue_id = ?
+     ORDER BY acquired_at DESC
+     LIMIT 1`,
+    [issueId],
+  );
+}
+
+function selectDispatchableIssueForHost<
+  T extends {
+    id: string;
+    task: string;
+    priority: string;
+    status: string;
+    blocked_reason: string | null;
+    next_best_action: string | null;
+    created_at: string;
+    deadline_at: string | null;
+    recipients_json: string | null;
+    approvals_json: string | null;
+    external_refs_json: string | null;
+    policy_json: string | null;
+    campaign_policy_json: string | null;
+  },
+>(issues: readonly T[], hostCapabilities: HarnessHostCapabilities): T | undefined {
+  return sortIssuesForDispatch(issues).find((issue) =>
+    evaluateIssueDispatchState(issue, hostCapabilities).eligible,
+  );
+}
+
+function mapHostRoutingContext(
+  host: string,
+  hostCapabilities: HarnessHostCapabilities,
+): Record<string, unknown> {
+  return {
+    host,
+    hostCapabilities,
+  };
+}
+
+function mapDispatchDecisionContext(
+  issue: {
+    id: string;
+    priority: string;
+    status: string;
+    created_at: string;
+    policy_json: string | null;
+    campaign_policy_json: string | null;
+  },
+  hostCapabilities: HarnessHostCapabilities,
+): Record<string, unknown> {
+  const dispatch = evaluateIssueDispatchState(issue, hostCapabilities);
+
+  return {
+    eligible: dispatch.eligible,
+    ...(dispatch.requiredWorkloadClass !== undefined
+      ? { requiredWorkloadClass: dispatch.requiredWorkloadClass }
+      : {}),
+    requiredHostCapabilities: dispatch.requiredHostCapabilities,
+    ...(dispatch.missingWorkloadClass !== undefined
+      ? { missingWorkloadClass: dispatch.missingWorkloadClass }
+      : {}),
+    ...(dispatch.missingHostCapabilities.length > 0
+      ? { missingHostCapabilities: dispatch.missingHostCapabilities }
+      : {}),
+  };
+}
+
+function mapDispatchMismatchCandidates<
+  T extends {
+    id: string;
+    task: string;
+    priority: string;
+    status: string;
+    blocked_reason: string | null;
+    next_best_action: string | null;
+    created_at: string;
+    deadline_at: string | null;
+    recipients_json: string | null;
+    approvals_json: string | null;
+    external_refs_json: string | null;
+    policy_json: string | null;
+    campaign_policy_json: string | null;
+  },
+>(issues: readonly T[], hostCapabilities: HarnessHostCapabilities): Array<Record<string, unknown>> {
+  return sortIssuesForDispatch(issues)
+    .slice(0, 3)
+    .map((issue) => ({
+      ...mapIssueDecisionContext(issue),
+      dispatch: mapDispatchDecisionContext(issue, hostCapabilities),
+    }));
+}
+
+function mapIssueDecisionContext(issue: {
+  id: string;
+  task: string;
+  priority: string;
+  status: string;
+  blocked_reason: string | null;
+  next_best_action: string | null;
+  created_at: string;
+  deadline_at: string | null;
+  recipients_json: string | null;
+  approvals_json: string | null;
+  external_refs_json: string | null;
+  policy_json: string | null;
+  campaign_policy_json: string | null;
+}): Record<string, unknown> {
+  const policySurface = buildIssuePolicySurface(issue);
+  const workflowMetadata = buildWorkItemMetadataSurface(issue);
+
+  return {
+    id: issue.id,
+    task: issue.task,
+    priority: issue.priority,
+    status: issue.status,
+    blockedReason: issue.blocked_reason,
+    nextBestAction: issue.next_best_action,
+    ...(workflowMetadata?.deadlineAt !== undefined
+      ? { deadlineAt: workflowMetadata.deadlineAt }
+      : {}),
+    ...(workflowMetadata?.recipients !== undefined
+      ? { recipients: workflowMetadata.recipients }
+      : {}),
+    ...(workflowMetadata?.approvals !== undefined
+      ? { approvals: workflowMetadata.approvals }
+      : {}),
+    ...(workflowMetadata?.externalRefs !== undefined
+      ? { externalRefs: workflowMetadata.externalRefs }
+      : {}),
+    ...(policySurface.policy !== undefined ? { policy: policySurface.policy } : {}),
+    ...(policySurface.policyState !== undefined
+      ? { policyState: policySurface.policyState }
+      : {}),
+  };
+}
+
+function buildCampaignPolicyContext(
+  campaign: Pick<CampaignInfoRow, 'policy_json'>,
+): { policy: Record<string, unknown> } | null {
+  const policySurface = buildIssuePolicySurface({
+    id: 'campaign-policy',
+    priority: 'medium',
+    status: 'pending',
+    policy_json: null,
+    campaign_policy_json: campaign.policy_json,
+    created_at: null,
+  });
+
+  return policySurface.policy === undefined
+    ? null
+    : {
+        policy: policySurface.policy as Record<string, unknown>,
+      };
+}
+
+function mapMilestoneDecisionContext(milestone: {
+  id: string;
+  description: string;
+  priority: string;
+  status: string;
+  deadline_at: string | null;
+  recipients_json: string | null;
+  approvals_json: string | null;
+  external_refs_json: string | null;
+  blocked_reason: string | null;
+}): Record<string, unknown> {
+  const workflowMetadata = buildWorkItemMetadataSurface(milestone);
+
+  return {
+    id: milestone.id,
+    description: milestone.description,
+    priority: milestone.priority,
+    status: milestone.status,
+    blockedReason: milestone.blocked_reason,
+    ...(workflowMetadata?.deadlineAt !== undefined
+      ? { deadlineAt: workflowMetadata.deadlineAt }
+      : {}),
+    ...(workflowMetadata?.recipients !== undefined
+      ? { recipients: workflowMetadata.recipients }
+      : {}),
+    ...(workflowMetadata?.approvals !== undefined
+      ? { approvals: workflowMetadata.approvals }
+      : {}),
+    ...(workflowMetadata?.externalRefs !== undefined
+      ? { externalRefs: workflowMetadata.externalRefs }
+      : {}),
+  };
+}
+
+function mapLeaseDecisionContext(lease: {
+  id: string;
+  issue_id: string | null;
+  agent_id: string;
+  status: string;
+  expires_at: string;
+  last_heartbeat_at: string | null;
+}): Record<string, unknown> {
+  return {
+    id: lease.id,
+    issueId: lease.issue_id,
+    agentId: lease.agent_id,
+    status: lease.status,
+    expiresAt: lease.expires_at,
+    lastHeartbeatAt: lease.last_heartbeat_at,
+  };
 }
 
 function resolveProjectSummary(
@@ -2044,6 +2533,15 @@ function buildHarnessAdminMemoryMetadata(input: {
   return Object.fromEntries(entries);
 }
 
+function withCliContractVersion<TPayload extends Record<string, unknown>>(
+  payload: TPayload,
+): TPayload & { contractVersion: typeof SESSION_LIFECYCLE_CLI_CONTRACT_VERSION } {
+  return {
+    ...payload,
+    contractVersion: SESSION_LIFECYCLE_CLI_CONTRACT_VERSION,
+  };
+}
+
 function buildNextIncrementalInput(
   beginInput: Record<string, unknown>,
   dbPath: string,
@@ -2055,16 +2553,14 @@ function buildNextIncrementalInput(
     dbPath,
     workspaceId: candidate.workspaceId,
     projectId: candidate.projectId,
-    progressPath: candidate.progressPath,
-    featureListPath: candidate.featureListPath,
-    planPath: candidate.planPath,
-    syncManifestPath: candidate.syncManifestPath,
+    artifacts: candidate.artifacts,
     mem0Enabled: candidate.mem0Enabled,
     ...(candidate.campaignId !== undefined
       ? { campaignId: candidate.campaignId }
       : {}),
     ...(candidate.agentId !== undefined ? { agentId: candidate.agentId } : {}),
-    ...(candidate.host !== undefined ? { host: candidate.host } : {}),
+    host: candidate.host,
+    hostCapabilities: candidate.hostCapabilities,
     ...(candidate.leaseTtlSeconds !== undefined
       ? { leaseTtlSeconds: candidate.leaseTtlSeconds }
       : {}),

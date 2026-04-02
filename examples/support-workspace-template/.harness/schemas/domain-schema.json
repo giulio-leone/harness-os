@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "domain": "support-case-lifecycle",
+  "promptFixtureId": "support-prompt",
+  "extendsHarnessCore": {
+    "projectKey": "support-workspace-template",
+    "workspaceKind": "bootstrap-template",
+    "tables": [
+      "workspaces",
+      "projects",
+      "campaigns",
+      "issues",
+      "runs",
+      "leases",
+      "checkpoints",
+      "events",
+      "artifacts",
+      "memory_links"
+    ]
+  },
+  "canonicalInvariants": [
+    "The database is the primary source of truth.",
+    "mem0 and other semantic memory layers are support-only retrieval surfaces.",
+    "Every customer-facing resolution must stay customer-safe and reviewable.",
+    "Summaries and decisions must remain operator-defensible."
+  ],
+  "entities": [
+    {
+      "name": "cases",
+      "description": "Canonical support cases discovered before investigation begins.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "case_key", "type": "text", "required": true },
+        { "name": "summary", "type": "text", "required": true },
+        { "name": "owner", "type": "text", "required": false },
+        { "name": "priority_tier", "type": "text", "required": true },
+        { "name": "current_state", "type": "text", "required": true },
+        { "name": "next_best_action", "type": "text", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "responses",
+      "description": "Investigation or response records linked to a specific case and harness issue.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "case_id", "type": "text", "required": true },
+        { "name": "issue_id", "type": "text", "required": false },
+        { "name": "current_run_id", "type": "text", "required": false },
+        { "name": "status", "type": "text", "required": true },
+        { "name": "response_summary", "type": "text", "required": false },
+        { "name": "customer_safe_summary", "type": "text", "required": false },
+        { "name": "next_best_action", "type": "text", "required": true },
+        { "name": "follow_up_at", "type": "timestamp", "required": false },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "stakeholders",
+      "description": "Internal or customer-facing stakeholders connected to one case or response path.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "case_id", "type": "text", "required": true },
+        { "name": "full_name", "type": "text", "required": true },
+        { "name": "role", "type": "text", "required": true },
+        { "name": "channel", "type": "text", "required": false },
+        { "name": "contact_url", "type": "text", "required": false },
+        { "name": "engagement_reason", "type": "text", "required": true },
+        { "name": "priority_rank", "type": "integer", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    },
+    {
+      "name": "kb_notes",
+      "description": "Knowledge-base or follow-up notes linked back to canonical support state and optional mem0 evidence.",
+      "fields": [
+        { "name": "id", "type": "text", "required": true },
+        { "name": "response_id", "type": "text", "required": true },
+        { "name": "memory_link_id", "type": "text", "required": false },
+        { "name": "compressed_context", "type": "text", "required": true },
+        { "name": "risks", "type": "text", "required": true },
+        { "name": "next_action_summary", "type": "text", "required": true },
+        { "name": "created_at", "type": "timestamp", "required": true },
+        { "name": "updated_at", "type": "timestamp", "required": true }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from": "responses.case_id",
+      "to": "cases.id",
+      "purpose": "Each response path belongs to one canonical case."
+    },
+    {
+      "from": "responses.issue_id",
+      "to": "issues.id",
+      "purpose": "Response state can be tied back to the currently leased issue."
+    },
+    {
+      "from": "stakeholders.case_id",
+      "to": "cases.id",
+      "purpose": "Stakeholders stay scoped to a canonical case when relevant."
+    },
+    {
+      "from": "kb_notes.response_id",
+      "to": "responses.id",
+      "purpose": "Knowledge notes remain linked to canonical response state."
+    },
+    {
+      "from": "kb_notes.memory_link_id",
+      "to": "memory_links.id",
+      "purpose": "Derived memory can point to optional mem0 evidence without replacing canonical data."
+    }
+  ],
+  "qualificationScoring": {
+    "dimensions": [
+      "severity",
+      "customer_impact",
+      "resolution_complexity",
+      "stakeholder_sensitivity",
+      "follow_up_value"
+    ],
+    "tiers": [
+      { "name": "A", "description": "Highest-value and highest-confidence records." },
+      { "name": "B", "description": "Useful records worth active work." },
+      { "name": "C", "description": "Low-priority or controlled-volume records." }
+    ]
+  },
+  "stateMachine": {
+    "states": [
+      { "name": "discovered", "allowedNext": ["triaged", "deprioritized"] },
+      { "name": "triaged", "allowedNext": ["investigating", "deprioritized"] },
+      { "name": "investigating", "allowedNext": ["resolving", "blocked"] },
+      { "name": "resolving", "allowedNext": ["follow_up_pending", "closed", "blocked"] },
+      { "name": "follow_up_pending", "allowedNext": ["closed", "investigating"] },
+      { "name": "blocked", "allowedNext": ["investigating", "resolving", "closed"] }
+    ],
+    "terminalStates": [
+      "closed",
+      "deprioritized"
+    ]
+  },
+  "requiredSummaryFields": [
+    "Case",
+    "Source",
+    "Main signal",
+    "Why it matters",
+    "Customer-safe summary",
+    "Main risks",
+    "Stakeholders",
+    "Actions completed",
+    "Current state",
+    "Next best action"
+  ]
+}

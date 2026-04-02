@@ -1,6 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
+import type {
+  HarnessHostCapabilities,
+  HarnessPolicy,
+} from '../contracts/policy-contracts.js';
+import type {
+  HarnessWorkflowApproval,
+  HarnessWorkflowExternalRef,
+  HarnessWorkflowRecipient,
+} from '../contracts/workflow-contracts.js';
+import type { IssuePolicyState } from '../runtime/policy-engine.js';
+import {
+  buildIssuePolicySurface,
+  evaluateIssueDispatchState,
+  sortIssuesForDispatch,
+} from '../runtime/policy-engine.js';
+import { buildWorkItemMetadataSurface } from '../runtime/work-item-metadata.js';
 import { runStatement, selectAll, selectOne } from './store.js';
 import { assertValidTransition } from './state-machine.js';
 
@@ -15,7 +31,14 @@ export interface IssueRecord {
   size: string;
   dependsOn: string[];
   nextBestAction?: string;
+  blockedReason?: string;
   createdAt: string;
+  deadlineAt?: string;
+  recipients?: HarnessWorkflowRecipient[];
+  approvals?: HarnessWorkflowApproval[];
+  externalRefs?: HarnessWorkflowExternalRef[];
+  policy?: HarnessPolicy;
+  policyState?: IssuePolicyState;
 }
 
 export interface LeaseRecord {
@@ -37,6 +60,8 @@ export interface ClaimLeaseInput {
   campaignId?: string;
   preferredIssueId?: string;
   agentId: string;
+  host: string;
+  hostCapabilities: HarnessHostCapabilities;
   leaseTtlSeconds: number;
   now?: string;
 }
@@ -78,7 +103,14 @@ interface RawIssueRow {
   size: string;
   depends_on: string;
   next_best_action: string | null;
+  blocked_reason: string | null;
   created_at: string;
+  deadline_at: string | null;
+  recipients_json: string | null;
+  approvals_json: string | null;
+  external_refs_json: string | null;
+  policy_json: string | null;
+  campaign_policy_json: string | null;
 }
 
 interface RawLeaseRow {
@@ -100,8 +132,19 @@ interface RawLeaseCheckpointRow extends RawLeaseRow {
 
 interface RawMilestoneRow {
   id: string;
+  description?: string;
+  priority?: string;
   depends_on: string;
   status: string;
+  blocked_reason?: string | null;
+}
+
+interface RawBlockingIssueRow {
+  milestone_id: string;
+  id: string;
+  priority: string;
+  status: string;
+  blocked_reason: string | null;
 }
 
 export function reconcileProjectState(
@@ -156,7 +199,7 @@ export function reconcileProjectState(
 
     if (leaseRow.expires_at <= now) {
       markLeaseNeedsRecovery(connection, leaseRow.id);
-      updateIssueStatus(connection, issueId, 'needs_recovery');
+      updateIssueStatus(connection, issueId, 'needs_recovery', 'lease_expired');
       upsertBlocker(blockers, {
         issueId,
         leaseId: leaseRow.id,
@@ -172,7 +215,7 @@ export function reconcileProjectState(
       leaseRow.last_checkpoint_at <= freshnessThreshold
     ) {
       markLeaseNeedsRecovery(connection, leaseRow.id);
-      updateIssueStatus(connection, issueId, 'needs_recovery');
+      updateIssueStatus(connection, issueId, 'needs_recovery', 'checkpoint_stale');
       upsertBlocker(blockers, {
         issueId,
         leaseId: leaseRow.id,
@@ -211,38 +254,47 @@ export function reconcileProjectState(
 export function selectNextRecoveryIssue(
   connection: DatabaseSync,
   projectId: string,
+  host: string,
+  hostCapabilities: HarnessHostCapabilities,
   campaignId?: string,
 ): IssueRecord {
   const rows = selectAll<RawIssueRow>(
     connection,
     `SELECT
-       id,
-       project_id,
-       campaign_id,
-       milestone_id,
-       task,
-       priority,
-       status,
-       size,
-       depends_on,
-       next_best_action,
-       created_at
-     FROM issues
-     WHERE project_id = ?
-       AND (? IS NULL OR campaign_id = ?)
-       AND status = 'needs_recovery'
-     ORDER BY
-       CASE priority
-         WHEN 'critical' THEN 0
-         WHEN 'high' THEN 1
-         WHEN 'medium' THEN 2
-         ELSE 3
-       END,
-       id ASC`,
+       i.id,
+       i.project_id,
+       i.campaign_id,
+       i.milestone_id,
+       i.task,
+       i.priority,
+       i.status,
+        i.size,
+        i.depends_on,
+        i.next_best_action,
+        i.blocked_reason,
+        i.created_at,
+        i.deadline_at,
+        i.recipients_json,
+        i.approvals_json,
+        i.external_refs_json,
+        i.policy_json,
+        c.policy_json AS campaign_policy_json
+      FROM issues i
+      LEFT JOIN campaigns c ON c.id = i.campaign_id
+      WHERE i.project_id = ?
+        AND (? IS NULL OR i.campaign_id = ?)
+        AND i.status = 'needs_recovery'
+      ORDER BY i.id ASC`,
     [projectId, campaignId ?? null, campaignId ?? null],
   );
 
-  const issue = rows.map(mapIssueRow)[0];
+  const issue = selectDispatchableIssue(rows, {
+    projectId,
+    campaignId,
+    host,
+    hostCapabilities,
+    requiredStatus: 'needs_recovery',
+  });
 
   if (issue === undefined) {
     throw new Error(`No needs_recovery issues are available for project ${projectId}`);
@@ -254,6 +306,8 @@ export function selectNextRecoveryIssue(
 export function loadRecoveryIssue(
   connection: DatabaseSync,
   issueId: string,
+  host: string,
+  hostCapabilities: HarnessHostCapabilities,
   projectId?: string,
   campaignId?: string,
 ): IssueRecord {
@@ -276,6 +330,8 @@ export function loadRecoveryIssue(
       `Issue ${issue.id} is not recoverable from status ${issue.status}; expected needs_recovery`,
     );
   }
+
+  assertIssueDispatchable(issue, host, hostCapabilities);
 
   return issue;
 }
@@ -316,11 +372,14 @@ export function claimSpecificIssueLease(
     campaignId?: string;
     issueId: string;
     agentId: string;
+    host: string;
+    hostCapabilities: HarnessHostCapabilities;
     leaseTtlSeconds: number;
     now?: string;
   },
 ): LeaseRecord {
   const issue = loadIssue(connection, input.issueId);
+  assertIssueDispatchable(issue, input.host, input.hostCapabilities);
   const acquiredAt = input.now ?? new Date().toISOString();
   const expiresAt = new Date(
     Date.parse(acquiredAt) + input.leaseTtlSeconds * 1000,
@@ -423,8 +482,21 @@ export function claimOrResumeLease(
 
   const issue =
     input.preferredIssueId !== undefined
-      ? loadClaimableIssue(connection, input.preferredIssueId, input.projectId, input.campaignId)
-      : selectNextReadyIssue(connection, input.projectId, input.campaignId);
+      ? loadClaimableIssue(
+          connection,
+          input.preferredIssueId,
+          input.host,
+          input.hostCapabilities,
+          input.projectId,
+          input.campaignId,
+        )
+      : selectNextReadyIssue(
+          connection,
+          input.projectId,
+          input.host,
+          input.hostCapabilities,
+          input.campaignId,
+        );
 
   const acquiredAt = now;
   const expiresAt = new Date(
@@ -522,20 +594,28 @@ export function loadIssue(
   const row = selectOne<RawIssueRow>(
     connection,
     `SELECT
-       id,
-       project_id,
-       campaign_id,
-       milestone_id,
-       task,
-       priority,
-       status,
-       size,
-       depends_on,
-       next_best_action,
-       created_at
-     FROM issues
-     WHERE id = ?
-     LIMIT 1`,
+       i.id,
+       i.project_id,
+       i.campaign_id,
+       i.milestone_id,
+       i.task,
+       i.priority,
+       i.status,
+        i.size,
+        i.depends_on,
+        i.next_best_action,
+        i.blocked_reason,
+        i.created_at,
+        i.deadline_at,
+        i.recipients_json,
+        i.approvals_json,
+        i.external_refs_json,
+        i.policy_json,
+        c.policy_json AS campaign_policy_json
+      FROM issues i
+      LEFT JOIN campaigns c ON c.id = i.campaign_id
+      WHERE i.id = ?
+      LIMIT 1`,
     [issueId],
   );
 
@@ -550,6 +630,7 @@ export function updateIssueStatus(
   connection: DatabaseSync,
   issueId: string,
   status: string,
+  blockedReason?: string | null
 ): void {
   const scope = selectOne<{ project_id: string; campaign_id: string | null }>(
     connection,
@@ -560,7 +641,7 @@ export function updateIssueStatus(
     [issueId],
   );
 
-  updateIssueStatusRaw(connection, issueId, status);
+  updateIssueStatusRaw(connection, issueId, status, blockedReason);
 
   if (scope !== null) {
     syncMilestoneStatuses(connection, {
@@ -576,7 +657,7 @@ export function syncMilestoneStatuses(
 ): Array<{ milestoneId: string; status: string }> {
   const milestones = selectAll<RawMilestoneRow>(
     connection,
-    `SELECT id, depends_on, status
+    `SELECT id, description, priority, depends_on, status, blocked_reason
      FROM milestones
      WHERE project_id = ?
      ORDER BY id ASC`,
@@ -611,12 +692,45 @@ export function syncMilestoneStatuses(
   }
 
   const nextStatuses = new Map<string, string>();
+  const nextBlockedReasons = new Map<string, string | null>();
+
+  const blockingIssueRows = selectAll<RawBlockingIssueRow>(
+    connection,
+    `SELECT milestone_id, id, priority, status, blocked_reason
+     FROM issues
+     WHERE project_id = ?
+       AND milestone_id IS NOT NULL
+       AND (? IS NULL OR campaign_id = ?)
+       AND status IN ('blocked', 'needs_recovery')
+     ORDER BY
+       milestone_id ASC,
+       CASE status
+         WHEN 'blocked' THEN 0
+         ELSE 1
+       END,
+       CASE priority
+         WHEN 'critical' THEN 0
+         WHEN 'high' THEN 1
+         WHEN 'medium' THEN 2
+         ELSE 3
+       END,
+       id ASC`,
+    [input.projectId, input.campaignId ?? null, input.campaignId ?? null],
+  );
+  const blockingIssuesByMilestone = new Map<string, RawBlockingIssueRow>();
+
+  for (const issue of blockingIssueRows) {
+    if (!blockingIssuesByMilestone.has(issue.milestone_id)) {
+      blockingIssuesByMilestone.set(issue.milestone_id, issue);
+    }
+  }
 
   for (const milestone of milestones) {
     nextStatuses.set(
       milestone.id,
       deriveMilestoneBaseStatus(issueCountsByMilestone.get(milestone.id)),
     );
+    nextBlockedReasons.set(milestone.id, null);
   }
 
   for (const milestone of milestones) {
@@ -627,30 +741,52 @@ export function syncMilestoneStatuses(
     }
 
     const dependencyIds = parseDependsOn(milestone.depends_on);
-    const isBlockedByDependency = dependencyIds.some(
+    const blockedDependencyId = dependencyIds.find(
       (dependencyId) => nextStatuses.get(dependencyId) !== 'done',
     );
 
-    if (isBlockedByDependency) {
+    if (blockedDependencyId !== undefined) {
       nextStatuses.set(milestone.id, 'blocked');
+      nextBlockedReasons.set(
+        milestone.id,
+        `milestone_dependency:${blockedDependencyId}`,
+      );
+      continue;
+    }
+
+    if (currentStatus === 'blocked') {
+      nextBlockedReasons.set(
+        milestone.id,
+        buildMilestoneBlockedReason(
+          blockingIssuesByMilestone.get(milestone.id),
+        ),
+      );
     }
   }
 
   for (const milestone of milestones) {
     const nextStatus = nextStatuses.get(milestone.id) ?? 'pending';
+    const nextBlockedReason = nextBlockedReasons.get(milestone.id) ?? null;
+    const currentBlockedReason =
+      normalizeNullable(milestone.blocked_reason ?? null) ?? null;
 
-    if (nextStatus === milestone.status) {
+    if (
+      nextStatus === milestone.status &&
+      nextBlockedReason === currentBlockedReason
+    ) {
       continue;
     }
 
-    assertValidTransition('milestone', milestone.id, milestone.status, nextStatus);
+    if (nextStatus !== milestone.status) {
+      assertValidTransition('milestone', milestone.id, milestone.status, nextStatus);
+    }
 
     runStatement(
       connection,
       `UPDATE milestones
-       SET status = ?
+       SET status = ?, blocked_reason = ?
        WHERE id = ?`,
-      [nextStatus, milestone.id],
+      [nextStatus, nextBlockedReason, milestone.id],
     );
   }
 
@@ -664,10 +800,11 @@ function updateIssueStatusRaw(
   connection: DatabaseSync,
   issueId: string,
   status: string,
+  blockedReason?: string | null
 ): void {
-  const current = selectOne<{ status: string }>(
+  const current = selectOne<{ status: string; blocked_reason: string | null }>(
     connection,
-    'SELECT status FROM issues WHERE id = ?',
+    'SELECT status, blocked_reason FROM issues WHERE id = ?',
     [issueId],
   );
 
@@ -675,12 +812,31 @@ function updateIssueStatusRaw(
     assertValidTransition('issue', issueId, current.status, status);
   }
 
+  const nextBlockedReason =
+    blockedReason === undefined && status === 'blocked'
+      ? current?.blocked_reason ?? null
+      : blockedReason ?? null;
+
   runStatement(
     connection,
     `UPDATE issues
-     SET status = ?
+     SET status = ?, blocked_reason = ?
      WHERE id = ?`,
-    [status, issueId],
+    [status, nextBlockedReason, issueId],
+  );
+}
+
+function setIssueBlockedReason(
+  connection: DatabaseSync,
+  issueId: string,
+  blockedReason: string | null,
+): void {
+  runStatement(
+    connection,
+    `UPDATE issues
+     SET blocked_reason = ?
+     WHERE id = ?`,
+    [blockedReason, issueId],
   );
 }
 
@@ -693,29 +849,37 @@ export function promoteEligiblePendingIssues(
   const rows = selectAll<RawIssueRow>(
     connection,
     `SELECT
-       id,
-       project_id,
-       campaign_id,
-       milestone_id,
-       task,
-       priority,
-       status,
-       size,
-       depends_on,
-       next_best_action,
-       created_at
-     FROM issues
-     WHERE project_id = ?
-       AND (? IS NULL OR campaign_id = ?)
-       AND status = 'pending'
-     ORDER BY
-       CASE priority
-         WHEN 'critical' THEN 0
-         WHEN 'high' THEN 1
-         WHEN 'medium' THEN 2
-         ELSE 3
-       END,
-       id ASC`,
+       i.id,
+       i.project_id,
+       i.campaign_id,
+       i.milestone_id,
+       i.task,
+       i.priority,
+       i.status,
+        i.size,
+        i.depends_on,
+        i.next_best_action,
+        i.blocked_reason,
+        i.created_at,
+        i.deadline_at,
+        i.recipients_json,
+        i.approvals_json,
+        i.external_refs_json,
+        i.policy_json,
+        c.policy_json AS campaign_policy_json
+      FROM issues i
+      LEFT JOIN campaigns c ON c.id = i.campaign_id
+      WHERE i.project_id = ?
+        AND (? IS NULL OR i.campaign_id = ?)
+        AND i.status = 'pending'
+      ORDER BY
+        CASE i.priority
+          WHEN 'critical' THEN 0
+          WHEN 'high' THEN 1
+          WHEN 'medium' THEN 2
+          ELSE 3
+        END,
+        i.id ASC`,
     [input.projectId, input.campaignId ?? null, input.campaignId ?? null],
   );
   const pendingIssues = rows.map(mapIssueRow);
@@ -795,27 +959,25 @@ export function promoteEligiblePendingIssues(
   const promoted: IssueRecord[] = [];
 
   for (const issue of pendingIssues) {
-    const milestoneReady =
-      issue.milestoneId === undefined ||
-      (milestoneDependencies.get(issue.milestoneId) ?? []).every(
-        (dependencyId) => milestoneStatuses.get(dependencyId) === 'done',
-      );
-    const readyToPromote =
-      milestoneReady &&
-      (
-        issue.dependsOn.length === 0 ||
-        issue.dependsOn.every((dependencyId) => dependencyStatuses.get(dependencyId) === 'done')
-      );
+    const blockedReason = computeIssueBlockedReason(
+      issue,
+      milestoneDependencies,
+      milestoneStatuses,
+      dependencyStatuses,
+    );
+    const readyToPromote = blockedReason === null;
 
     if (!readyToPromote) {
+      setIssueBlockedReason(connection, issue.id, blockedReason);
       continue;
     }
 
-    updateIssueStatusRaw(connection, issue.id, 'ready');
+    updateIssueStatusRaw(connection, issue.id, 'ready', null);
     dependencyStatuses.set(issue.id, 'ready');
     promoted.push({
       ...issue,
       status: 'ready',
+      blockedReason: undefined,
     });
   }
 
@@ -824,6 +986,51 @@ export function promoteEligiblePendingIssues(
   }
 
   return promoted;
+}
+
+function computeIssueBlockedReason(
+  issue: IssueRecord,
+  milestoneDependencies: Map<string, string[]>,
+  milestoneStatuses: Map<string, string>,
+  dependencyStatuses: Map<string, string>,
+): string | null {
+  if (issue.milestoneId !== undefined) {
+    const blockedMilestoneDependency = (
+      milestoneDependencies.get(issue.milestoneId) ?? []
+    ).find((dependencyId) => milestoneStatuses.get(dependencyId) !== 'done');
+
+    if (blockedMilestoneDependency !== undefined) {
+      return `milestone_dependency:${blockedMilestoneDependency}`;
+    }
+  }
+
+  const blockedIssueDependency = issue.dependsOn.find(
+    (dependencyId) => dependencyStatuses.get(dependencyId) !== 'done',
+  );
+
+  if (blockedIssueDependency !== undefined) {
+    return `issue_dependency:${blockedIssueDependency}`;
+  }
+
+  return null;
+}
+
+function buildMilestoneBlockedReason(
+  blockingIssue: RawBlockingIssueRow | undefined,
+): string | null {
+  if (blockingIssue === undefined) {
+    return 'milestone_incomplete';
+  }
+
+  if (blockingIssue.status === 'needs_recovery') {
+    return `issue_needs_recovery:${blockingIssue.id}`;
+  }
+
+  if (blockingIssue.blocked_reason !== null) {
+    return `issue_blocked:${blockingIssue.id}:${blockingIssue.blocked_reason}`;
+  }
+
+  return `issue_blocked:${blockingIssue.id}`;
 }
 
 function deriveMilestoneBaseStatus(
@@ -987,6 +1194,8 @@ function findActiveLeaseForIssue(
 function loadClaimableIssue(
   connection: DatabaseSync,
   issueId: string,
+  host: string,
+  hostCapabilities: HarnessHostCapabilities,
   projectId?: string,
   campaignId?: string,
 ): IssueRecord {
@@ -1010,69 +1219,153 @@ function loadClaimableIssue(
     );
   }
 
+  assertIssueDispatchable(issue, host, hostCapabilities);
+
   return issue;
 }
 
 function selectNextReadyIssue(
   connection: DatabaseSync,
   projectId: string,
+  host: string,
+  hostCapabilities: HarnessHostCapabilities,
   campaignId?: string,
 ): IssueRecord {
-  // Priority aging: issues waiting longer get boosted.
-  // Base score = priority rank (0-3). Every 24h of wait time subtracts 1 from the score.
-  // This prevents starvation of lower-priority tasks.
-  const now = new Date().toISOString();
   const rows = selectAll<RawIssueRow>(
     connection,
     `SELECT
-       id,
-       project_id,
-       campaign_id,
-       milestone_id,
-       task,
-       priority,
-       status,
-       size,
-       depends_on,
-       next_best_action,
-       created_at
-     FROM issues
-     WHERE project_id = ?
-       AND status = 'ready'
-       AND (? IS NULL OR campaign_id = ?)
-     ORDER BY
-       (CASE priority
-         WHEN 'critical' THEN 0
-         WHEN 'high' THEN 1
-         WHEN 'medium' THEN 2
-         ELSE 3
-       END) - CAST(
-         CASE WHEN created_at != '' AND created_at IS NOT NULL
-           THEN (julianday(?) - julianday(created_at))
-           ELSE 0
-         END AS INTEGER
-       ),
-       CASE priority
-         WHEN 'critical' THEN 0
-         WHEN 'high' THEN 1
-         WHEN 'medium' THEN 2
-         ELSE 3
-       END,
-       created_at ASC,
-       id ASC`,
-    [projectId, campaignId ?? null, campaignId ?? null, now],
+       i.id,
+       i.project_id,
+       i.campaign_id,
+       i.milestone_id,
+       i.task,
+       i.priority,
+       i.status,
+        i.size,
+        i.depends_on,
+        i.next_best_action,
+        i.blocked_reason,
+        i.created_at,
+        i.deadline_at,
+        i.recipients_json,
+        i.approvals_json,
+        i.external_refs_json,
+        i.policy_json,
+        c.policy_json AS campaign_policy_json
+      FROM issues i
+      LEFT JOIN campaigns c ON c.id = i.campaign_id
+      WHERE i.project_id = ?
+        AND i.status = 'ready'
+        AND (? IS NULL OR i.campaign_id = ?)
+      ORDER BY i.id ASC`,
+    [projectId, campaignId ?? null, campaignId ?? null],
   );
 
-  const issue = rows.map(mapIssueRow)[0];
+  return (
+    selectDispatchableIssue(rows, {
+      projectId,
+      campaignId,
+      host,
+      hostCapabilities,
+      requiredStatus: 'ready',
+    }) ??
+    (() => {
+      throw new Error(`No ready issues are available for project ${projectId}`);
+    })()
+  );
+}
 
-  if (issue === undefined) {
-    throw new Error(`No ready issues are available for project ${projectId}`);
+function selectDispatchableIssue(
+  rows: readonly RawIssueRow[],
+  input: {
+    projectId: string;
+    campaignId?: string;
+    host: string;
+    hostCapabilities: HarnessHostCapabilities;
+    requiredStatus: 'ready' | 'needs_recovery';
+  },
+): IssueRecord | undefined {
+  const sortedRows = sortIssuesForDispatch(rows);
+
+  if (sortedRows.length === 0) {
+    return undefined;
   }
 
-  return issue;
+  const dispatchable = sortedRows.find((row) =>
+    evaluateIssueDispatchState(row, input.hostCapabilities).eligible,
+  );
+
+  if (dispatchable !== undefined) {
+    return mapIssueRow(dispatchable);
+  }
+
+  const rankedReasons = sortedRows.slice(0, 3).map((row) => {
+    const dispatchState = evaluateIssueDispatchState(row, input.hostCapabilities);
+    const reasons = [
+      ...(dispatchState.missingWorkloadClass !== undefined
+        ? [`requires workload class "${dispatchState.missingWorkloadClass}"`]
+        : []),
+      ...dispatchState.missingHostCapabilities.map(
+        (capability) => `requires host capability "${capability}"`,
+      ),
+    ];
+
+    return `${row.id} (${row.task}): ${reasons.join(', ')}`;
+  });
+
+  throw new Error(
+    `No ${input.requiredStatus} issues match host "${input.host}" for project ${input.projectId}. ` +
+      `Top mismatches: ${rankedReasons.join('; ')}`,
+  );
+}
+
+function assertIssueDispatchable(
+  issue: IssueRecord,
+  host: string,
+  hostCapabilities: HarnessHostCapabilities,
+): void {
+  const dispatchState = evaluateHarnessDispatchability(issue, hostCapabilities);
+
+  if (dispatchState.eligible) {
+    return;
+  }
+
+  const reasons = [
+    ...(dispatchState.missingWorkloadClass !== undefined
+      ? [`requires workload class "${dispatchState.missingWorkloadClass}"`]
+      : []),
+    ...dispatchState.missingHostCapabilities.map(
+      (capability) => `requires host capability "${capability}"`,
+    ),
+  ];
+
+  throw new Error(
+    `Issue ${issue.id} cannot be dispatched to host "${host}": ${reasons.join(', ')}`,
+  );
+}
+
+function evaluateHarnessDispatchability(
+  issue: Pick<IssueRecord, 'policy'>,
+  hostCapabilities: HarnessHostCapabilities,
+) {
+  return evaluateIssueDispatchState(
+    {
+      id: 'issue-dispatch',
+      priority: 'medium',
+      status: 'ready',
+      created_at: null,
+      deadline_at: null,
+      policy_json: issue.policy === undefined ? null : JSON.stringify(issue.policy),
+      campaign_policy_json: null,
+    },
+    hostCapabilities,
+  );
 }
 
 function mapIssueRow(row: RawIssueRow): IssueRecord {
+  const policySurface = buildIssuePolicySurface(row);
+  const workflowMetadata = buildWorkItemMetadataSurface(row);
+
   return {
     id: row.id,
     projectId: row.project_id,
@@ -1084,7 +1377,22 @@ function mapIssueRow(row: RawIssueRow): IssueRecord {
     size: row.size,
     dependsOn: parseDependsOn(row.depends_on),
     nextBestAction: normalizeNullable(row.next_best_action),
+    blockedReason: normalizeNullable(row.blocked_reason),
     createdAt: row.created_at ?? '',
+    ...(workflowMetadata?.deadlineAt !== undefined
+      ? { deadlineAt: workflowMetadata.deadlineAt }
+      : {}),
+    ...(workflowMetadata?.recipients !== undefined
+      ? { recipients: workflowMetadata.recipients }
+      : {}),
+    ...(workflowMetadata?.approvals !== undefined
+      ? { approvals: workflowMetadata.approvals }
+      : {}),
+    ...(workflowMetadata?.externalRefs !== undefined
+      ? { externalRefs: workflowMetadata.externalRefs }
+      : {}),
+    policy: policySurface.policy,
+    policyState: policySurface.policyState,
   };
 }
 

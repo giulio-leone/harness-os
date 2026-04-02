@@ -1,0 +1,8 @@
+{
+  "action": "inspect_overview",
+  "input": {
+    "dbPath": "/Users/giulioleone/Sviluppo/harness-os/examples/research-workspace-template/.harness/runtime/live-catalog.sqlite",
+    "projectId": "project-template-research",
+    "runLimit": 10
+  }
+}

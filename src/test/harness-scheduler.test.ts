@@ -11,6 +11,7 @@ import {
   openHarnessDatabase,
   runHarnessScheduler,
   selectAll,
+  selectOne,
 } from '../index.js';
 
 test('matchesCronExpression supports steps and weekday ranges', () => {
@@ -57,6 +58,20 @@ test('runHarnessScheduler injects due jobs once per minute and skips duplicates'
             campaignName: 'Campaign Delta',
             priority: 'high',
             size: 'S',
+            deadlineAt: '2026-03-23T10:45:00.000Z',
+            recipients: [
+              {
+                id: 'scheduler-bot',
+                kind: 'service',
+                label: 'Scheduler Bot',
+              },
+            ],
+            policy: {
+              owner: 'scheduler-bot',
+              serviceLevel: {
+                resolveWithinMinutes: 60,
+              },
+            },
           },
           {
             task: 'Never due here',
@@ -117,9 +132,36 @@ test('runHarnessScheduler injects due jobs once per minute and skips duplicates'
         database.connection,
         'SELECT job_key, scheduled_for FROM scheduler_injections ORDER BY scheduled_for ASC',
       );
+      const scheduledIssue = selectOne<{
+        deadline_at: string | null;
+        recipients_json: string;
+        policy_json: string;
+      }>(
+        database.connection,
+        `SELECT deadline_at, recipients_json, policy_json
+          FROM issues
+          WHERE task = ?
+          ORDER BY created_at ASC
+         LIMIT 1`,
+        ['Run recurring sync'],
+      );
 
       assert.equal(issues.length, 2);
       assert.equal(injections.length, 2);
+      assert.equal(scheduledIssue?.deadline_at, '2026-03-23T10:45:00.000Z');
+      assert.deepEqual(JSON.parse(scheduledIssue?.recipients_json ?? '[]'), [
+        {
+          id: 'scheduler-bot',
+          kind: 'service',
+          label: 'Scheduler Bot',
+        },
+      ]);
+      assert.deepEqual(JSON.parse(scheduledIssue?.policy_json ?? '{}'), {
+        owner: 'scheduler-bot',
+        serviceLevel: {
+          resolveWithinMinutes: 60,
+        },
+      });
     } finally {
       database.close();
     }

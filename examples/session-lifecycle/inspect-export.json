@@ -1,8 +1,10 @@
 {
-  "action": "inspect_overview",
+  "contractVersion": "6.0.0",
+  "action": "inspect_export",
   "input": {
     "dbPath": "/absolute/path/to/harness.sqlite",
     "projectId": "project-1",
-    "runLimit": 10
+    "runLimit": 10,
+    "eventLimit": 20
   }
 }

@@ -141,6 +141,167 @@ test('createHarnessCampaign requires workspaceId when multiple workspaces exist'
   }
 });
 
+test('createHarnessCampaign and planHarnessIssues persist policy defaults and issue overrides', () => {
+  const tempDir = createTempDir('harness-policy-persistence-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    const workspace = initHarnessWorkspace({
+      dbPath,
+      workspaceName: 'Policy Workspace',
+    }) as unknown as WorkspaceResult;
+    const campaign = createHarnessCampaign({
+      dbPath,
+      workspaceId: workspace.workspaceId,
+      projectName: 'Policy Project',
+      campaignName: 'Policy Campaign',
+      objective: 'Persist operational policy',
+      policy: {
+        owner: 'ops-team',
+        serviceLevel: {
+          responseWithinMinutes: 30,
+        },
+      },
+    }) as unknown as CampaignResult;
+    const planned = planHarnessIssues({
+      dbPath,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+      milestones: [
+        {
+          milestone_key: 'policy-milestone',
+          description: 'Policy milestone',
+          issues: [
+            {
+              task: 'Handle overdue queue item',
+              priority: 'high',
+              size: 'M',
+              deadlineAt: '2026-04-03T12:00:00.000Z',
+              recipients: [
+                {
+                  id: 'ops-review',
+                  kind: 'team',
+                  label: 'Ops Review',
+                  role: 'approver',
+                },
+              ],
+              approvals: [
+                {
+                  id: 'ops-signoff',
+                  label: 'Ops sign-off',
+                  recipientIds: ['ops-review'],
+                  state: 'pending',
+                },
+              ],
+              externalRefs: [
+                {
+                  id: 'runbook-123',
+                  kind: 'runbook',
+                  value: 'ops://runbooks/123',
+                  label: 'Queue escalation runbook',
+                },
+              ],
+              policy: {
+                escalationRules: [
+                  {
+                    trigger: 'deadline_breached',
+                    action: 'raise_priority',
+                    priority: 'critical',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    }) as unknown as BatchPlanResult;
+
+    const database = openHarnessDatabase({ dbPath });
+
+    try {
+      const storedCampaign = selectOne<{ policy_json: string }>(
+        database.connection,
+        'SELECT policy_json FROM campaigns WHERE id = ?',
+        [campaign.campaignId],
+      );
+      const storedIssue = selectOne<{
+        deadline_at: string | null;
+        recipients_json: string;
+        approvals_json: string;
+        external_refs_json: string;
+        policy_json: string;
+      }>(
+        database.connection,
+        `SELECT deadline_at, recipients_json, approvals_json, external_refs_json, policy_json
+         FROM issues
+         WHERE id = ?`,
+        [planned.generatedMilestones[0].generatedIssues[0].id],
+      );
+      const storedMilestone = selectOne<{
+        deadline_at: string | null;
+        recipients_json: string;
+        approvals_json: string;
+        external_refs_json: string;
+      }>(
+        database.connection,
+        `SELECT deadline_at, recipients_json, approvals_json, external_refs_json
+         FROM milestones
+         WHERE id = ?`,
+        [planned.generatedMilestones[0].id],
+      );
+
+      assert.deepEqual(JSON.parse(storedCampaign?.policy_json ?? '{}'), {
+        owner: 'ops-team',
+        serviceLevel: {
+          responseWithinMinutes: 30,
+        },
+      });
+      assert.equal(storedIssue?.deadline_at, '2026-04-03T12:00:00.000Z');
+      assert.deepEqual(JSON.parse(storedIssue?.recipients_json ?? '[]'), [
+        {
+          id: 'ops-review',
+          kind: 'team',
+          label: 'Ops Review',
+          role: 'approver',
+        },
+      ]);
+      assert.deepEqual(JSON.parse(storedIssue?.approvals_json ?? '[]'), [
+        {
+          id: 'ops-signoff',
+          label: 'Ops sign-off',
+          recipientIds: ['ops-review'],
+          state: 'pending',
+        },
+      ]);
+      assert.deepEqual(JSON.parse(storedIssue?.external_refs_json ?? '[]'), [
+        {
+          id: 'runbook-123',
+          kind: 'runbook',
+          value: 'ops://runbooks/123',
+          label: 'Queue escalation runbook',
+        },
+      ]);
+      assert.deepEqual(JSON.parse(storedIssue?.policy_json ?? '{}'), {
+        escalationRules: [
+          {
+            trigger: 'deadline_breached',
+            action: 'raise_priority',
+            priority: 'critical',
+          },
+        ],
+      });
+      assert.equal(storedMilestone?.deadline_at, null);
+      assert.deepEqual(JSON.parse(storedMilestone?.recipients_json ?? '[]'), []);
+      assert.deepEqual(JSON.parse(storedMilestone?.approvals_json ?? '[]'), []);
+      assert.deepEqual(JSON.parse(storedMilestone?.external_refs_json ?? '[]'), []);
+    } finally {
+      database.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('planHarnessIssues stores validated issue dependencies inside a canonical milestone batch', () => {
   const tempDir = createTempDir('harness-plan-issues-');
   const dbPath = join(tempDir, 'harness.sqlite');

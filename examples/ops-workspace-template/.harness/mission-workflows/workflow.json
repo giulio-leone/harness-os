@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "workflowId": "ops-workflow",
+  "domain": "ops-incident-lifecycle",
+  "promptFixtureId": "ops-prompt",
+  "stages": [
+    {
+      "id": "triage-and-rank",
+      "campaignId": "mission-ops-triage",
+      "currentIssueIds": [
+        "issue-ops-triage-batch"
+      ],
+      "promptRules": [
+        "Capture the first batch of incidents or risky changes",
+        "Normalize them into canonical incident state",
+        "Assign one next best action per incident"
+      ],
+      "requiredEntities": [
+        "incidents"
+      ],
+      "requiredCheckpoints": [
+        "incidents captured",
+        "priority assigned",
+        "next best action set"
+      ],
+      "resultingStates": [
+        "discovered",
+        "triaged"
+      ]
+    },
+    {
+      "id": "plan-and-mitigate",
+      "campaignId": "mission-ops-mitigation",
+      "currentIssueIds": [
+        "issue-ops-mitigation-plan",
+        "issue-ops-change-execute"
+      ],
+      "promptRules": [
+        "Prepare the mitigation package and rollback path",
+        "Attach the supporting artifact or approval evidence",
+        "Record the execution result or blocking reason"
+      ],
+      "requiredEntities": [
+        "changes",
+        "incidents",
+        "stakeholders"
+      ],
+      "requiredCheckpoints": [
+        "mitigation package prepared",
+        "verification evidence saved",
+        "state updated"
+      ],
+      "resultingStates": [
+        "planned",
+        "mitigating"
+      ]
+    },
+    {
+      "id": "verify-and-review",
+      "campaignId": "mission-ops-follow-through",
+      "currentIssueIds": [
+        "issue-ops-post-incident-review"
+      ],
+      "promptRules": [
+        "Record the post-incident follow-through",
+        "Update stakeholders if needed",
+        "Write the next best action and any review timing"
+      ],
+      "requiredEntities": [
+        "stakeholders",
+        "postincident_notes",
+        "changes"
+      ],
+      "requiredCheckpoints": [
+        "post-incident note written",
+        "follow-through evidence linked",
+        "next best action refreshed"
+      ],
+      "resultingStates": [
+        "verifying",
+        "closed"
+      ]
+    }
+  ],
+  "stateMachine": {
+    "states": [
+      { "id": "discovered", "allowedNext": ["triaged", "deprioritized"] },
+      { "id": "triaged", "allowedNext": ["planned", "deprioritized"] },
+      { "id": "planned", "allowedNext": ["mitigating", "blocked"] },
+      { "id": "mitigating", "allowedNext": ["verifying", "blocked", "closed"] },
+      { "id": "verifying", "allowedNext": ["closed", "planned"] },
+      { "id": "blocked", "allowedNext": ["planned", "mitigating", "closed"] }
+    ],
+    "terminalStates": [
+      "closed",
+      "deprioritized"
+    ]
+  },
+  "nextBestActionCatalog": [
+    "capture more telemetry",
+    "prepare mitigation",
+    "request approval",
+    "execute mitigation",
+    "review follow-through",
+    "deprioritize",
+    "close"
+  ],
+  "summaryTemplate": [
+    "Incident",
+    "Source",
+    "Main signal",
+    "Why it matters",
+    "Rollback path",
+    "Main risks",
+    "Stakeholders",
+    "Actions completed",
+    "Current state",
+    "Next best action"
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "features": [
+    {
+      "id": "bootstrap-files-in-place",
+      "category": "initializer",
+      "description": "The copied workspace contains the portable bootstrap files and runtime helpers for the research profile.",
+      "priority": "high",
+      "steps": [
+        "Copy the template into a new workspace",
+        "Run bash init.sh",
+        "Verify the runtime directories and helper scripts"
+      ],
+      "passes": false
+    },
+    {
+      "id": "research-contract-customized",
+      "category": "artifact",
+      "description": "The placeholder prompt, bindings, schema, and workflow are replaced with research-specific contracts.",
+      "priority": "high",
+      "steps": [
+        "Customize the prompt fixture",
+        "Customize the research prompt bindings",
+        "Customize the domain schema and workflow"
+      ],
+      "passes": false
+    },
+    {
+      "id": "live-catalog-seeded",
+      "category": "artifact",
+      "description": "The reference research catalog is seeded into a fresh harness SQLite database.",
+      "priority": "high",
+      "steps": [
+        "Customize .harness/live-mission-catalog.json with real sources and deadlines",
+        "Run python3 .harness/seed-live-catalog.py --reset",
+        "Inspect the generated overview input"
+      ],
+      "passes": false
+    },
+    {
+      "id": "research-dry-run-path-validated",
+      "category": "artifact",
+      "description": "The dry-run wrapper can claim the first ready research issue without mutating the canonical live database.",
+      "priority": "high",
+      "steps": [
+        "Run bash .harness/run-live-dry-run.sh",
+        "Inspect .harness/runtime/live-dry-run.summary.json",
+        "Verify sandbox state changes while canonical state remains intact"
+      ],
+      "passes": false
+    },
+    {
+      "id": "peer-review-handoff-ready",
+      "category": "artifact",
+      "description": "The preview-first live claim wrapper exposes the synthesis and handoff queue with peer-review workflow metadata intact.",
+      "priority": "high",
+      "steps": [
+        "Run bash .harness/run-live-claim.sh",
+        "Inspect .harness/runtime/live-claim-preview-summary.json",
+        "Confirm recipients, approvals, and external refs survive into the ready issue payload"
+      ],
+      "passes": false
+    }
+  ]
+}

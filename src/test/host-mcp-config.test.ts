@@ -24,6 +24,7 @@ test('buildHarnessMcpServerDefinition builds installable stdio server definition
     mem0ModulePath: '/pkg/node_modules/mem0-mcp/dist/index.js',
     ollamaBaseUrl: 'http://127.0.0.1:11434',
     mem0EmbedModel: 'qwen3-embedding:latest',
+    workloadProfileId: 'coding',
   });
 
   assert.deepEqual(definition, {
@@ -31,6 +32,7 @@ test('buildHarnessMcpServerDefinition builds installable stdio server definition
     args: ['/pkg/dist/bin/session-lifecycle-mcp.js'],
     env: {
       HARNESS_DB_PATH: '/tmp/harness.sqlite',
+      HARNESS_WORKLOAD_PROFILE: 'coding',
       MEM0_STORE_PATH: '/tmp/mem0',
       OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
       MEM0_EMBED_MODEL: 'qwen3-embedding:latest',

@@ -25,6 +25,7 @@ CREATE TABLE campaigns (
   objective TEXT NOT NULL,
   status TEXT NOT NULL,
   scope_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(scope_json)),
+  policy_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(policy_json)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -53,6 +54,11 @@ CREATE TABLE milestones (
   priority TEXT NOT NULL CHECK (priority IN ('critical', 'high', 'medium', 'low')),
   status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'in_progress', 'blocked', 'done', 'failed')),
   depends_on TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(depends_on)),
+  deadline_at TEXT,
+  recipients_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(recipients_json)),
+  approvals_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(approvals_json)),
+  external_refs_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(external_refs_json)),
+  blocked_reason TEXT,
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
@@ -66,7 +72,13 @@ CREATE TABLE issues (
   status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'in_progress', 'blocked', 'needs_recovery', 'done', 'failed')),
   size TEXT NOT NULL CHECK (size IN ('S', 'M', 'L', 'XL')),
   depends_on TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(depends_on)),
+  deadline_at TEXT,
+  recipients_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(recipients_json)),
+  approvals_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(approvals_json)),
+  external_refs_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(external_refs_json)),
+  policy_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(policy_json)),
   next_best_action TEXT,
+  blocked_reason TEXT,
   created_at TEXT NOT NULL DEFAULT '',
   FOREIGN KEY (project_id) REFERENCES projects(id),
   FOREIGN KEY (campaign_id) REFERENCES campaigns(id),

@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "bindings": [
+    {
+      "id": "ops-binding",
+      "promptFixtureId": "ops-prompt",
+      "promptFixturePath": ".harness/fixtures/template.prompt.txt",
+      "domain": "ops-incident-lifecycle",
+      "schemaPath": ".harness/schemas/domain-schema.json",
+      "workflowPath": ".harness/mission-workflows/workflow.json",
+      "sourceContext": [
+        "CONTEXT.MD",
+        "JOBS.MD",
+        "NETWORK.MD",
+        "incident-summary.md",
+        "rollback-plan.md"
+      ],
+      "requiredDomainEntities": [
+        "incidents",
+        "changes",
+        "stakeholders",
+        "postincident_notes"
+      ],
+      "campaignBindings": [
+        {
+          "campaignId": "mission-ops-triage",
+          "issueIds": [
+            "issue-ops-triage-batch"
+          ],
+          "promptRules": [
+            "Capture the first structured batch from the chosen operational source",
+            "Normalize the captured records into canonical incident state",
+            "Assign one next best action per incident"
+          ],
+          "requiredOutputs": [
+            "ranked incidents",
+            "priority signal",
+            "next best action"
+          ]
+        },
+        {
+          "campaignId": "mission-ops-mitigation",
+          "issueIds": [
+            "issue-ops-mitigation-plan",
+            "issue-ops-change-execute"
+          ],
+          "promptRules": [
+            "Prepare the mitigation package and rollback path",
+            "Record the approval state and action chosen",
+            "Preserve verification evidence or blocking context"
+          ],
+          "requiredOutputs": [
+            "mitigation plan",
+            "verification evidence",
+            "updated next best action"
+          ]
+        },
+        {
+          "campaignId": "mission-ops-follow-through",
+          "issueIds": [
+            "issue-ops-post-incident-review"
+          ],
+          "promptRules": [
+            "Record the post-incident follow-through",
+            "Capture unresolved risks or stakeholder notes",
+            "Set the next best action and review timing"
+          ],
+          "requiredOutputs": [
+            "post-incident note",
+            "stakeholder update",
+            "next best action"
+          ]
+        }
+      ],
+      "validationSuites": [],
+      "requiredMemoryKinds": [
+        "incident-summary",
+        "approval-summary",
+        "postincident-note"
+      ],
+      "operatingRules": [
+        "database-primary-source-of-truth",
+        "mem0-support-only",
+        "rollback-path-required-for-risky-change",
+        "operator-defensible-output"
+      ]
+    }
+  ]
+}

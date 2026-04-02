@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "workflowId": "support-workflow",
+  "domain": "support-case-lifecycle",
+  "promptFixtureId": "support-prompt",
+  "stages": [
+    {
+      "id": "intake-and-rank",
+      "campaignId": "mission-support-triage",
+      "currentIssueIds": [
+        "issue-support-triage-batch"
+      ],
+      "promptRules": [
+        "Capture the first batch of support cases",
+        "Normalize them into canonical case state",
+        "Assign one next best action per case"
+      ],
+      "requiredEntities": [
+        "cases"
+      ],
+      "requiredCheckpoints": [
+        "cases captured",
+        "priority assigned",
+        "next best action set"
+      ],
+      "resultingStates": [
+        "discovered",
+        "triaged"
+      ]
+    },
+    {
+      "id": "investigate-and-resolve",
+      "campaignId": "mission-support-resolution",
+      "currentIssueIds": [
+        "issue-support-investigation-plan",
+        "issue-support-response-execute"
+      ],
+      "promptRules": [
+        "Prepare the investigation package and escalation path",
+        "Attach the supporting artifact or approval evidence",
+        "Record the resolution result or blocking reason"
+      ],
+      "requiredEntities": [
+        "responses",
+        "cases",
+        "stakeholders"
+      ],
+      "requiredCheckpoints": [
+        "investigation package prepared",
+        "customer-safe evidence saved",
+        "state updated"
+      ],
+      "resultingStates": [
+        "investigating",
+        "resolving"
+      ]
+    },
+    {
+      "id": "confirm-and-close",
+      "campaignId": "mission-support-follow-up",
+      "currentIssueIds": [
+        "issue-support-resolution-confirm"
+      ],
+      "promptRules": [
+        "Record the customer follow-through context",
+        "Update stakeholders or the knowledge base if needed",
+        "Write the next best action and any timing"
+      ],
+      "requiredEntities": [
+        "stakeholders",
+        "kb_notes",
+        "responses"
+      ],
+      "requiredCheckpoints": [
+        "follow-up note written",
+        "knowledge note linked",
+        "next best action refreshed"
+      ],
+      "resultingStates": [
+        "follow_up_pending",
+        "closed"
+      ]
+    }
+  ],
+  "stateMachine": {
+    "states": [
+      { "id": "discovered", "allowedNext": ["triaged", "deprioritized"] },
+      { "id": "triaged", "allowedNext": ["investigating", "deprioritized"] },
+      { "id": "investigating", "allowedNext": ["resolving", "blocked"] },
+      { "id": "resolving", "allowedNext": ["follow_up_pending", "closed", "blocked"] },
+      { "id": "follow_up_pending", "allowedNext": ["closed", "investigating"] },
+      { "id": "blocked", "allowedNext": ["investigating", "resolving", "closed"] }
+    ],
+    "terminalStates": [
+      "closed",
+      "deprioritized"
+    ]
+  },
+  "nextBestActionCatalog": [
+    "capture more case context",
+    "prepare investigation package",
+    "send approved response",
+    "escalate stakeholder",
+    "follow up later",
+    "deprioritize",
+    "close"
+  ],
+  "summaryTemplate": [
+    "Case",
+    "Source",
+    "Main signal",
+    "Why it matters",
+    "Customer-safe summary",
+    "Main risks",
+    "Stakeholders",
+    "Actions completed",
+    "Current state",
+    "Next best action"
+  ]
+}

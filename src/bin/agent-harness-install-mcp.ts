@@ -3,6 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import type { WorkloadProfileId } from '../contracts/workload-profiles.js';
+import { isWorkloadProfileId } from '../runtime/workload-profile-registry.js';
 import {
   backupFileIfExists,
   buildCodexMcpAddCommand,
@@ -161,6 +163,10 @@ function parseArgs(argv: string[]): CliOptions {
         options.mem0EmbedModel = readRequiredValue(argv, index, token);
         index += 1;
         break;
+      case '--workload-profile':
+        options.workloadProfileId = parseWorkloadProfile(readRequiredValue(argv, index, token));
+        index += 1;
+        break;
       case '--dry-run':
         dryRun = true;
         break;
@@ -227,6 +233,7 @@ Options:
   --mem0-module-path <path>           Override AGENT_HARNESS_MEM0_MODULE_PATH
   --ollama-base-url <url>             Override OLLAMA_BASE_URL
   --mem0-embed-model <name>           Override MEM0_EMBED_MODEL
+  --workload-profile <id>             Set HARNESS_WORKLOAD_PROFILE (coding|research|ops|sales|support|assistant)
   --dry-run                           Print planned changes without applying them
 `);
 }
@@ -259,6 +266,16 @@ function detectGlobalMem0ModulePath(): string | undefined {
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled host: ${String(value)}`);
+}
+
+function parseWorkloadProfile(value: string): WorkloadProfileId {
+  if (!isWorkloadProfileId(value)) {
+    throw new Error(
+      `Unsupported workload profile "${value}". Use coding, research, ops, sales, support, or assistant.`,
+    );
+  }
+
+  return value;
 }
 
 try {

@@ -1,11 +1,9 @@
-import { hostname } from 'node:os';
-
 import type {
   IncrementalSessionInput,
   QueuePromotionInput,
   QueuePromotionResult,
   RecoverySessionInput,
-  SessionArtifactPaths,
+  SessionArtifactReference,
   SessionCheckpointInput,
   SessionCloseInput,
   SessionContext,
@@ -340,27 +338,25 @@ export class SessionOrchestrator {
   ): BeginCanonicalResult {
     const now = new Date().toISOString();
     const agentId = input.agentId ?? input.sessionId;
-    const host = input.host ?? hostname();
+    const host = input.host;
     const runId = input.sessionId;
 
     createRunRecord(connection, {
       runId,
       sessionType: 'incremental',
       workspaceId: input.workspaceId,
-      projectId: input.projectId,
-      campaignId: input.campaignId,
-      host,
-      status: 'reconciling',
-      startedAt: now,
-      notes: JSON.stringify({
-        progressPath: input.progressPath,
-        featureListPath: input.featureListPath,
-        planPath: input.planPath,
-        syncManifestPath: input.syncManifestPath,
-        mem0Enabled: input.mem0Enabled,
-        agentId,
-      }),
-    });
+        projectId: input.projectId,
+        campaignId: input.campaignId,
+        host,
+        status: 'reconciling',
+        startedAt: now,
+        notes: JSON.stringify({
+          artifacts: input.artifacts,
+          mem0Enabled: input.mem0Enabled,
+          agentId,
+          hostCapabilities: input.hostCapabilities,
+        }),
+      });
 
     const reconciliationBlockers = reconcileProjectState(connection, {
       projectId: input.projectId,
@@ -410,6 +406,8 @@ export class SessionOrchestrator {
       campaignId: input.campaignId,
       preferredIssueId: input.preferredIssueId,
       agentId,
+      host,
+      hostCapabilities: input.hostCapabilities,
       leaseTtlSeconds: input.leaseTtlSeconds ?? this.defaultLeaseTtlSeconds,
       now,
     });
@@ -421,6 +419,7 @@ export class SessionOrchestrator {
       runId,
       agentId,
       host,
+      hostCapabilities: input.hostCapabilities,
       leaseResult,
     });
   }
@@ -431,35 +430,42 @@ export class SessionOrchestrator {
   ): BeginClaimCanonicalResult {
     const now = new Date().toISOString();
     const agentId = input.agentId ?? input.sessionId;
-    const host = input.host ?? hostname();
+    const host = input.host;
     const runId = input.sessionId;
 
     createRunRecord(connection, {
       runId,
       sessionType: 'incremental-recovery',
       workspaceId: input.workspaceId,
-      projectId: input.projectId,
-      campaignId: input.campaignId,
-      host,
-      status: 'recovering',
-      startedAt: now,
-      notes: JSON.stringify({
-        progressPath: input.progressPath,
-        featureListPath: input.featureListPath,
-        planPath: input.planPath,
-        syncManifestPath: input.syncManifestPath,
-        mem0Enabled: input.mem0Enabled,
-        agentId,
-        recoverySummary: input.recoverySummary,
-      }),
-    });
+        projectId: input.projectId,
+        campaignId: input.campaignId,
+        host,
+        status: 'recovering',
+        startedAt: now,
+        notes: JSON.stringify({
+          artifacts: input.artifacts,
+          mem0Enabled: input.mem0Enabled,
+          agentId,
+          hostCapabilities: input.hostCapabilities,
+          recoverySummary: input.recoverySummary,
+        }),
+      });
 
     const recoveryIssue =
       input.preferredIssueId !== undefined
-        ? loadRecoveryIssue(connection, input.preferredIssueId, input.projectId, input.campaignId)
+        ? loadRecoveryIssue(
+            connection,
+            input.preferredIssueId,
+            host,
+            input.hostCapabilities,
+            input.projectId,
+            input.campaignId,
+          )
         : selectNextRecoveryIssue(
             connection,
             input.projectId,
+            host,
+            input.hostCapabilities,
             input.campaignId,
           );
     const recoverableLeases = findRecoverableLeasesForIssue(
@@ -477,12 +483,14 @@ export class SessionOrchestrator {
       campaignId: input.campaignId,
       issueId: recoveryIssue.id,
       agentId,
+      host,
+      hostCapabilities: input.hostCapabilities,
       leaseTtlSeconds: input.leaseTtlSeconds ?? this.defaultLeaseTtlSeconds,
       now,
     });
 
     updateRunStatus(connection, runId, 'in_progress', undefined);
-    updateIssueStatus(connection, recoveryIssue.id, 'in_progress');
+    updateIssueStatus(connection, recoveryIssue.id, 'in_progress', null);
 
     const recoveryCheckpoint = writeCheckpoint(connection, {
       runId,
@@ -517,13 +525,14 @@ export class SessionOrchestrator {
       campaignId: input.campaignId,
       agentId,
       host,
+      hostCapabilities: input.hostCapabilities,
       runId,
       leaseId: recoveryLease.id,
       leaseExpiresAt: recoveryLease.expiresAt,
       issueId: recoveryIssue.id,
       issueTask: recoveryIssue.task,
       claimMode: 'recovery',
-      artifacts: buildArtifactPaths(input),
+      artifacts: cloneArtifacts(input),
       currentTaskStatus: 'in_progress',
       currentCheckpointId: recoveryCheckpoint.id,
     });
@@ -550,7 +559,13 @@ export class SessionOrchestrator {
     input: SessionCheckpointInput,
     createdAt: string,
   ): CanonicalCheckpointState {
-    updateIssueStatus(connection, context.issueId, input.taskStatus);
+    assertBlockedReasonCompatibility(input);
+    updateIssueStatus(
+      connection,
+      context.issueId,
+      input.taskStatus,
+      input.taskStatus === 'blocked' ? input.blockedReason : null,
+    );
     updateRunStatus(connection, context.runId, input.taskStatus, undefined);
 
     const checkpoint = writeCheckpoint(connection, {
@@ -772,6 +787,7 @@ interface BuildClaimedBeginInput {
   runId: string;
   agentId: string;
   host: string;
+  hostCapabilities: SessionContext['hostCapabilities'];
   leaseResult: ClaimedLeaseResult;
 }
 
@@ -779,7 +795,12 @@ function buildClaimedBeginResult(
   input: BuildClaimedBeginInput,
 ): BeginClaimCanonicalResult {
   updateRunStatus(input.connection, input.runId, 'in_progress', undefined);
-  updateIssueStatus(input.connection, input.leaseResult.issue.id, 'in_progress');
+  updateIssueStatus(
+    input.connection,
+    input.leaseResult.issue.id,
+    'in_progress',
+    null,
+  );
 
   const claimCheckpoint = writeCheckpoint(input.connection, {
     runId: input.runId,
@@ -815,13 +836,14 @@ function buildClaimedBeginResult(
       campaignId: input.input.campaignId,
       agentId: input.agentId,
       host: input.host,
+      hostCapabilities: input.hostCapabilities,
       runId: input.runId,
       leaseId: input.leaseResult.lease.id,
       leaseExpiresAt: input.leaseResult.lease.expiresAt,
       issueId: input.leaseResult.issue.id,
       issueTask: input.leaseResult.issue.task,
       claimMode: input.leaseResult.resumed ? 'resume' : 'claim',
-      artifacts: buildArtifactPaths(input.input),
+      artifacts: cloneArtifacts(input.input),
       currentTaskStatus: 'in_progress',
       currentCheckpointId: claimCheckpoint.id,
     }),
@@ -894,13 +916,14 @@ function buildContextBase(input: {
   campaignId?: string;
   agentId: string;
   host: string;
+  hostCapabilities: SessionContext['hostCapabilities'];
   runId: string;
   leaseId: string;
   leaseExpiresAt: string;
   issueId: string;
   issueTask: string;
   claimMode: 'claim' | 'resume' | 'recovery';
-  artifacts: SessionArtifactPaths;
+  artifacts: SessionArtifactReference[];
   currentTaskStatus: TaskStatus;
   currentCheckpointId: string;
 }): Omit<SessionContext, 'mem0'> {
@@ -912,6 +935,7 @@ function buildContextBase(input: {
     campaignId: input.campaignId,
     agentId: input.agentId,
     host: input.host,
+    hostCapabilities: input.hostCapabilities,
     runId: input.runId,
     leaseId: input.leaseId,
     leaseExpiresAt: input.leaseExpiresAt,
@@ -931,18 +955,13 @@ function buildContextBase(input: {
   };
 }
 
-function buildArtifactPaths(
-  input: Pick<
-    IncrementalSessionInput,
-    'progressPath' | 'featureListPath' | 'planPath' | 'syncManifestPath'
-  >,
-): SessionArtifactPaths {
-  return {
-    progressPath: input.progressPath,
-    featureListPath: input.featureListPath,
-    planPath: input.planPath,
-    syncManifestPath: input.syncManifestPath,
-  };
+function cloneArtifacts(
+  input: Pick<IncrementalSessionInput, 'artifacts'>,
+): SessionArtifactReference[] {
+  return input.artifacts.map((artifact) => ({
+    kind: artifact.kind,
+    path: artifact.path,
+  }));
 }
 
 function buildMemoryScope(input: {
@@ -996,6 +1015,12 @@ function normalizeCloseInput(input: SessionCloseInput): SessionCloseInput {
     memoryKind: input.memoryKind ?? 'summary',
     memoryContent: input.memoryContent ?? input.summary,
   };
+}
+
+function assertBlockedReasonCompatibility(input: SessionCheckpointInput): void {
+  if (input.blockedReason !== undefined && input.taskStatus !== 'blocked') {
+    throw new Error('blockedReason can only be provided when taskStatus is blocked.');
+  }
 }
 
 function isExpectedAdvanceStop(error: unknown): boolean {

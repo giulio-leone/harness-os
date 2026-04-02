@@ -53,7 +53,13 @@ Think of it this way:
 
 **HarnessOS** provides the foundational execution framework for advanced autonomous agents. It focuses strictly on robust lifecycle management, leaving LLM inference and tool implementation to the consumer.
 
-Latest release notes and breaking changes are tracked in [CHANGELOG.md](CHANGELOG.md).
+Latest release notes and breaking changes are tracked in [CHANGELOG.md](CHANGELOG.md). The canonical hard-cut release checklist and fail-fast contract boundaries live in [docs/release-playbooks.md](docs/release-playbooks.md).
+
+### Schema compatibility
+
+- HarnessOS now enforces SQLite schema v5 as the only supported runtime store contract.
+- Existing v2 databases are not migrated in place; opening them fails fast with an explicit recreate instruction.
+- The runtime now persists `blocked_reason` on issues and milestones so dependency blockers are explicit, inspectable, and recomputed deterministically when queue state changes.
 
 ### What it handles:
 - **Zod Plan Contracts** — Strongly typed schema validation for robust planning.
@@ -75,8 +81,11 @@ SQLite acts as the absolute source of truth for:
 
 ### 📋 Batch-First Planning & Promotion
 - `harness_orchestrator(action: "plan_issues")` accepts a canonical `milestones[]` batch only, even when importing a single milestone.
+- `create_campaign` accepts an optional typed `policy` object with `owner`, `serviceLevel`, `escalationRules`, and `dispatch`, while `plan_issues` and the scheduler injector accept first-class workflow metadata on issues and milestones through `deadlineAt`, `recipients`, `approvals`, and `externalRefs`.
 - Milestone hierarchy is preserved with `depends_on_milestone_keys` for in-batch edges and `depends_on_milestone_ids` for previously imported milestones.
 - `promote_queue` advances work only when both issue-level and milestone-level dependencies are truly `done`.
+- `harness_inspector(action: "next_action")` now returns a structured `context` block that points to the exact issue, milestone, blocker, lease, or policy escalation behind the recommendation, so queue decisions are auditable instead of heuristic black boxes.
+- Campaign-level policy defaults still merge into issue-level overrides, and claim ordering now considers effective priority, policy breaches, issue deadlines, and the existing aging rules through one shared dispatch path.
 
 ### 🧠 Optional Memory Derivation
 - Integrating `mem0-mcp` provides advanced semantic memory and context extraction.
@@ -86,6 +95,13 @@ SQLite acts as the absolute source of truth for:
 ### 🧭 Capability Discoverability
 - `harness_inspector(action: "capabilities")` exposes the runtime tool surface, bundled skills, policy-driven skills, and mem0 state in an agent-readable format.
 - The packaged skills under `.github/skills` mirror the canonical runtime contract, so prompts, docs, and MCP discovery stay aligned.
+- The bundled skill manifest now publishes explicit workload profiles (`coding`, `research`, `ops`, `sales`, `support`, `assistant`) and per-skill `workloadProfileIds`, so hosts can specialize without hardcoding the core runtime to one domain.
+
+### 🧩 Workload-Aware Skill Sync
+- `harness-setup` now records a canonical `selectedWorkloadProfile` for every registered host under `~/.agent-harness/config.json`.
+- `harness-sync` installs only the skills required by that workload profile and prunes the rest atomically, instead of shipping one implicit all-skills pack to every host.
+- `assistant` remains the explicit full-surface profile when a host must stay multi-domain; other profiles keep the runtime domain-agnostic while specializing guidance at the host edge.
+- The repository now ships reference workspaces for `assistant`, `research`, `ops`, and `support` under [`examples/`](examples/) so non-coding teams can start from concrete queues, workflow metadata, and handoff assets instead of coding-only scaffolds.
 
 ### ⏱️ Reusable Scheduler Injector
 A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.ts`), supporting full 5-field cron expressions to safely trigger work without duplications.
@@ -108,6 +124,11 @@ Register the lifecycle MCP server for Codex, Copilot CLI, and antigravity in one
 # Creates ~/.agent-harness/{harness.sqlite,mem0} if missing and configures the hosts
 harness-install-mcp --host codex --host copilot --host antigravity
 
+# Optional: bind a host to a specific workload profile
+harness-install-mcp --host copilot --workload-profile research
+harness-install-mcp --host codex --workload-profile ops
+harness-install-mcp --host antigravity --workload-profile assistant
+
 # Optional: inspect first without writing anything
 harness-install-mcp --dry-run
 ```
@@ -119,7 +140,21 @@ harness-setup
 harness-sync
 ```
 
-### 2️⃣ Environment Variables
+`harness-setup` now persists a versioned host-sync config under `~/.agent-harness/config.json`. If you still have the legacy flat `{"hosts":["/path"]}` shape, rerun `harness-setup` once to rewrite it before `harness-sync`. Each sync writes `skills/bundle-manifest.json` to the host and explicitly replaces outdated or drifted bundled skill assets instead of tolerating them indefinitely.
+The current host-sync schema is `3`: each host now stores an explicit `selectedWorkloadProfile`, and sync records the installed workload-profile version plus checksum alongside the bundle metadata.
+
+### 2️⃣ Reference workspaces by workload profile
+
+| Profile | Reference workspace | Focus |
+|----------|---------------------|-------|
+| `assistant` | [`examples/consumer-workspace-template`](examples/consumer-workspace-template/) | generic cross-domain assistant flow with the full bundled skill surface |
+| `research` | [`examples/research-workspace-template`](examples/research-workspace-template/) | discovery, synthesis, review, and publish handoff |
+| `ops` | [`examples/ops-workspace-template`](examples/ops-workspace-template/) | incident triage, mitigation, execution, and rollback-aware follow-through |
+| `support` | [`examples/support-workspace-template`](examples/support-workspace-template/) | case intake, escalation, customer-safe resolution, and KB follow-up |
+
+See [docs/workload-profiles.md](docs/workload-profiles.md) for profile guidance, template pairing, and copy/paste quick starts.
+
+### 3️⃣ Environment Variables
 
 | Variable | Default Value | Description |
 |----------|---------------|-------------|
@@ -128,9 +163,10 @@ harness-sync
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | URL to the Ollama embedding API |
 | `MEM0_EMBED_MODEL` | `qwen3-embedding:latest` | The model used for extracting memory |
 | `AGENT_HARNESS_MEM0_MODULE_PATH` | auto-resolved | Optional explicit module path for `mem0-mcp` |
+| `HARNESS_WORKLOAD_PROFILE` | unset | Optional active workload profile for MCP capability discovery (`coding`, `research`, `ops`, `sales`, `support`, `assistant`) |
 | `AGENT_HARNESS_DISABLE_DEFAULT_MEM0`| N/A | Set to `1` to disable lazy loaded mem0 entirely |
 
-### 3️⃣ Running Commands
+### 4️⃣ Running Commands
 
 ```bash
 # Run the cron-aware scheduler injector
@@ -143,50 +179,110 @@ harness-session-lifecycle
 harness-session-lifecycle-mcp
 ```
 
-*(For detailed examples and JSON payload usage, see the `examples/session-lifecycle/` directory.)*
+<!-- GENERATED:PUBLIC-CONTRACTS:START -->
+### Generated public contract reference
+
+#### Session lifecycle CLI payloads
+
+Every payload must declare `"contractVersion": "6.0.0"`.
+
+| File | CLI action | Purpose |
+| --- | --- | --- |
+| [`begin-incremental.json`](examples/session-lifecycle/begin-incremental.json) | `begin_incremental` | Claim or resume the next ready issue from the standard CLI. |
+| [`begin-recovery.json`](examples/session-lifecycle/begin-recovery.json) | `begin_recovery` | Recover a stale task by superseding the old lease with a recovery session. |
+| [`checkpoint.json`](examples/session-lifecycle/checkpoint.json) | `checkpoint` | Persist incremental progress and optional artifacts during an active session. |
+| [`close.json`](examples/session-lifecycle/close.json) | `close` | Close the current task after the final validation gate. |
+| [`inspect-export.json`](examples/session-lifecycle/inspect-export.json) | `inspect_export` | Export machine-readable queue, lease, run, policy, checkpoint, and recent-event state for a project. |
+| [`inspect-audit.json`](examples/session-lifecycle/inspect-audit.json) | `inspect_audit` | Inspect the structured audit trail for one specific issue. |
+| [`inspect-health-snapshot.json`](examples/session-lifecycle/inspect-health-snapshot.json) | `inspect_health_snapshot` | Capture a machine-readable operational health snapshot for a project. |
+| [`promote-queue.json`](examples/session-lifecycle/promote-queue.json) | `promote_queue` | Promote pending work whose dependencies are now satisfied. |
+
+#### Harness MCP mega-tools
+| Tool | Summary | Actions |
+| --- | --- | --- |
+| `harness_inspector` | Use first in a new session, when queue state is unclear, or when the agent needs a machine-readable guide to the runtime plus auditable next_action reasons, exportable operational state, and health snapshots. | `capabilities`, `get_context`, `next_action`, `export`, `audit`, `health_snapshot` |
+| `harness_orchestrator` | Use to create scope, inject planned work, promote dependencies, and reset stuck issues. | `init_workspace`, `create_campaign`, `plan_issues`, `promote_queue`, `rollback_issue` |
+| `harness_session` | Use for claim/resume, checkpointing, close/advance, and lease heartbeat during execution. | `begin`, `begin_recovery`, `checkpoint`, `close`, `advance`, `heartbeat` |
+| `harness_artifacts` | Use to persist references to screenshots, browser state, generated files, or other task evidence. | `save`, `list` |
+| `harness_admin` | Use for recovery-oriented maintenance, retention cleanup, and project-level memory snapshots or rollups. | `reconcile`, `drain`, `archive`, `cleanup`, `mem0_snapshot`, `mem0_rollup` |
+<!-- GENERATED:PUBLIC-CONTRACTS:END -->
 
 ### 4️⃣ Planning Payloads
 
 As of `2.0.0`, queue planning is batch-first:
 
+<!-- GENERATED:PLAN-ISSUES-EXAMPLE:START -->
 ```json
 {
   "action": "plan_issues",
-  "projectId": "<project-id>",
-  "campaignId": "<campaign-id>",
+  "projectName": "Agent Harness Core",
+  "campaignName": "Runtime hardening",
   "milestones": [
     {
       "milestone_key": "runtime-foundations",
-      "description": "Ship the runtime foundations",
+      "description": "Agentic-first runtime improvements",
       "issues": [
         {
-          "task": "Add canonical planner support",
+          "task": "Add capability introspection",
           "priority": "high",
-          "size": "M"
-        },
-        {
-          "task": "Add planner regression tests",
-          "priority": "high",
-          "size": "S",
-          "depends_on_indices": [0]
+          "size": "M",
+          "deadlineAt": "2026-04-10T12:00:00.000Z",
+          "recipients": [
+            {
+              "id": "platform-ops",
+              "kind": "team",
+              "label": "Platform Ops",
+              "role": "approver"
+            }
+          ],
+          "approvals": [
+            {
+              "id": "release-signoff",
+              "label": "Release sign-off",
+              "recipientIds": [
+                "platform-ops"
+              ],
+              "state": "pending"
+            }
+          ],
+          "externalRefs": [
+            {
+              "id": "runbook-capability-rollout",
+              "kind": "runbook",
+              "value": "ops://runbooks/capability-rollout",
+              "label": "Capability rollout runbook"
+            }
+          ],
+          "policy": {
+            "escalationRules": [
+              {
+                "trigger": "deadline_breached",
+                "action": "raise_priority",
+                "priority": "critical"
+              }
+            ]
+          }
         }
       ]
     },
     {
-      "milestone_key": "capability-discovery",
-      "description": "Expose agent-readable capability discovery",
-      "depends_on_milestone_keys": ["runtime-foundations"],
+      "milestone_key": "runtime-polish",
+      "description": "Follow-up polish",
+      "depends_on_milestone_keys": [
+        "runtime-foundations"
+      ],
       "issues": [
         {
-          "task": "Publish the capability catalog",
-          "priority": "high",
-          "size": "M"
+          "task": "Tighten tool discoverability prompts",
+          "priority": "medium",
+          "size": "S"
         }
       ]
     }
   ]
 }
 ```
+<!-- GENERATED:PLAN-ISSUES-EXAMPLE:END -->
 
 ---
 

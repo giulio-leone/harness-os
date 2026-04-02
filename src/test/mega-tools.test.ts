@@ -87,6 +87,14 @@ class StubMem0Adapter implements Mem0Adapter {
   async listProjects(): Promise<string[]> { return []; }
 }
 
+const TEST_HOST_ROUTING_CONTEXT = {
+  host: 'ci-linux',
+  hostCapabilities: {
+    workloadClasses: ['default', 'typescript'],
+    capabilities: ['node', 'sqlite'],
+  },
+};
+
 class StrictHarnessAdminMem0Adapter extends StubMem0Adapter {
   readonly storedInputs: MemoryStoreInput[] = [];
 
@@ -195,14 +203,53 @@ function seedWorkspaceAndProject(
   }
 }
 
-function seedIssue(dbPath: string, issueId: string, status: string, dependsOn: string[] = []): void {
+function seedIssue(
+  dbPath: string,
+  issueId: string,
+  status: string,
+  dependsOn: string[] = [],
+  options?: {
+    createdAt?: string;
+    deadlineAt?: string;
+    policy?: Record<string, unknown>;
+    priority?: string;
+  },
+): void {
   const db = openHarnessDatabase({ dbPath });
   try {
     runStatement(
       db.connection,
-      `INSERT INTO issues (id, project_id, campaign_id, milestone_id, task, priority, status, size, depends_on, next_best_action)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [issueId, 'proj-1', null, null, `Task for ${issueId}`, 'high', status, 'M', JSON.stringify(dependsOn), 'Do the work.'],
+      `INSERT INTO issues (
+         id,
+         project_id,
+         campaign_id,
+         milestone_id,
+         task,
+         priority,
+         status,
+         size,
+         depends_on,
+         deadline_at,
+         policy_json,
+         next_best_action,
+         created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        issueId,
+        'proj-1',
+        null,
+        null,
+        `Task for ${issueId}`,
+        options?.priority ?? 'high',
+        status,
+        'M',
+        JSON.stringify(dependsOn),
+        options?.deadlineAt ?? null,
+        JSON.stringify(options?.policy ?? {}),
+        'Do the work.',
+        options?.createdAt ?? '2026-01-01T00:00:00Z',
+      ],
     );
   } finally {
     db.close();
@@ -214,12 +261,15 @@ const beginArgs = (dbPath: string, extras?: Record<string, unknown>) => ({
   dbPath,
   workspaceId: 'ws-1',
   projectId: 'proj-1',
-  progressPath: '/tmp/progress.md',
-  featureListPath: '/tmp/features.json',
-  planPath: '/tmp/plan.md',
-  syncManifestPath: '/tmp/manifest.yaml',
+  artifacts: [
+    { kind: 'session_handoff', path: '/tmp/progress.md' },
+    { kind: 'task_catalog', path: '/tmp/features.json' },
+    { kind: 'execution_plan', path: '/tmp/plan.md' },
+    { kind: 'sync_manifest', path: '/tmp/manifest.yaml' },
+  ],
   mem0Enabled: false,
   agentId: 'test-agent',
+  ...TEST_HOST_ROUTING_CONTEXT,
   ...extras,
 });
 
@@ -277,6 +327,15 @@ test('harness_inspector: capabilities returns tool catalog, bundled skills, and 
     ),
   );
   assert.ok(skills.some((entry) => entry.id === 'harness-lifecycle'));
+  assert.ok(
+    skills.some(
+      (entry) =>
+        entry.id === 'harness-lifecycle' &&
+        typeof entry.version === 'string' &&
+        typeof entry.bundleVersion === 'string' &&
+        Array.isArray(entry.workloadProfileIds),
+    ),
+  );
   assert.equal(mem0.configured, true);
   assert.equal(mem0.available, true);
   assert.equal(mem0.adapterId, 'stub-test');
@@ -345,14 +404,279 @@ test('harness_inspector: next_action returns correct NBA directive', async () =>
 
     const { internals } = createServer();
     const tool = internals.tools.get('harness_inspector')!;
-    const result = (await tool.handler({ action: 'next_action', dbPath })) as Record<string, unknown>;
+    const result = (await tool.handler({
+      action: 'next_action',
+      dbPath,
+      ...TEST_HOST_ROUTING_CONTEXT,
+    })) as Record<string, unknown>;
 
     assert.equal(result.action, 'call_tool');
     assert.equal(result.tool, 'harness_session');
     assert.ok(result.suggestedPayload, 'should include suggestedPayload');
     const payload = result.suggestedPayload as Record<string, unknown>;
+    const context = result.context as {
+      stage: string;
+      priority: number;
+      host?: { host: string; hostCapabilities: { workloadClasses: string[] } };
+      issue?: { id: string; status: string; nextBestAction: string | null };
+      dispatch?: { eligible: boolean };
+    };
     assert.equal(payload.action, 'begin');
     assert.equal(payload.preferredIssueId, 'issue-1');
+    assert.equal(payload.host, TEST_HOST_ROUTING_CONTEXT.host);
+    assert.deepEqual(
+      payload.hostCapabilities,
+      TEST_HOST_ROUTING_CONTEXT.hostCapabilities,
+    );
+    assert.equal(context.stage, 'ready_issue');
+    assert.equal(context.priority, 3);
+    assert.equal(context.host?.host, TEST_HOST_ROUTING_CONTEXT.host);
+    assert.equal(context.issue?.id, 'issue-1');
+    assert.equal(context.issue?.status, 'ready');
+    assert.equal(context.issue?.nextBestAction, 'Do the work.');
+    assert.equal(context.dispatch?.eligible, true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_inspector: next_action honors policy-driven escalation and exposes policy state', async () => {
+  const tempDir = createTempDir('inspector-nba-policy-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-high', 'ready', [], {
+      priority: 'high',
+      createdAt: '2026-04-02T11:45:00.000Z',
+    });
+    seedIssue(dbPath, 'issue-overdue', 'ready', [], {
+      priority: 'low',
+      createdAt: '2026-04-01T10:00:00.000Z',
+      deadlineAt: '2026-04-02T09:00:00.000Z',
+      policy: {
+        escalationRules: [
+          {
+            trigger: 'deadline_breached',
+            action: 'raise_priority',
+            priority: 'critical',
+          },
+        ],
+      },
+    });
+
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_inspector')!;
+    const result = (await tool.handler({
+      action: 'next_action',
+      dbPath,
+      projectId: 'proj-1',
+      ...TEST_HOST_ROUTING_CONTEXT,
+    })) as Record<string, unknown>;
+
+    const payload = result.suggestedPayload as Record<string, unknown>;
+    const context = result.context as {
+      issue?: {
+        id: string;
+        deadlineAt?: string;
+        policyState?: {
+          effectivePriority: string;
+          escalated: boolean;
+          breaches: Array<{ trigger: string; action: string; priority?: string }>;
+        };
+      };
+    };
+
+    assert.equal(result.action, 'call_tool');
+    assert.equal(result.tool, 'harness_session');
+    assert.equal(payload.action, 'begin');
+    assert.equal(payload.preferredIssueId, 'issue-overdue');
+    assert.equal(context.issue?.id, 'issue-overdue');
+    assert.equal(context.issue?.deadlineAt, '2026-04-02T09:00:00.000Z');
+    assert.equal(context.issue?.policyState?.effectivePriority, 'critical');
+    assert.equal(context.issue?.policyState?.escalated, true);
+    assert.equal(context.issue?.policyState?.breaches.length, 1);
+    assert.equal(
+      context.issue?.policyState?.breaches[0]?.trigger,
+      'deadline_breached',
+    );
+    assert.equal(
+      context.issue?.policyState?.breaches[0]?.action,
+      'raise_priority',
+    );
+    assert.equal(
+      context.issue?.policyState?.breaches[0]?.priority,
+      'critical',
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_inspector: next_action reports dispatch mismatches when no ready issue matches host context', async () => {
+  const tempDir = createTempDir('inspector-nba-dispatch-mismatch-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-python', 'ready', [], {
+      priority: 'critical',
+      policy: {
+        dispatch: {
+          workloadClass: 'python',
+          requiredHostCapabilities: ['python'],
+        },
+      },
+    });
+
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_inspector')!;
+    const result = (await tool.handler({
+      action: 'next_action',
+      dbPath,
+      host: 'ci-linux',
+      hostCapabilities: {
+        workloadClasses: ['typescript'],
+        capabilities: ['node', 'sqlite'],
+      },
+    })) as Record<string, unknown>;
+
+    const payload = result.suggestedPayload as Record<string, unknown>;
+    const context = result.context as {
+      stage: string;
+      blocker?: { kind: string; summary: string };
+      candidates?: Array<{
+        id: string;
+        dispatch?: {
+          eligible: boolean;
+          missingWorkloadClass?: string;
+          missingHostCapabilities?: string[];
+        };
+      }>;
+    };
+
+    assert.equal(result.action, 'call_tool');
+    assert.equal(result.tool, 'harness_inspector');
+    assert.equal(payload.action, 'export');
+    assert.equal(context.stage, 'dispatch_mismatch');
+    assert.equal(context.blocker?.kind, 'dispatch_mismatch');
+    assert.equal(context.candidates?.[0]?.id, 'issue-python');
+    assert.equal(context.candidates?.[0]?.dispatch?.eligible, false);
+    assert.equal(
+      context.candidates?.[0]?.dispatch?.missingWorkloadClass,
+      'python',
+    );
+    assert.deepEqual(
+      context.candidates?.[0]?.dispatch?.missingHostCapabilities,
+      ['python'],
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_inspector: next_action exposes recovery context for needs_recovery issues', async () => {
+  const tempDir = createTempDir('inspector-nba-recovery-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-recovery', 'needs_recovery');
+
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_inspector')!;
+    const result = (await tool.handler({
+      action: 'next_action',
+      dbPath,
+      ...TEST_HOST_ROUTING_CONTEXT,
+    })) as Record<string, unknown>;
+
+    const payload = result.suggestedPayload as Record<string, unknown>;
+    const context = result.context as {
+      stage: string;
+      priority: number;
+      issue?: { id: string; status: string };
+      blocker?: { kind: string; refId: string; refType: string };
+    };
+
+    assert.equal(result.action, 'call_tool');
+    assert.equal(result.tool, 'harness_session');
+    assert.equal(payload.action, 'begin_recovery');
+    assert.equal(payload.preferredIssueId, 'issue-recovery');
+    assert.equal(context.stage, 'needs_recovery');
+    assert.equal(context.priority, 2);
+    assert.equal(context.issue?.id, 'issue-recovery');
+    assert.equal(context.issue?.status, 'needs_recovery');
+    assert.equal(context.blocker?.kind, 'issue_needs_recovery');
+    assert.equal(context.blocker?.refId, 'issue-recovery');
+    assert.equal(context.blocker?.refType, 'issue');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_inspector: next_action exposes concrete lease context for expired leases', async () => {
+  const tempDir = createTempDir('inspector-nba-expired-lease-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-stale', 'in_progress');
+
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      runStatement(
+        db.connection,
+        `INSERT INTO leases (
+          id, workspace_id, project_id, campaign_id, issue_id, agent_id, status,
+          acquired_at, expires_at, last_heartbeat_at, released_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          'lease-stale',
+          'ws-1',
+          'proj-1',
+          null,
+          'issue-stale',
+          'agent-stale',
+          'active',
+          '2025-01-01T00:00:00Z',
+          '2025-01-01T00:05:00Z',
+          '2025-01-01T00:02:00Z',
+          null,
+        ],
+      );
+    } finally {
+      db.close();
+    }
+
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_inspector')!;
+    const result = (await tool.handler({
+      action: 'next_action',
+      dbPath,
+      ...TEST_HOST_ROUTING_CONTEXT,
+    })) as Record<string, unknown>;
+
+    const payload = result.suggestedPayload as Record<string, unknown>;
+    const context = result.context as {
+      stage: string;
+      priority: number;
+      issue?: { id: string; status: string };
+      lease?: { id: string; issueId: string; agentId: string; status: string };
+      blocker?: { kind: string; refId: string; refType: string };
+    };
+
+    assert.equal(result.action, 'call_tool');
+    assert.equal(result.tool, 'harness_session');
+    assert.equal(payload.action, 'begin_recovery');
+    assert.equal(payload.preferredIssueId, 'issue-stale');
+    assert.equal(context.stage, 'expired_lease');
+    assert.equal(context.priority, 1);
+    assert.equal(context.issue?.id, 'issue-stale');
+    assert.equal(context.issue?.status, 'in_progress');
+    assert.equal(context.lease?.id, 'lease-stale');
+    assert.equal(context.lease?.issueId, 'issue-stale');
+    assert.equal(context.lease?.agentId, 'agent-stale');
+    assert.equal(context.lease?.status, 'active');
+    assert.equal(context.blocker?.kind, 'lease_expired');
+    assert.equal(context.blocker?.refId, 'lease-stale');
+    assert.equal(context.blocker?.refType, 'lease');
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -366,7 +690,11 @@ test('harness_inspector: next_action returns idle when queue is empty', async ()
 
     const { internals } = createServer();
     const tool = internals.tools.get('harness_inspector')!;
-    const result = (await tool.handler({ action: 'next_action', dbPath })) as Record<string, unknown>;
+    const result = (await tool.handler({
+      action: 'next_action',
+      dbPath,
+      ...TEST_HOST_ROUTING_CONTEXT,
+    })) as Record<string, unknown>;
 
     assert.equal(result.action, 'idle');
   } finally {
@@ -423,6 +751,7 @@ test('harness_inspector: next_action asks for explicit project when scope is amb
       action: 'next_action',
       dbPath,
       projectName: 'Shared Project',
+      ...TEST_HOST_ROUTING_CONTEXT,
     })) as Record<string, unknown>;
 
     assert.equal(result.action, 'clarify_scope');
@@ -432,8 +761,8 @@ test('harness_inspector: next_action asks for explicit project when scope is amb
   }
 });
 
-test('harness_inspector: overview returns counts and issue lists', async () => {
-  const tempDir = createTempDir('inspector-overview-');
+test('harness_inspector: export returns machine-readable observability state', async () => {
+  const tempDir = createTempDir('inspector-export-');
   const dbPath = join(tempDir, 'harness.sqlite');
   try {
     seedProject(dbPath);
@@ -444,21 +773,23 @@ test('harness_inspector: overview returns counts and issue lists', async () => {
     const { internals } = createServer();
     const tool = internals.tools.get('harness_inspector')!;
     const result = (await tool.handler({
-      action: 'overview',
+      action: 'export',
       dbPath,
       projectName: 'Test Project',
     })) as { result: Record<string, unknown>; _meta: Record<string, unknown> };
 
-    const counts = result.result.counts as Record<string, number>;
-    assert.equal(counts.readyIssues, 2);
+    const queue = result.result.queue as Record<string, unknown>;
+    const statusCounts = queue.statusCounts as Record<string, number>;
+    assert.equal(statusCounts.ready, 2);
+    assert.equal(Array.isArray(queue.readyIssues), true);
     assert.ok(result._meta, '_meta must exist');
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-test('harness_inspector: issue deep-dive returns lifecycle evidence', async () => {
-  const tempDir = createTempDir('inspector-issue-');
+test('harness_inspector: audit returns lifecycle evidence and timeline entries', async () => {
+  const tempDir = createTempDir('inspector-audit-');
   const dbPath = join(tempDir, 'harness.sqlite');
   try {
     seedProject(dbPath);
@@ -467,21 +798,23 @@ test('harness_inspector: issue deep-dive returns lifecycle evidence', async () =
     const { internals } = createServer();
     const tool = internals.tools.get('harness_inspector')!;
     const result = (await tool.handler({
-      action: 'issue',
+      action: 'audit',
       dbPath,
       issueId: 'issue-detail',
     })) as { result: Record<string, unknown>; _meta: Record<string, unknown> };
 
     const issue = result.result.issue as Record<string, unknown>;
+    const timeline = result.result.timeline as Array<Record<string, unknown>>;
     assert.equal(issue.id, 'issue-detail');
     assert.equal(issue.status, 'ready');
+    assert.ok(Array.isArray(timeline));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-test('harness_inspector: issue without issueId throws AgenticToolError', async () => {
-  const tempDir = createTempDir('inspector-issue-err-');
+test('harness_inspector: audit rejects missing issueId at the public boundary', async () => {
+  const tempDir = createTempDir('inspector-audit-err-');
   const dbPath = join(tempDir, 'harness.sqlite');
   try {
     seedProject(dbPath);
@@ -489,9 +822,46 @@ test('harness_inspector: issue without issueId throws AgenticToolError', async (
     const { internals } = createServer();
     const tool = internals.tools.get('harness_inspector')!;
     await assert.rejects(
-      () => tool.handler({ action: 'issue', dbPath }),
-      /issueId is required/,
+      () => tool.handler({ action: 'audit', dbPath }),
+      /issueId|expected string/i,
     );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_inspector: health_snapshot reports policy breaches as alerts', async () => {
+  const tempDir = createTempDir('inspector-health-snapshot-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-overdue', 'ready', [], {
+      deadlineAt: '2026-04-01T10:00:00.000Z',
+      policy: {
+        escalationRules: [
+          {
+            trigger: 'deadline_breached',
+            action: 'raise_priority',
+            priority: 'critical',
+          },
+        ],
+      },
+    });
+
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_inspector')!;
+    const result = (await tool.handler({
+      action: 'health_snapshot',
+      dbPath,
+      projectId: 'proj-1',
+    })) as { result: Record<string, unknown>; _meta: Record<string, unknown> };
+
+    const policy = result.result.policy as Record<string, unknown>;
+    const alerts = result.result.alerts as Array<Record<string, unknown>>;
+
+    assert.equal(result.result.snapshotVersion, 1);
+    assert.equal(policy.breachedIssueCount, 1);
+    assert.equal(alerts.some((alert) => alert.kind === 'policy_breaches'), true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -638,11 +1008,14 @@ test('harness_session: begin auto-generates sessionId when omitted', async () =>
       dbPath,
       workspaceId: 'ws-1',
       projectId: 'proj-1',
-      progressPath: '/tmp/progress.md',
-      featureListPath: '/tmp/features.json',
-      planPath: '/tmp/plan.md',
-      syncManifestPath: '/tmp/manifest.yaml',
+      artifacts: [
+        { kind: 'session_handoff', path: '/tmp/progress.md' },
+        { kind: 'task_catalog', path: '/tmp/features.json' },
+        { kind: 'execution_plan', path: '/tmp/plan.md' },
+        { kind: 'sync_manifest', path: '/tmp/manifest.yaml' },
+      ],
       mem0Enabled: false,
+      ...TEST_HOST_ROUTING_CONTEXT,
       preferredIssueId: 'issue-autogen',
     })) as {
       context: { runId: string; sessionId: string };
@@ -819,7 +1192,7 @@ test('harness_artifacts: save scoped to issueId, list filters by it', async () =
   }
 });
 
-test('harness_artifacts: save without kind throws AgenticToolError', async () => {
+test('harness_artifacts: save rejects missing kind at the public boundary', async () => {
   const tempDir = createTempDir('artifacts-err-kind-');
   const dbPath = join(tempDir, 'harness.sqlite');
   try {
@@ -829,14 +1202,14 @@ test('harness_artifacts: save without kind throws AgenticToolError', async () =>
     const tool = internals.tools.get('harness_artifacts')!;
     await assert.rejects(
       () => tool.handler({ action: 'save', dbPath, projectId: 'proj-1', path: '/tmp/file' }),
-      /kind is required/,
+      /kind|expected string/i,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-test('harness_artifacts: save without path throws AgenticToolError', async () => {
+test('harness_artifacts: save rejects missing path at the public boundary', async () => {
   const tempDir = createTempDir('artifacts-err-path-');
   const dbPath = join(tempDir, 'harness.sqlite');
   try {
@@ -846,7 +1219,7 @@ test('harness_artifacts: save without path throws AgenticToolError', async () =>
     const tool = internals.tools.get('harness_artifacts')!;
     await assert.rejects(
       () => tool.handler({ action: 'save', dbPath, projectId: 'proj-1', kind: 'test' }),
-      /path is required/,
+      /path|expected string/i,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1046,5 +1419,49 @@ test('cross-tool: every tool handler rejects missing action param', async () => 
       /Required|Invalid/i,
       `${name} should reject missing action`,
     );
+  }
+});
+
+test('cross-tool: strict public actions reject unexpected top-level fields', async () => {
+  const tempDir = createTempDir('strict-public-surface-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-strict', 'ready');
+
+    const { internals } = createServer();
+    const cases = [
+      {
+        name: 'harness_inspector',
+        args: { action: 'get_context', dbPath, projectId: 'proj-1', legacyField: true },
+      },
+      {
+        name: 'harness_orchestrator',
+        args: { action: 'promote_queue', dbPath, projectId: 'proj-1', legacyField: true },
+      },
+      {
+        name: 'harness_session',
+        args: { action: 'begin', ...beginArgs(dbPath, { preferredIssueId: 'issue-strict' }), legacyField: true },
+      },
+      {
+        name: 'harness_artifacts',
+        args: { action: 'list', dbPath, projectId: 'proj-1', legacyField: true },
+      },
+      {
+        name: 'harness_admin',
+        args: { action: 'cleanup', dbPath, projectId: 'proj-1', legacyField: true },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const tool = internals.tools.get(testCase.name)!;
+      await assert.rejects(
+        () => tool.handler(testCase.args),
+        /legacyField/i,
+        `${testCase.name} should reject legacyField`,
+      );
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
   }
 });

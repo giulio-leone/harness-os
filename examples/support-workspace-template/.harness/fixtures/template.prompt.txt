@@ -1,0 +1,15 @@
+SYSTEM CONTRACT
+- SQLite is canonical.
+- mem0 is support-only.
+- Every tracked record must have one next best action.
+- Outputs must remain operator-defensible.
+
+OPERATOR GOAL
+Replace this template prompt with the exact prompt or policy that should drive your consumer workspace.
+
+MINIMUM OUTPUT EXPECTATIONS
+- concise structured summary
+- key evidence or rationale
+- explicit risks or gaps
+- current state
+- next best action

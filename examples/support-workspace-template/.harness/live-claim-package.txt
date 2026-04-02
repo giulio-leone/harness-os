@@ -1,0 +1,20 @@
+LIVE CLAIM PACKAGE
+
+Target DB: .harness/runtime/live-catalog.sqlite
+
+Preview only (no mutation):
+  bash .harness/run-live-claim.sh
+
+Execute the real claim on the canonical live DB:
+  bash .harness/run-live-claim.sh --execute
+
+Preview proof:
+  .harness/runtime/live-claim-preview-summary.json
+
+Execute proof outputs:
+  .harness/runtime/live-claim.begin-output.json
+  .harness/runtime/live-claim.issue-output.json
+  .harness/runtime/live-claim.overview-output.json
+
+After the claimed issue is eventually closed as `done`, advance the backlog with:
+  bash .harness/run-live-queue-promotion.sh --execute

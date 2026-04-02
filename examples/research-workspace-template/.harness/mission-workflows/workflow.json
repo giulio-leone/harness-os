@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "workflowId": "research-workflow",
+  "domain": "research-insight-lifecycle",
+  "promptFixtureId": "research-prompt",
+  "stages": [
+    {
+      "id": "discover-and-rank",
+      "campaignId": "mission-research-discovery",
+      "currentIssueIds": [
+        "issue-research-discovery-batch"
+      ],
+      "promptRules": [
+        "Capture the first batch of sources",
+        "Normalize them into canonical research topics and findings",
+        "Assign one next best action per topic"
+      ],
+      "requiredEntities": [
+        "research_topics",
+        "findings"
+      ],
+      "requiredCheckpoints": [
+        "sources captured",
+        "evidence ranked",
+        "next best action set"
+      ],
+      "resultingStates": [
+        "discovered",
+        "validated"
+      ]
+    },
+    {
+      "id": "synthesize-and-review",
+      "campaignId": "mission-research-synthesis",
+      "currentIssueIds": [
+        "issue-research-synthesis-draft",
+        "issue-research-peer-review"
+      ],
+      "promptRules": [
+        "Draft the best insight brief",
+        "Attach the supporting evidence and workflow metadata",
+        "Record the review result or blocking reason"
+      ],
+      "requiredEntities": [
+        "findings",
+        "synthesis_notes",
+        "reviewers"
+      ],
+      "requiredCheckpoints": [
+        "draft brief prepared",
+        "review evidence saved",
+        "approval state updated"
+      ],
+      "resultingStates": [
+        "synthesized",
+        "reviewed"
+      ]
+    },
+    {
+      "id": "publish-and-handoff",
+      "campaignId": "mission-research-handoff",
+      "currentIssueIds": [
+        "issue-research-publish-handoff"
+      ],
+      "promptRules": [
+        "Publish the approved insight package",
+        "Archive the evidence bundle",
+        "Write the next best action and any follow-up timing"
+      ],
+      "requiredEntities": [
+        "synthesis_notes",
+        "reviewers",
+        "findings"
+      ],
+      "requiredCheckpoints": [
+        "publication note written",
+        "archive reference linked",
+        "next best action refreshed"
+      ],
+      "resultingStates": [
+        "published",
+        "monitoring"
+      ]
+    }
+  ],
+  "stateMachine": {
+    "states": [
+      { "id": "discovered", "allowedNext": ["validated", "deprioritized"] },
+      { "id": "validated", "allowedNext": ["synthesized", "deprioritized"] },
+      { "id": "synthesized", "allowedNext": ["reviewed", "blocked"] },
+      { "id": "reviewed", "allowedNext": ["published", "synthesized", "blocked"] },
+      { "id": "published", "allowedNext": ["monitoring", "closed"] },
+      { "id": "monitoring", "allowedNext": ["closed", "synthesized"] },
+      { "id": "blocked", "allowedNext": ["validated", "synthesized", "closed"] }
+    ],
+    "terminalStates": [
+      "closed",
+      "deprioritized"
+    ]
+  },
+  "nextBestActionCatalog": [
+    "capture more sources",
+    "draft brief",
+    "request peer review",
+    "publish brief",
+    "monitor follow-up",
+    "deprioritize",
+    "close"
+  ],
+  "summaryTemplate": [
+    "Topic",
+    "Source",
+    "Main finding",
+    "Why it matters",
+    "Evidence and confidence",
+    "Main risks",
+    "Reviewers",
+    "Actions completed",
+    "Current state",
+    "Next best action"
+  ]
+}
