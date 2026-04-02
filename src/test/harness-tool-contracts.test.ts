@@ -11,6 +11,8 @@ import {
   README_PLAN_ISSUES_START,
   README_PUBLIC_CONTRACTS_END,
   README_PUBLIC_CONTRACTS_START,
+  getHarnessToolContracts,
+  getHarnessToolInputJsonSchema,
   getSessionLifecycleCliExamples,
   renderGettingStartedExamplesSection,
   renderReadmePlanIssuesExample,
@@ -60,6 +62,33 @@ test('getting started generated example section stays in sync with canonical mod
   );
 });
 
+test('tool input JSON schemas stay compatible with object-root function calling clients', () => {
+  for (const contract of getHarnessToolContracts()) {
+    const schema = getHarnessToolInputJsonSchema(contract.name);
+
+    assert.equal(schema.type, 'object', `${contract.name} should expose an object root`);
+    assert.equal(
+      schema.additionalProperties,
+      false,
+      `${contract.name} should remain strict at the public boundary`,
+    );
+
+    const properties = schema.properties;
+    assert.ok(isRecord(properties), `${contract.name} should expose properties`);
+
+    const actionProperty = properties.action;
+    assert.ok(isRecord(actionProperty), `${contract.name} should expose an action property`);
+    assert.equal(actionProperty.type, 'string');
+    assert.ok(Array.isArray(actionProperty.enum));
+    assert.ok(actionProperty.enum.every((value) => typeof value === 'string'));
+    assert.ok(actionProperty.enum.length > 0);
+
+    const required = schema.required;
+    assert.ok(Array.isArray(required), `${contract.name} should declare required fields`);
+    assert.ok(required.includes('action'));
+  }
+});
+
 function extractGeneratedBlock(
   content: string,
   startMarker: string,
@@ -75,4 +104,8 @@ function extractGeneratedBlock(
   return content
     .slice(startIndex + startMarker.length, endIndex)
     .trim();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

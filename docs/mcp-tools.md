@@ -36,7 +36,7 @@ Start here when the runtime state is unclear.
 | --- | --- |
 | `capabilities` | first call in a new host/session; discover the runtime surface |
 | `get_context` | you need workspace/project/queue context before acting |
-| `next_action` | you want the runtime to recommend the next safe tool call |
+| `next_action` | you want the runtime to recommend the next safe tool call for a specific `host` + `hostCapabilities` routing context |
 | `export` | you need a machine-readable operational snapshot |
 | `audit` | you need the evidence trail for one issue |
 | `health_snapshot` | you need a point-in-time health summary |
@@ -46,6 +46,20 @@ Example:
 ```json
 {
   "action": "capabilities"
+}
+```
+
+Host-aware recommendation example:
+
+```json
+{
+  "action": "next_action",
+  "projectName": "HarnessOS",
+  "host": "copilot-local",
+  "hostCapabilities": {
+    "workloadClasses": ["default", "typescript"],
+    "capabilities": ["node", "sqlite"]
+  }
 }
 ```
 

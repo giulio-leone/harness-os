@@ -866,13 +866,182 @@ export function getHarnessToolContract(name: string): HarnessToolContract {
   return contract;
 }
 
+type JsonSchemaRecord = Record<string, unknown>;
+
+function isJsonSchemaRecord(value: unknown): value is JsonSchemaRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getJsonSchemaRecordArray(value: unknown): JsonSchemaRecord[] | null {
+  if (!Array.isArray(value) || value.some((entry) => !isJsonSchemaRecord(entry))) {
+    return null;
+  }
+
+  return value;
+}
+
+function getRequiredFieldNames(schema: JsonSchemaRecord): string[] {
+  const { required } = schema;
+  return Array.isArray(required)
+    ? required.filter((field): field is string => typeof field === 'string')
+    : [];
+}
+
+function dedupeJsonSchemas(schemas: JsonSchemaRecord[]): JsonSchemaRecord[] {
+  const seen = new Set<string>();
+  const deduped: JsonSchemaRecord[] = [];
+
+  for (const schema of schemas) {
+    const fingerprint = JSON.stringify(schema);
+
+    if (seen.has(fingerprint)) {
+      continue;
+    }
+
+    seen.add(fingerprint);
+    deduped.push(schema);
+  }
+
+  return deduped;
+}
+
+function mergeJsonSchemaProperty(
+  current: JsonSchemaRecord | undefined,
+  next: JsonSchemaRecord,
+): JsonSchemaRecord {
+  if (!current) {
+    return { ...next };
+  }
+
+  if (JSON.stringify(current) === JSON.stringify(next)) {
+    return current;
+  }
+
+  const currentAnyOf = getJsonSchemaRecordArray(current.anyOf) ?? [current];
+  const nextAnyOf = getJsonSchemaRecordArray(next.anyOf) ?? [next];
+  const mergedAnyOf = dedupeJsonSchemas([...currentAnyOf, ...nextAnyOf]);
+
+  return mergedAnyOf.length === 1 ? mergedAnyOf[0]! : { anyOf: mergedAnyOf };
+}
+
+function normalizeActionPropertySchema(
+  current: JsonSchemaRecord | undefined,
+  actionValues: string[],
+): JsonSchemaRecord {
+  const dedupedActions = [...new Set(actionValues)];
+
+  if (dedupedActions.length === 0) {
+    return current ? { ...current } : { type: 'string' };
+  }
+
+  if (!current) {
+    return {
+      type: 'string',
+      enum: dedupedActions,
+    };
+  }
+
+  const {
+    const: _ignoredConst,
+    enum: _ignoredEnum,
+    anyOf: _ignoredAnyOf,
+    oneOf: _ignoredOneOf,
+    ...rest
+  } = current;
+
+  return {
+    ...rest,
+    type: 'string',
+    enum: dedupedActions,
+  };
+}
+
+function normalizeDiscriminatedObjectInputSchema(
+  schema: JsonSchemaRecord,
+): JsonSchemaRecord {
+  if (schema.type === 'object') {
+    return schema;
+  }
+
+  const objectVariants =
+    getJsonSchemaRecordArray(schema.oneOf) ?? getJsonSchemaRecordArray(schema.anyOf);
+
+  if (!objectVariants || objectVariants.some((variant) => variant.type !== 'object')) {
+    return schema;
+  }
+
+  const mergedProperties: JsonSchemaRecord = {};
+  let sharedRequiredFields: Set<string> | null = null;
+  let allVariantsDisallowExtras = true;
+  const actionValues: string[] = [];
+
+  for (const variant of objectVariants) {
+    const properties = isJsonSchemaRecord(variant.properties) ? variant.properties : {};
+
+    for (const [propertyName, propertySchema] of Object.entries(properties)) {
+      if (!isJsonSchemaRecord(propertySchema)) {
+        continue;
+      }
+
+      if (propertyName === 'action' && typeof propertySchema.const === 'string') {
+        actionValues.push(propertySchema.const);
+      }
+
+      mergedProperties[propertyName] = mergeJsonSchemaProperty(
+        isJsonSchemaRecord(mergedProperties[propertyName])
+          ? (mergedProperties[propertyName] as JsonSchemaRecord)
+          : undefined,
+        propertySchema,
+      );
+    }
+
+    const requiredFields = new Set<string>(getRequiredFieldNames(variant));
+    if (sharedRequiredFields === null) {
+      sharedRequiredFields = requiredFields;
+    } else {
+      const nextSharedRequiredFields = new Set<string>();
+
+      for (const field of sharedRequiredFields) {
+        if (requiredFields.has(field)) {
+          nextSharedRequiredFields.add(field);
+        }
+      }
+
+      sharedRequiredFields = nextSharedRequiredFields;
+    }
+
+    if (variant.additionalProperties !== false) {
+      allVariantsDisallowExtras = false;
+    }
+  }
+
+  mergedProperties.action = normalizeActionPropertySchema(
+    isJsonSchemaRecord(mergedProperties.action)
+      ? (mergedProperties.action as JsonSchemaRecord)
+      : undefined,
+    actionValues,
+  );
+
+  return {
+    ...schema,
+    type: 'object',
+    properties: mergedProperties,
+    required: sharedRequiredFields ? [...sharedRequiredFields] : [],
+    additionalProperties: allVariantsDisallowExtras
+      ? false
+      : schema.additionalProperties,
+  };
+}
+
 export function getHarnessToolInputJsonSchema(
   name: string,
 ): Record<string, unknown> {
-  return z.toJSONSchema(getHarnessToolContract(name).inputSchema, {
+  const schema = z.toJSONSchema(getHarnessToolContract(name).inputSchema, {
     io: 'input',
     unrepresentable: 'any',
-  }) as Record<string, unknown>;
+  }) as JsonSchemaRecord;
+
+  return normalizeDiscriminatedObjectInputSchema(schema);
 }
 
 export interface SessionLifecycleCliExampleContract {

@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { HARNESS_TOOL_CONTRACTS } from '../runtime/harness-tool-contracts.js';
+
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
 const referenceTemplates = [
@@ -24,6 +26,10 @@ const referenceTemplates = [
     directory: 'examples/support-workspace-template',
   },
 ] as const;
+
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 test('reference workspace templates ship for assistant and non-coding profiles', () => {
   for (const template of referenceTemplates) {
@@ -110,4 +116,29 @@ test('workload profile docs point to the shipped reference workspaces', () => {
   assert.match(gettingStarted, /cli-reference\.md/);
   assert.match(skillsIndex, /Profile-to-skills mapping/);
   assert.match(skillsIndex, /Programmatic discoverability/);
+});
+
+test('MCP and CLI discoverability docs stay aligned with public contracts', () => {
+  const mcpGuide = readFileSync(resolve(repoRoot, 'docs', 'mcp-tools.md'), 'utf8');
+  const cliGuide = readFileSync(resolve(repoRoot, 'docs', 'cli-reference.md'), 'utf8');
+  const packageJson = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8')) as {
+    bin?: Record<string, string>;
+  };
+
+  assert.match(mcpGuide, /five MCP mega-tools/);
+  assert.match(mcpGuide, /hostCapabilities/);
+  assert.equal(HARNESS_TOOL_CONTRACTS.length, 5);
+
+  for (const tool of HARNESS_TOOL_CONTRACTS) {
+    assert.match(mcpGuide, new RegExp(`\`${escapeForRegex(tool.name)}\``));
+    for (const action of tool.actions) {
+      assert.match(mcpGuide, new RegExp(`\`${escapeForRegex(action.action)}\``));
+    }
+  }
+
+  const publicBins = Object.keys(packageJson.bin ?? {}).sort((left, right) => left.localeCompare(right));
+  assert.equal(publicBins.length, 6);
+  for (const bin of publicBins) {
+    assert.match(cliGuide, new RegExp(`\`${escapeForRegex(bin)}\``));
+  }
 });
