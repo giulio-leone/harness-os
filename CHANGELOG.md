@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## 2.0.4 - 2026-04-03
+
+### Fixed
+- Flattened MCP mega-tool input schemas at the public boundary so Copilot CLI receives top-level JSON Schema objects without unsupported `oneOf` / `anyOf` combinators.
+- Normalized discriminated mega-tool action schemas into strict object-root function definitions while preserving runtime Zod validation for all HarnessOS MCP tools.
+- Restored out-of-the-box `agent-harness` compatibility for Copilot CLI sessions that failed during tool registration before any prompt execution.
+
 ## 2.0.3 - 2026-04-02
 
 ### Breaking Path Rollback

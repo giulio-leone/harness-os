@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "bundleVersion": "2.0.3",
+  "bundleVersion": "2.0.4",
   "workloadProfiles": [
     {
       "id": "assistant",
       "name": "Assistant",
       "description": "General cross-domain execution with the full bundled skill surface.",
       "guidance": "Use this when a host must stay multi-domain and needs the complete bundled skill set without specialization.",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "skillIds": [
         "breaking-change-paths",
         "code-review",
@@ -33,14 +33,14 @@
         "systematic-debugging",
         "testing-policy"
       ],
-      "checksum": "2c59ee2edf858a052110e06df30645ea7ffbdb16e3fb7a2038f6827efa762eab"
+      "checksum": "ec088d6809ca1d47cd72ec19824db5c24bc129ce68b19344a5c3cc667a0e50ee"
     },
     {
       "id": "coding",
       "name": "Coding",
       "description": "Software delivery, code review, testing, and release execution.",
       "guidance": "Optimize for implementation quality, deterministic validation, and release-safe engineering workflows.",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "skillIds": [
         "breaking-change-paths",
         "code-review",
@@ -66,14 +66,14 @@
         "systematic-debugging",
         "testing-policy"
       ],
-      "checksum": "38fe29690f11efc2ef67be371ae5b6f71fad54d322376e0493502c46395b79e9"
+      "checksum": "3f3336acf8c32fefda61d82a660f98472128c0d3da5490239a016d89aa0217a7"
     },
     {
       "id": "ops",
       "name": "Ops",
       "description": "Infrastructure, deployment, incident response, and service operations.",
       "guidance": "Optimize for operational safety, rollback readiness, observability, and recovery discipline.",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "skillIds": [
         "completion-gate",
         "context-management",
@@ -93,14 +93,14 @@
         "session-logging",
         "systematic-debugging"
       ],
-      "checksum": "d8bbf1ed76d26610cb59b4c7d07f13afcc4ee5b3975e2ed1be31e90356d1b470"
+      "checksum": "7970fd089f605d99d5405e3de0c0a51b232bf7e5b8aa630fab69f700740f1d88"
     },
     {
       "id": "research",
       "name": "Research",
       "description": "Discovery, synthesis, analysis, and evidence-driven investigation.",
       "guidance": "Optimize for structured exploration, traceable findings, and compact handoffs instead of code-first execution.",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "skillIds": [
         "completion-gate",
         "context-management",
@@ -116,14 +116,14 @@
         "session-logging",
         "systematic-debugging"
       ],
-      "checksum": "c22af3727c731a5e5d92506dcfe7794fa05e1cfafcdaad1a1434c06a6bf7961b"
+      "checksum": "069f13b00be33c0a97b881b3fc2f3a491abc872105fddcc7fb3afe331807de24"
     },
     {
       "id": "sales",
       "name": "Sales",
       "description": "Pipeline execution, deal support, enablement, and customer-facing follow-through.",
       "guidance": "Optimize for structured plans, decision clarity, and lightweight operational handoffs across external stakeholders.",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "skillIds": [
         "completion-gate",
         "context-management",
@@ -139,14 +139,14 @@
         "session-lifecycle",
         "session-logging"
       ],
-      "checksum": "b6e6574d565355228b65bce640ff7a048975d5b20b48b6ac92450436f99cebe2"
+      "checksum": "b4ef1b72dca317b98dcdc7950accacebffe001eb8e99b483ecb34002b82b5bcb"
     },
     {
       "id": "support",
       "name": "Support",
       "description": "Case triage, escalation handling, investigation, and customer resolution workflows.",
       "guidance": "Optimize for reproducible investigation, escalation discipline, and clear next-action ownership.",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "skillIds": [
         "completion-gate",
         "context-management",
@@ -163,7 +163,7 @@
         "session-logging",
         "systematic-debugging"
       ],
-      "checksum": "c878940dfa57cc4cee9bc57a87feaed8d66738b8693bb58a6488ec726c164f26"
+      "checksum": "f98050300b4711536170f816e5422ba0065019944708643ea3ed7e7dbbd41223"
     }
   ],
   "skills": [
@@ -172,7 +172,7 @@
       "name": "breaking-change-paths",
       "description": "\"Structured decision process between Non-Breaking and Breaking paths without relaxing quality gates.\"",
       "relativePath": ".github/skills/breaking-change-paths/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "da679798667d7996c7a009575b975799292d1dfa4dee6e147df6645ffe75976b",
       "files": [
         {
@@ -190,7 +190,7 @@
       "name": "code-review",
       "description": "\"Structured code review checklist covering correctness, security, performance, and maintainability.\"",
       "relativePath": ".github/skills/code-review/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "a06f34ceca0c25b2216a31eddb320ad0b3ee5fda974a2450bd786f3df5808a46",
       "files": [
         {
@@ -208,7 +208,7 @@
       "name": "completion-gate",
       "description": "\"Mandatory quality gate for every Issue, Milestone, and PR with zero-error execution and no technical debt carry-over.\"",
       "relativePath": ".github/skills/completion-gate/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "2b59c425875cd6ea9e5ae65c3f2cf301842780d4182e704d687e402ac5258f38",
       "files": [
         {
@@ -230,7 +230,7 @@
       "name": "context-management",
       "description": "\"Rules and strategies for managing agent context window size, avoiding bloat, and preserving signal-to-noise ratio.\"",
       "relativePath": ".github/skills/context-management/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "4e09f983fa009310afd197a5d732871f1bf49dbb7dab14d0a06838eaa9e61d81",
       "files": [
         {
@@ -252,7 +252,7 @@
       "name": "dependency-management",
       "description": "\"Dependency audit, update policy, license verification, and supply chain security practices.\"",
       "relativePath": ".github/skills/dependency-management/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "1d51607e04c386675ee54f5228280fd5ab58c9913e204291ba9ddd412ce13cf4",
       "files": [
         {
@@ -271,7 +271,7 @@
       "name": "e2e-testing",
       "description": "\"Deterministic, CI-ready end-to-end validation for critical user flows.\"",
       "relativePath": ".github/skills/e2e-testing/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "9636ecd9001aac7f1b69c391b28ca01da3c58be44a0f5286c740d76c5ba94282",
       "files": [
         {
@@ -290,7 +290,7 @@
       "name": "error-handling-patterns",
       "description": "\"Standard patterns for error handling, retry logic, circuit breakers, and graceful degradation.\"",
       "relativePath": ".github/skills/error-handling-patterns/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "a93fdd7908240f4f13d6f30f9f8be54704e6549febb76bc8fc55f1073587e249",
       "files": [
         {
@@ -310,7 +310,7 @@
       "name": "git-workflow",
       "description": "\"Branch naming, commit messages, PR conventions, and merge strategy for clean, traceable git history.\"",
       "relativePath": ".github/skills/git-workflow/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "daee814fd38ac57f55f1ab845b05e6cee47e5868ee1a90c6611c0fa3cef6ca63",
       "files": [
         {
@@ -328,7 +328,7 @@
       "name": "github-sync",
       "description": "\"Keep local plan and GitHub project artifacts perfectly aligned with milestones, issues, labels, and statuses.\"",
       "relativePath": ".github/skills/github-sync/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "a3df946bc4019e8d218d3ae674c3d1452baa44f3bb18fa06c159fe22d5cc4a19",
       "files": [
         {
@@ -347,7 +347,7 @@
       "name": "harness-interactive-setup",
       "description": "How to automatically configure, install, and sync HarnessOS to any host (Gemini, Cursor, Copilot, Windsurf) without human intervention.",
       "relativePath": ".github/skills/harness-interactive-setup/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "408fa6617c1ae4add3d4d94d9266a870ba0555e14db95bd1c577148d881ada91",
       "files": [
         {
@@ -369,7 +369,7 @@
       "name": "harness-lifecycle",
       "description": "Two-phase agent harness lifecycle — initializer session for scaffolding and incremental sessions for feature-by-feature execution with cross-session memory.",
       "relativePath": ".github/skills/harness-lifecycle/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "21196efc502661a9ed809d975317653efcdd1dcdf97e6988deec6f05feeeecf5",
       "files": [
         {
@@ -391,7 +391,7 @@
       "name": "interaction-loop",
       "description": "\"Iterative decision loop with consistent user checkpoints and explicit stop criteria.\"",
       "relativePath": ".github/skills/interaction-loop/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "b43cc267471acd42bb484fdc2579e0104c0d2583879319a7619075d8841a2e16",
       "files": [
         {
@@ -413,7 +413,7 @@
       "name": "mobile-mcp-optimization",
       "description": "Enforce the use of mcp_mobile_multi_action to reduce latency and improve reliability during Mobile MCP UI automation.",
       "relativePath": ".github/skills/mobile-mcp-optimization/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "9f84ac2588891bffde261cc1280f87778493d6d1d0d0a57cab7e2ee5a95611b8",
       "files": [
         {
@@ -431,7 +431,7 @@
       "name": "performance-audit",
       "description": "\"Structured performance audit covering Core Web Vitals, bundle size, memory profiling, and runtime efficiency.\"",
       "relativePath": ".github/skills/performance-audit/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "d832d4f5f0ca28436fa6b4f8d71237bee50c7ecbaf5dedc6acaeedc7239872e2",
       "files": [
         {
@@ -450,7 +450,7 @@
       "name": "planning-tracking",
       "description": "\"Execution plan with milestone/issue hierarchy, explicit dependencies, and safe parallelism.\"",
       "relativePath": ".github/skills/planning-tracking/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "6fb71f210eacc42ea661a84083c97124e4f4ebc595309d5b34f2d2f188deae65",
       "files": [
         {
@@ -472,7 +472,7 @@
       "name": "policy-coherence-audit",
       "description": "\"Detect and remove contradictions across agent policies before execution.\"",
       "relativePath": ".github/skills/policy-coherence-audit/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "9cf4537d1f50c478f4953806f464cbb34cacf4f5960ed96df9ce4f56199513e8",
       "files": [
         {
@@ -494,7 +494,7 @@
       "name": "programmatic-tool-calling",
       "description": "\"Multi-step tool workflows via code orchestration to reduce latency, context pollution, and token overhead.\"",
       "relativePath": ".github/skills/programmatic-tool-calling/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "2f9800a17238c79cb9060ec1862d4e57c20a034ca782cda1e6ef21ec0bee9378",
       "files": [
         {
@@ -516,7 +516,7 @@
       "name": "prompt-contract-bindings",
       "description": "\"Bind project-specific prompts to local schema and workflow artifacts while keeping the harness core generic and globally reusable.\"",
       "relativePath": ".github/skills/prompt-contract-bindings/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "5ad0e256de8eb2bfd3dc0e9d33ccf5d6beee874953b4725d14372c1c8be37816",
       "files": [
         {
@@ -538,7 +538,7 @@
       "name": "rollback-rca",
       "description": "\"Stop ineffective iteration loops and choose a controlled recovery path after repeated gate failures.\"",
       "relativePath": ".github/skills/rollback-rca/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "6ae38afddd2be08decd49ce0826c5a26961206f9bf2d415333b74a4d6c6b0596",
       "files": [
         {
@@ -560,7 +560,7 @@
       "name": "session-lifecycle",
       "description": "\"Operational session protocol for task-scoped leases, reconciliation, checkpoints, inspection, queue promotion, and handoff across long-running work.\"",
       "relativePath": ".github/skills/session-lifecycle/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "9c327647c782bfdbe267b2806e8c900891d98cfbd4ca67671ceb2076e8d6c52b",
       "files": [
         {
@@ -582,7 +582,7 @@
       "name": "session-logging",
       "description": "\"Accurate, auditable execution journal for each working session.\"",
       "relativePath": ".github/skills/session-logging/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "a5fd2b81081b9e61bfaa4dd12a4f6705daddafa482b267ca3716176383522bf9",
       "files": [
         {
@@ -604,7 +604,7 @@
       "name": "systematic-debugging",
       "description": "\"Evidence-based debugging via structured logging, debug-data.log analysis, and MCP tool integration — replaces trial-and-error.\"",
       "relativePath": ".github/skills/systematic-debugging/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "af447234f94dc39bf5139974159c9c300edbd0acb551df412ab3af01a5e5a4bf",
       "files": [
         {
@@ -625,7 +625,7 @@
       "name": "testing-policy",
       "description": "\"Deterministic, CI-ready quality verification with no regressions and no coverage drop.\"",
       "relativePath": ".github/skills/testing-policy/SKILL.md",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "checksum": "7cbed320aaf57b1a795d804f9fdbfe9987be16302516de655786a187b8dd9ff6",
       "files": [
         {
@@ -639,5 +639,5 @@
       ]
     }
   ],
-  "manifestChecksum": "9defb377c4635b7db91fe0fb2e19c112283a126859fce1e4aa9ccea37d0b712a"
+  "manifestChecksum": "e6dd9f1de5b3284bb21383e54df57e52b8ced0ea1fda5a4b42a42b7adb742789"
 }
