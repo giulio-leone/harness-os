@@ -60,6 +60,7 @@ Latest release notes and breaking changes are tracked in [CHANGELOG.md](CHANGELO
 - HarnessOS now enforces SQLite schema v5 as the only supported runtime store contract.
 - Existing v2 databases are not migrated in place; opening them fails fast with an explicit recreate instruction.
 - The runtime now persists `blocked_reason` on issues and milestones so dependency blockers are explicit, inspectable, and recomputed deterministically when queue state changes.
+- The public package stays on the **2.x release line**; schema, contract, and bundled-skill versions are tracked independently per surface so runtime cuts remain explicit without forcing a new package major every time one internal contract moves.
 
 ### What it handles:
 - **Zod Plan Contracts** — Strongly typed schema validation for robust planning.
@@ -96,6 +97,7 @@ SQLite acts as the absolute source of truth for:
 - `harness_inspector(action: "capabilities")` exposes the runtime tool surface, bundled skills, policy-driven skills, and mem0 state in an agent-readable format.
 - The packaged skills under `.github/skills` mirror the canonical runtime contract, so prompts, docs, and MCP discovery stay aligned.
 - The bundled skill manifest now publishes explicit workload profiles (`coding`, `research`, `ops`, `sales`, `support`, `assistant`) and per-skill `workloadProfileIds`, so hosts can specialize without hardcoding the core runtime to one domain.
+- Human-facing discovery docs now live in one place per surface: [docs/mcp-tools.md](docs/mcp-tools.md) for MCP mega-tools, [docs/cli-reference.md](docs/cli-reference.md) for the installable CLIs, [docs/workload-profiles.md](docs/workload-profiles.md) for workload selection, and [.github/skills/README.md](.github/skills/README.md) for the bundled skill index.
 
 ### 🧩 Workload-Aware Skill Sync
 - `harness-setup` now records a canonical `selectedWorkloadProfile` for every registered host under `~/.agent-harness/config.json`.
@@ -153,6 +155,15 @@ The current host-sync schema is `3`: each host now stores an explicit `selectedW
 | `support` | [`examples/support-workspace-template`](examples/support-workspace-template/) | case intake, escalation, customer-safe resolution, and KB follow-up |
 
 See [docs/workload-profiles.md](docs/workload-profiles.md) for profile guidance, template pairing, and copy/paste quick starts.
+
+### 2.1️⃣ Discovery reference
+
+| Need | Reference |
+|----------|-----------|
+| Choose the right MCP mega-tool and action | [docs/mcp-tools.md](docs/mcp-tools.md) |
+| Find the right CLI command or flag | [docs/cli-reference.md](docs/cli-reference.md) |
+| Choose a workload profile and template | [docs/workload-profiles.md](docs/workload-profiles.md) |
+| Find the right bundled skill | [.github/skills/README.md](.github/skills/README.md) |
 
 ### 3️⃣ Environment Variables
 

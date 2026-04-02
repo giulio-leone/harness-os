@@ -59,6 +59,52 @@ async function lintAllFiles(files) {
 
 **Key**: the raw lint JSON never enters the model context — only the filtered summary does.
 
+## Example — HarnessOS lifecycle orchestration
+
+Use code orchestration when the workflow is “discover -> claim -> checkpoint -> close” and intermediate payloads are large:
+
+```javascript
+async function executeReadyIssue(projectName) {
+  const capabilities = await runTool("harness_inspector", { action: "capabilities" });
+  validateCapabilities(capabilities);
+
+  const begin = await runTool("harness_session", {
+    action: "begin",
+    projectName,
+  });
+
+  if (begin.status !== "ok" || !begin.sessionToken) {
+    return { claimed: false, reason: "No ready issue" };
+  }
+
+  const summary = await performWorkOutsideModelContext(begin.issueId);
+
+  await runTool("harness_session", {
+    action: "checkpoint",
+    sessionToken: begin.sessionToken,
+    input: {
+      title: "Implementation complete",
+      summary,
+      taskStatus: "in_progress",
+      nextStep: "Run final validation",
+    },
+  });
+
+  return runTool("harness_session", {
+    action: "close",
+    sessionToken: begin.sessionToken,
+    closeInput: {
+      title: "Task complete",
+      summary,
+      taskStatus: "done",
+      nextStep: "Wait for feedback",
+    },
+  });
+}
+```
+
+The important part is not the exact code — it is that the heavy work stays in the orchestration runtime and only compact lifecycle summaries come back to the model.
+
 ## Why It Works (provider/model independent)
 - Fewer model round-trips for multi-call workflows.
 - Intermediate data stays out of context unless needed.
@@ -70,6 +116,7 @@ async function lintAllFiles(files) {
 - Idempotent/retry-safe tool design when possible.
 - Timeout/cancellation/expiry handling.
 - Sandbox execution for untrusted code; never blindly execute external payloads.
+- Do not mutate canonical state outside the official HarnessOS tool surface just because orchestration code makes it easy.
 
 ## Done Criteria
 - Workflow completes with reduced context load and deterministic control flow.

@@ -57,3 +57,34 @@ Use this index to quickly select the right skill file.
 15. `context-management` (long sessions)
 16. `programmatic-tool-calling` (complex tool workflows)
 17. `policy-coherence-audit` (when editing policy)
+
+## Quick lookup by runtime goal
+
+| Goal | Start with | Then usually pair with |
+| --- | --- | --- |
+| Boot a new HarnessOS session | `harness-lifecycle` | `session-lifecycle`, `interaction-loop` |
+| Plan and sync delivery | `planning-tracking` | `github-sync`, `session-logging`, `completion-gate` |
+| Evaluate a risky migration | `breaking-change-paths` | `rollback-rca`, `completion-gate`, `git-workflow` |
+| Debug a failing runtime path | `systematic-debugging` | `error-handling-patterns`, `context-management` |
+| Reduce noisy multi-step tool traffic | `programmatic-tool-calling` | `context-management`, `session-logging` |
+| Validate release readiness | `testing-policy` | `e2e-testing`, `dependency-management`, `performance-audit`, `completion-gate` |
+
+## Profile-to-skills mapping
+
+All workload profiles include the core runtime skills. Use this table to find the profile-specific additions quickly:
+
+| Workload profile | Additional skills on top of the core runtime set |
+| --- | --- |
+| `coding` | `breaking-change-paths`, `code-review`, `dependency-management`, `e2e-testing`, `error-handling-patterns`, `git-workflow`, `github-sync`, `mobile-mcp-optimization`, `performance-audit`, `systematic-debugging`, `testing-policy` |
+| `research` | `systematic-debugging` |
+| `ops` | `dependency-management`, `e2e-testing`, `error-handling-patterns`, `performance-audit`, `systematic-debugging` |
+| `sales` | `github-sync` |
+| `support` | `error-handling-patterns`, `systematic-debugging` |
+| `assistant` | all bundled skills |
+
+## Programmatic discoverability
+
+- `harness_inspector(action: "capabilities")` is the canonical machine-readable index for tools, skills, workload profiles, and mem0 state.
+- `.github/skills/bundle-manifest.json` is the packaged build-time artifact that ties skill metadata, workload profiles, version, and checksums together.
+- `docs/workload-profiles.md` maps profiles to concrete workspace templates.
+- `docs/mcp-tools.md` and `docs/cli-reference.md` are the human-facing entrypoints for MCP actions and installable commands.

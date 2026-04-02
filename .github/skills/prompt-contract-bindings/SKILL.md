@@ -41,6 +41,28 @@ Capture the reusable pattern for operationalizing a domain prompt without pollut
 7. Wire the new local artifacts into `harness-project.json`, `init.sh`, and local `AGENTS.MD`.
 8. Validate the artifacts on disk and run at least one bootstrap or preview path that proves the bindings do not break the existing lifecycle flow.
 
+## Reference Workspace Examples
+
+The repository now ships multiple reference bindings you can inspect before inventing your own:
+
+| Workspace | Binding style |
+| --- | --- |
+| `examples/consumer-workspace-template` | generic assistant-style scaffold |
+| `examples/research-workspace-template` | discovery/synthesis/review/publish workflow |
+| `examples/ops-workspace-template` | incident triage/mitigation/execution/follow-through workflow |
+| `examples/support-workspace-template` | intake/escalation/resolution/knowledge-base workflow |
+
+Use these as concrete examples of how `.harness/prompt-workflow-bindings.json`, `.harness/schemas/domain-schema.json`, and `.harness/mission-workflows/workflow.json` fit together.
+
+## Binding Validation Loop
+
+After wiring the artifacts, validate them in this order:
+
+1. `bash init.sh`
+2. `python3 .harness/seed-live-catalog.py --reset`
+3. a preview path such as `bash .harness/run-live-dry-run.sh`
+4. a capability or queue inspection path that proves the workflow remains discoverable
+
 ## Validation Gate
 A prompt contract is only operationalized when:
 - the prompt fixture exists on disk
@@ -62,6 +84,9 @@ A prompt contract is only operationalized when:
 - `session-lifecycle` — executes the generic queue/lease/checkpoint protocol used by the local workflow
 - `harness-lifecycle` — governs initializer and incremental sessions around the local contract
 - `planning-tracking` — breaks the operationalization work into explicit slices
+
+## Related References
+- `docs/workload-profiles.md` — explains which host specialization should carry the binding
 
 ## Version Notes
 - `1.0.0` — initial repo-native skill extracted from verified prompt-to-schema/workflow operationalization in `combined-auto-runtime` while keeping the harness core generic.

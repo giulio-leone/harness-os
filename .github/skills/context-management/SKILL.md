@@ -51,10 +51,33 @@ Prevent context window bloat and maintain a high signal-to-noise ratio during lo
 | Reading 5+ full files without processing | Switch to targeted reads |
 | Agent "forgetting" earlier decisions | Checkpoint to file, reference it |
 
+## Token Budget Heuristics
+
+Use simple budgeting rules instead of waiting until the window is already polluted:
+
+| Situation | Practical heuristic |
+|------|--------|
+| Large repo exploration | keep the active working set under ~5 files at once |
+| Command output | keep only pass/fail summary plus failing details |
+| Multi-phase task | checkpoint after each phase and drop solved details |
+| Repeated docs/spec references | reference the file path and section instead of pasting it again |
+
+## HarnessOS Session Reset Pattern
+
+For long tasks, prefer this loop:
+
+1. plan or checkpoint the current phase
+2. persist the important decision in `progress.md`, `plan.md`, or a Harness checkpoint
+3. clear the active mental stack
+4. reopen only the files needed for the next phase
+
+That is usually better than carrying the full earlier implementation and test history in active context.
+
 ## Related Skills
 - **`programmatic-tool-calling`** — use code orchestration to filter intermediate data
 - **`planning-tracking`** — offload plans to files instead of context
 - **`session-logging`** — checkpoint progress for context reconstruction
+- **`harness-lifecycle`** — use canonical checkpoints and handoffs instead of bloated chat memory
 
 ## Done Criteria
 - No raw, unprocessed tool outputs exceeding 100 lines in context
@@ -66,3 +89,4 @@ Prevent context window bloat and maintain a high signal-to-noise ratio during lo
 - Returning raw `npm test` output (hundreds of lines) to context
 - Re-reading files that haven't changed
 - Keeping completed subtask details in active reasoning
+- Carrying old release/debug context forward after it has already been checkpointed elsewhere

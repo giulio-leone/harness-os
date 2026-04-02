@@ -30,6 +30,13 @@ harness-install-mcp --host antigravity --workload-profile assistant
 
 This creates the canonical runtime paths under `~/.agent-harness/` and updates the host MCP configs in place. Use `--dry-run` first if you want to inspect the changes before writing.
 
+### 2.1 Recommended path — MCP installation
+
+- Use `harness-install-mcp` when you want the lifecycle server registered directly into Codex, Copilot CLI, or antigravity.
+- Use `harness_inspector(action: "capabilities")` immediately after install when you want a machine-readable view of available tools, workload profiles, bundled skills, and mem0 status.
+- Use [mcp-tools.md](mcp-tools.md) when you need the authoritative action reference for the five Harness MCP mega-tools.
+- Use [cli-reference.md](cli-reference.md) when you need the full command-level reference for the installable CLIs.
+
 You can still sync bundled skills to extra workspaces such as `~/.gemini`, `~/.cursor`, or `~/.copilot`:
 
 ```bash
@@ -38,6 +45,12 @@ harness-sync
 ```
 
 If you are upgrading from the legacy flat host config, rerun `harness-setup` once to rewrite `~/.agent-harness/config.json` to the versioned sync schema before running `harness-sync`. The sync flow now writes `skills/bundle-manifest.json` to every host and explicitly replaces outdated or drifted bundled skill assets.
+
+### 2.2 Manual host setup and sync
+
+- Use `harness-setup` when you need the interactive host/workspace manager.
+- Use `harness-sync` after changing workload profile selection or when you need to replace drifted bundled skills in a registered host.
+- The package version remains on the public `2.x` line; workload profile versions, schema versions, and session-lifecycle contract versions are documented separately per surface.
 
 ## 3. Bootstrapping a Workspace
 
@@ -75,6 +88,7 @@ python3 .harness/seed-live-catalog.py --reset
 Each template includes a reference mission catalog, workload-specific handoff assets, and example workflow metadata (`deadlineAt`, `recipients`, `approvals`, `externalRefs`) so the first queue already looks like a real operational flow instead of a coding-only scaffold.
 
 For a profile-by-profile guide, see [workload-profiles.md](workload-profiles.md).
+For the matching bundled skill index, see [../.github/skills/README.md](../.github/skills/README.md).
 
 ## 5. Planning and Queuing Issues
 
@@ -123,6 +137,12 @@ When you ask the MCP inspector for `next_action`, the recommendation now include
 ```
 
 Operational policy is now split cleanly from workflow metadata at the queue boundary: `create_campaign` accepts an optional `policy` object with `owner`, `serviceLevel`, `escalationRules`, and `dispatch`, while `plan_issues` and scheduler jobs accept first-class work-item fields like `deadlineAt`, `recipients`, `approvals`, and `externalRefs`. Campaign policy acts as the default, issue policy acts as the override, and inspector surfaces expose the effective merged policy plus the canonical issue deadline that dispatch uses.
+
+If you need a concise “which tool do I call next?” guide instead of raw examples, start with:
+
+1. [mcp-tools.md](mcp-tools.md) for the MCP surface
+2. [cli-reference.md](cli-reference.md) for installable commands
+3. [workload-profiles.md](workload-profiles.md) for workload-specific setup
 
 <!-- GENERATED:GETTING-STARTED-EXAMPLES:START -->
 Generated from the canonical public contract model:

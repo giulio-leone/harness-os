@@ -14,6 +14,10 @@ npm run verify:release
 
 `npm run verify:release` is the canonical release verification entrypoint. It must stay green before `npm publish`.
 
+## Package version policy
+
+HarnessOS keeps the public npm package on the **2.x** line. Internal contract cuts still use their own explicit versions (`schema v5`, `contractVersion: "6.0.0"`, workload-profile bundle versions, and so on), and release notes must explain both the public package version and the internal contract boundaries it ships.
+
 ## Hard-cut upgrade path
 
 When a breaking release lands, update all public surfaces atomically:

@@ -94,10 +94,20 @@ test('reference workspace seeders persist workflow metadata columns', () => {
 test('workload profile docs point to the shipped reference workspaces', () => {
   const readme = readFileSync(resolve(repoRoot, 'README.md'), 'utf8');
   const guide = readFileSync(resolve(repoRoot, 'docs', 'workload-profiles.md'), 'utf8');
+  const gettingStarted = readFileSync(resolve(repoRoot, 'docs', 'getting-started.md'), 'utf8');
+  const skillsIndex = readFileSync(resolve(repoRoot, '.github', 'skills', 'README.md'), 'utf8');
 
   assert.match(readme, /docs\/workload-profiles\.md/);
+  assert.match(readme, /docs\/mcp-tools\.md/);
+  assert.match(readme, /docs\/cli-reference\.md/);
+  assert.equal(existsSync(resolve(repoRoot, 'docs', 'mcp-tools.md')), true);
+  assert.equal(existsSync(resolve(repoRoot, 'docs', 'cli-reference.md')), true);
   assert.match(guide, /examples\/consumer-workspace-template/);
   assert.match(guide, /examples\/research-workspace-template/);
   assert.match(guide, /examples\/ops-workspace-template/);
   assert.match(guide, /examples\/support-workspace-template/);
+  assert.match(gettingStarted, /mcp-tools\.md/);
+  assert.match(gettingStarted, /cli-reference\.md/);
+  assert.match(skillsIndex, /Profile-to-skills mapping/);
+  assert.match(skillsIndex, /Programmatic discoverability/);
 });

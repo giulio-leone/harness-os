@@ -122,6 +122,33 @@ When a non-critical feature fails, degrade instead of crashing:
 
 **Rule**: only non-critical features degrade; critical paths must fail explicitly.
 
+## HarnessOS Integration Pattern
+
+When a failure affects canonical queue state, do not hide it behind a friendly fallback. Instead:
+
+1. keep SQLite as the source of truth
+2. checkpoint the failure explicitly
+3. mark the task `blocked` or `needs_recovery` when the lifecycle truly cannot continue
+4. preserve the next action needed for recovery
+
+Example:
+
+```json
+{
+  "action": "checkpoint",
+  "sessionToken": "ST-...",
+  "input": {
+    "title": "Dependency API unavailable",
+    "summary": "Customer-safe response drafted, but the upstream API stayed unavailable after bounded retries.",
+    "taskStatus": "blocked",
+    "nextStep": "Retry after platform approval or switch to the documented manual fallback.",
+    "persistToMem0": false
+  }
+}
+```
+
+This keeps the failure visible to `next_action`, audit/export surfaces, and later recovery work instead of pretending the task succeeded.
+
 ## Pattern 5 — Error Boundaries (Frontend)
 
 - Wrap independent UI sections in error boundaries
@@ -132,6 +159,7 @@ When a non-critical feature fails, degrade instead of crashing:
 ## Related Skills
 - **`systematic-debugging`** — when errors need root-cause investigation
 - **`testing-policy`** — test error paths, not just happy paths
+- **`session-lifecycle`** — checkpoint or close blocked/recovery states explicitly
 
 ## Done Criteria
 - External calls use retry or circuit breaker as appropriate
@@ -145,3 +173,4 @@ When a non-critical feature fails, degrade instead of crashing:
 - **Generic messages**: "An error occurred" without actionable guidance
 - **Logging without context**: `console.error(e)` without state/input data
 - **Treating all errors equally**: 404 and 500 should not trigger the same response
+- **Success-shaped fallbacks** that hide a blocked HarnessOS task instead of checkpointing it

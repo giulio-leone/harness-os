@@ -60,8 +60,10 @@ HarnessOS now models workload specialization as a first-class runtime concept in
 - **Atomic host replacement**: `harness-setup` persists a selected workload profile per host, and `harness-sync` copies only the skills required by that profile while pruning the rest in the same pass.
 - **Discoverability without domain lock-in**: capability metadata exposes workload-profile membership for every bundled skill, but the core scheduler, lifecycle orchestrator, lease manager, and SQLite state machine remain domain-agnostic.
 - **Assistant as the full-surface profile**: hosts that must stay multi-domain can choose `assistant`, which ships the complete bundled skill set without keeping the removed `runtime-default` alias alive.
+- **Decoupled versioning**: the public package remains on the `2.x` line, while schema, contract, and workload-profile versions move independently so each boundary can stay explicit without forcing package-major churn.
 
 The repository also publishes reference workspaces that pair the profile model with concrete queue examples. `examples/consumer-workspace-template` is the generic `assistant` path, while `examples/research-workspace-template`, `examples/ops-workspace-template`, and `examples/support-workspace-template` demonstrate non-coding mission catalogs, handoff assets, and first-class workflow metadata in realistic domains.
+For authoritative action-by-action tool documentation, use [mcp-tools.md](mcp-tools.md); for command-level entrypoints, use [cli-reference.md](cli-reference.md).
 
 ## 5. The Execution Flow
 

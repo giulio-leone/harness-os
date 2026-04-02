@@ -2,7 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## 2.0.3 - 2026-04-02
+
+### Breaking Path Rollback
+- This release supersedes the withdrawn `v8.0.0` GitHub cut and keeps the public package on the `2.x` line.
+- Public package versioning now stays decoupled from internal schema, contract, and workload-profile version cuts. Runtime boundaries remain explicit, but they no longer force a new package major by themselves.
+
+### Added
+- Added authoritative MCP and CLI discovery docs in `docs/mcp-tools.md` and `docs/cli-reference.md`.
+- Added stronger workload-profile and bundled-skill discoverability docs, including profile selection guidance, skill membership tables, and cross-links to the packaged skill index.
+- Expanded key bundled skills with concrete HarnessOS examples for error handling, context management, programmatic tool calling, policy coherence, and prompt bindings.
+
+### Changed
+- Published the schema v5 / workflow-metadata / workload-profile / reference-workspace tranche on the public `2.x` version line instead of `8.0.0`.
+- Reframed README, getting-started, architecture, release, and workload-profile docs so public package versioning is easier to explain while MCP tools, CLIs, workload profiles, and skills are easier to discover.
+
 ## 8.0.0 - 2026-04-02
+
+> Withdrawn public package cut. The technical content below was rolled forward into `2.0.3` on the public version line.
 
 ### Breaking Changes
 - HarnessOS now enforces SQLite schema v5 as the only supported runtime store contract. Recreate older databases to adopt first-class issue/milestone workflow metadata columns.
