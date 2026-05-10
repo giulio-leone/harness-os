@@ -17,7 +17,8 @@ test('sanitizeWorktreeIdentifier creates safe deterministic path segments', () =
     sanitizeWorktreeIdentifier(' M2 I1: Worktree/Allocator '),
     'm2-i1-worktree-allocator',
   );
-  assert.equal(sanitizeWorktreeIdentifier('Issue__42...A'), 'issue__42...a');
+  assert.equal(sanitizeWorktreeIdentifier('Issue__42...A'), 'issue__42.a');
+  assert.equal(sanitizeWorktreeIdentifier('Release.lock'), 'release');
   assert.throws(
     () => sanitizeWorktreeIdentifier('../escape'),
     /traversal segments/,
@@ -95,6 +96,29 @@ test('buildWorktreeAllocation rejects empty identifiers, traversal, and relative
       }),
     /baseRef must not contain traversal segments/,
   );
+  assert.throws(
+    () =>
+      buildWorktreeAllocation({
+        issueId: 'M2-I1',
+        repoRoot,
+        worktreeRoot,
+        baseRef: 'release..candidate',
+      }),
+    /baseRef must be a safe git ref/,
+  );
+});
+
+test('buildWorktreeAllocation never emits unsafe git branch refs from safeable input', () => {
+  const worktree = buildWorktreeAllocation({
+    issueId: 'Release..Candidate.lock',
+    repoRoot,
+    worktreeRoot,
+    baseRef: 'main',
+    branchPrefix: 'team/feat.lock',
+  });
+
+  assert.equal(worktree.id, 'release.candidate');
+  assert.equal(worktree.branch, 'team/feat/release.candidate');
 });
 
 test('validateWorktreeCandidate detects duplicate path and branch conflicts', () => {
@@ -163,6 +187,84 @@ test('validateWorktreeCandidate rejects candidates outside root containment', ()
   }
 });
 
+test('validateWorktreeCandidate rejects externally supplied unsafe git refs', () => {
+  const worktree = buildWorktreeAllocation({
+    issueId: 'M2-I1',
+    repoRoot,
+    worktreeRoot,
+    baseRef: 'main',
+  });
+  const result = validateWorktreeCandidate({
+    ...worktree,
+    branch: 'bad..branch',
+    baseRef: 'bad..base',
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.deepEqual(
+      result.issues.map((issue) => issue.code),
+      ['invalid_branch_ref', 'invalid_base_ref'],
+    );
+  }
+  assert.throws(
+    () => createWorktreeCleanupPlan({ ...worktree, branch: 'bad..branch' }),
+    /worktree branch must be a safe git branch ref/,
+  );
+});
+
+test('validateWorktreeCandidate rejects HEAD as branch while allowing it as baseRef', () => {
+  const worktree = buildWorktreeAllocation({
+    issueId: 'M2-I1',
+    repoRoot,
+    worktreeRoot,
+    baseRef: 'HEAD',
+  });
+  const result = validateWorktreeCandidate({
+    ...worktree,
+    branch: 'HEAD',
+  });
+
+  assert.equal(worktree.baseRef, 'HEAD');
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.deepEqual(
+      result.issues.map((issue) => issue.code),
+      ['invalid_branch_ref'],
+    );
+  }
+  assert.throws(
+    () => createWorktreeCleanupPlan({ ...worktree, branch: 'HEAD' }),
+    /worktree branch must be a safe git branch ref/,
+  );
+});
+
+test('validateWorktreeCandidate rejects whitespace-padded external refs', () => {
+  const worktree = buildWorktreeAllocation({
+    issueId: 'M2-I1',
+    repoRoot,
+    worktreeRoot,
+    baseRef: 'main',
+  });
+  const result = validateWorktreeCandidate({
+    ...worktree,
+    branch: ' feat/m2-i1 ',
+    baseRef: ' main ',
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.deepEqual(
+      result.issues.map((issue) => issue.code),
+      ['invalid_branch_ref', 'invalid_base_ref'],
+    );
+  }
+  assert.throws(
+    () => createWorktreeCleanupPlan({ ...worktree, branch: ' feat/m2-i1 ' }),
+    /worktree branch must be a safe git branch ref/,
+  );
+});
+
 test('createWorktreeCleanupPlan returns structured git cleanup data without executing', () => {
   const worktree = buildWorktreeAllocation({
     issueId: 'M2-I1',
@@ -201,4 +303,46 @@ test('createWorktreeCleanupPlan returns structured git cleanup data without exec
       },
     ],
   });
+});
+
+test('createWorktreeCleanupPlan respects cleanup policy and outcome', () => {
+  const retainedWorktree = buildWorktreeAllocation({
+    issueId: 'M2-I1',
+    repoRoot,
+    worktreeRoot,
+    baseRef: 'main',
+    cleanupPolicy: 'retain',
+  });
+  const successOnlyWorktree = buildWorktreeAllocation({
+    issueId: 'M2-I2',
+    repoRoot,
+    worktreeRoot,
+    baseRef: 'main',
+    cleanupPolicy: 'delete_on_success',
+  });
+  const failureOnlyWorktree = buildWorktreeAllocation({
+    issueId: 'M2-I3',
+    repoRoot,
+    worktreeRoot,
+    baseRef: 'main',
+    cleanupPolicy: 'delete_on_failure',
+  });
+
+  assert.deepEqual(createWorktreeCleanupPlan(retainedWorktree).commands, []);
+  assert.deepEqual(
+    createWorktreeCleanupPlan(successOnlyWorktree, 'failure').commands,
+    [],
+  );
+  assert.deepEqual(
+    createWorktreeCleanupPlan(failureOnlyWorktree, 'success').commands,
+    [],
+  );
+  assert.equal(
+    createWorktreeCleanupPlan(successOnlyWorktree, 'success').commands.length,
+    3,
+  );
+  assert.equal(
+    createWorktreeCleanupPlan(failureOnlyWorktree, 'failure').commands.length,
+    3,
+  );
 });

@@ -48,6 +48,8 @@ export interface WorktreeCleanupPlan {
   readonly commands: readonly WorktreeCleanupCommand[];
 }
 
+export type WorktreeCleanupOutcome = 'success' | 'failure' | 'completion';
+
 const defaultBranchPrefix = 'worktree';
 const defaultCleanupPolicy: OrchestrationWorktreeCleanupPolicy =
   'delete_on_completion';
@@ -63,14 +65,90 @@ export function sanitizeWorktreeIdentifier(identifier: string): string {
     throw new Error('worktree identifier must not contain traversal segments.');
   }
 
-  const sanitized = trimmed
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^[.-]+|[.-]+$/g, '');
+  const sanitized = trimUnsafeRefEdges(
+    collapseUnsafeDotSequences(
+      trimmed
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/-+/g, '-'),
+    ),
+  );
 
-  if (sanitized.length === 0) {
+  const safeIdentifier = stripLockSuffix(sanitized);
+
+  if (safeIdentifier.length === 0) {
     throw new Error('worktree identifier must contain at least one safe character.');
+  }
+
+  return safeIdentifier;
+}
+
+export function isSafeGitRef(ref: string): boolean {
+  const trimmed = ref.trim();
+
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  if (
+    ref !== trimmed ||
+    trimmed.startsWith('-') ||
+    trimmed.startsWith('/') ||
+    trimmed.endsWith('/') ||
+    trimmed.includes('//') ||
+    trimmed.includes('@{') ||
+    trimmed.includes('\\') ||
+    trimmed.includes('..') ||
+    trimmed.endsWith('.lock') ||
+    !/^[A-Za-z0-9._/-]+$/.test(trimmed)
+  ) {
+    return false;
+  }
+
+  return trimmed
+    .split('/')
+    .every(
+      (segment) =>
+        segment.length > 0 &&
+        segment !== '.' &&
+        segment !== '..' &&
+        !segment.endsWith('.lock') &&
+        !segment.startsWith('.') &&
+        !segment.endsWith('.'),
+    );
+}
+
+export function isSafeGitBranchRef(ref: string): boolean {
+  return isSafeGitRef(ref) && ref.trim() !== 'HEAD';
+}
+
+function collapseUnsafeDotSequences(value: string): string {
+  return value.replace(/\.{2,}/g, '.');
+}
+
+function trimUnsafeRefEdges(value: string): string {
+  return value.replace(/^[.-]+|[.-]+$/g, '');
+}
+
+function stripLockSuffix(value: string): string {
+  return value.replace(/(?:\.lock)+$/g, '');
+}
+
+function sanitizeGitRefSegment(identifier: string): string {
+  const sanitized = stripLockSuffix(
+    trimUnsafeRefEdges(
+      collapseUnsafeDotSequences(
+        identifier
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9._-]+/g, '-')
+          .replace(/-+/g, '-'),
+      ),
+    ),
+  );
+
+  if (sanitized.length === 0 || !isSafeGitBranchRef(sanitized)) {
+    throw new Error('git ref segment must contain at least one safe character.');
   }
 
   return sanitized;
@@ -128,6 +206,22 @@ export function validateWorktreeCandidate(
     };
   }
 
+  if (!isSafeGitBranchRef(parsed.data.branch)) {
+    issues.push({
+      code: 'invalid_branch_ref',
+      message: 'worktree branch must be a safe git branch ref.',
+      path: ['branch'],
+    });
+  }
+
+  if (!isSafeGitRef(parsed.data.baseRef)) {
+    issues.push({
+      code: 'invalid_base_ref',
+      message: 'worktree baseRef must be a safe git ref.',
+      path: ['baseRef'],
+    });
+  }
+
   const duplicatePath = existingCandidates.find(
     (existing) => normalize(existing.path) === normalize(parsed.data.path),
   );
@@ -166,6 +260,7 @@ export function validateWorktreeCandidate(
 
 export function createWorktreeCleanupPlan(
   worktree: OrchestrationWorktree,
+  outcome: WorktreeCleanupOutcome = 'completion',
 ): WorktreeCleanupPlan {
   const validation = validateWorktreeCandidate(worktree);
 
@@ -173,32 +268,43 @@ export function createWorktreeCleanupPlan(
     throw new Error(formatValidationError(validation.issues));
   }
 
+  const shouldCleanup =
+    validation.worktree.cleanupPolicy === 'delete_on_completion' ||
+    (validation.worktree.cleanupPolicy === 'delete_on_success' &&
+      outcome === 'success') ||
+    (validation.worktree.cleanupPolicy === 'delete_on_failure' &&
+      outcome === 'failure');
+
+  const commands: readonly WorktreeCleanupCommand[] = shouldCleanup
+    ? [
+        {
+          type: 'remove_worktree',
+          cwd: validation.worktree.repoRoot,
+          argv: [
+            'git',
+            'worktree',
+            'remove',
+            validation.worktree.path,
+            '--force',
+          ],
+        },
+        {
+          type: 'delete_branch',
+          cwd: validation.worktree.repoRoot,
+          argv: ['git', 'branch', '-D', '--', validation.worktree.branch],
+        },
+        {
+          type: 'prune_worktrees',
+          cwd: validation.worktree.repoRoot,
+          argv: ['git', 'worktree', 'prune'],
+        },
+      ]
+    : [];
+
   return {
     worktreeId: validation.worktree.id,
     cleanupPolicy: validation.worktree.cleanupPolicy,
-    commands: [
-      {
-        type: 'remove_worktree',
-        cwd: validation.worktree.repoRoot,
-        argv: [
-          'git',
-          'worktree',
-          'remove',
-          validation.worktree.path,
-          '--force',
-        ],
-      },
-      {
-        type: 'delete_branch',
-        cwd: validation.worktree.repoRoot,
-        argv: ['git', 'branch', '-D', '--', validation.worktree.branch],
-      },
-      {
-        type: 'prune_worktrees',
-        cwd: validation.worktree.repoRoot,
-        argv: ['git', 'worktree', 'prune'],
-      },
-    ],
+    commands,
   };
 }
 
@@ -234,13 +340,15 @@ function sanitizeBranchPath(value: string): string {
   const segments = trimmed
     .split(/[\\/]+/)
     .filter((segment) => segment.length > 0)
-    .map((segment) => sanitizeWorktreeIdentifier(segment));
+    .map((segment) => sanitizeGitRefSegment(segment));
 
-  if (segments.length === 0) {
+  const branchPath = segments.join('/');
+
+  if (segments.length === 0 || !isSafeGitBranchRef(branchPath)) {
     throw new Error('branchPrefix must contain at least one safe segment.');
   }
 
-  return segments.join('/');
+  return branchPath;
 }
 
 function validateSafeRef(label: string, value: string): string {
@@ -254,13 +362,7 @@ function validateSafeRef(label: string, value: string): string {
     throw new Error(`${label} must not contain traversal segments.`);
   }
 
-  if (
-    trimmed.startsWith('-') ||
-    trimmed.startsWith('/') ||
-    trimmed.endsWith('/') ||
-    trimmed.includes('//') ||
-    !/^[A-Za-z0-9._/-]+$/.test(trimmed)
-  ) {
+  if (!isSafeGitRef(trimmed)) {
     throw new Error(`${label} must be a safe git ref.`);
   }
 
