@@ -39,6 +39,7 @@ export interface IncrementalSessionInput {
   host: string;
   hostCapabilities: HarnessHostCapabilities;
   leaseTtlSeconds?: number;
+  agentMaxConcurrentLeases?: number;
   checkpointFreshnessSeconds?: number;
   memoryQuery?: string;
   memorySearchLimit?: number;
