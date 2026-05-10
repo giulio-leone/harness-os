@@ -11,6 +11,10 @@ import {
   selectAll,
   selectOne,
 } from '../db/store.js';
+import {
+  encodeCandidateFilesArtifactPath,
+  encodeWorktreeBranchArtifactPath,
+} from '../runtime/orchestration-conflicts.js';
 import { dispatchReadyOrchestrationIssues } from '../runtime/orchestration-dispatcher.js';
 
 let tempCounter = 0;
@@ -302,6 +306,343 @@ test('orchestration dispatcher reports incompatible issue capability requirement
   }
 });
 
+test('orchestration dispatcher blocks active worktree path conflicts before claim', async () => {
+  const tempDir = createLocalTempDir('worktree-path-conflict');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-conflict',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedActiveRunArtifacts(dbPath, {
+      runId: 'run-active-worktree',
+      artifacts: [
+        {
+          kind: 'orchestration_worktree',
+          path: '/workspace/worktrees/issue-conflict',
+        },
+      ],
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-path-conflict',
+      subagents: [createSubagent('agent-a', ['implementation'])],
+    });
+
+    assert.equal(result.status, 'idle');
+    assert.equal(result.dispatches.length, 0);
+    assert.equal(result.unassignedIssues[0]?.reason, 'worktree_path_conflict');
+    assert.equal(selectIssue(dbPath, 'issue-conflict')?.status, 'ready');
+    assert.deepEqual(readActiveLeases(dbPath), []);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher blocks active worktree branch conflicts before claim', async () => {
+  const tempDir = createLocalTempDir('worktree-branch-conflict');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-branch',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedActiveRunArtifacts(dbPath, {
+      runId: 'run-active-branch',
+      artifacts: [
+        {
+          kind: 'orchestration_worktree_branch',
+          path: encodeWorktreeBranchArtifactPath(
+            'orchestration/dispatch-branch/issue-branch',
+          ),
+        },
+      ],
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-branch',
+      worktreeRoot: '/workspace/alternate-worktrees',
+      subagents: [createSubagent('agent-a', ['implementation'])],
+    });
+
+    assert.equal(result.status, 'idle');
+    assert.equal(result.dispatches.length, 0);
+    assert.equal(result.unassignedIssues[0]?.reason, 'worktree_branch_conflict');
+    assert.equal(selectIssue(dbPath, 'issue-branch')?.status, 'ready');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher blocks overlapping candidate files in one dispatch', async () => {
+  const tempDir = createLocalTempDir('candidate-overlap');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-api',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedIssue(dbPath, {
+      issueId: 'issue-api-user',
+      status: 'ready',
+      priority: 'critical',
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-candidate-overlap',
+      maxAssignments: 2,
+      maxConcurrentAgents: 2,
+      subagents: [
+        createSubagent('agent-a', ['implementation']),
+        createSubagent('agent-b', ['implementation']),
+      ],
+      issueRequirements: [
+        {
+          issueId: 'issue-api',
+          candidateFilePaths: ['src/api'],
+        },
+        {
+          issueId: 'issue-api-user',
+          candidateFilePaths: ['src/api/user.ts'],
+        },
+      ],
+    });
+
+    assert.equal(result.status, 'dispatched');
+    assert.deepEqual(
+      result.dispatches.map((dispatch) => dispatch.issue.id),
+      ['issue-api'],
+    );
+    assert.equal(result.unassignedIssues[0]?.issueId, 'issue-api-user');
+    assert.equal(result.unassignedIssues[0]?.reason, 'candidate_file_conflict');
+    assert.deepEqual(readActiveLeases(dbPath), [['agent-a', 'issue-api']]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher blocks active candidate file conflicts', async () => {
+  const tempDir = createLocalTempDir('active-candidate-conflict');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-auth',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedActiveRunArtifacts(dbPath, {
+      runId: 'run-active-candidate',
+      artifacts: [
+        {
+          kind: 'orchestration_candidate_files',
+          path: encodeCandidateFilesArtifactPath(['src/auth/session.ts']),
+        },
+      ],
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-active-candidate',
+      subagents: [createSubagent('agent-a', ['implementation'])],
+      issueRequirements: [
+        {
+          issueId: 'issue-auth',
+          candidateFilePaths: ['src/auth'],
+        },
+      ],
+    });
+
+    assert.equal(result.status, 'idle');
+    assert.equal(result.dispatches.length, 0);
+    assert.equal(result.unassignedIssues[0]?.reason, 'candidate_file_conflict');
+    assert.equal(selectIssue(dbPath, 'issue-auth')?.status, 'ready');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher ignores malformed run notes during conflict scans', async () => {
+  const tempDir = createLocalTempDir('malformed-run-notes');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-safe',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedRunNotes(dbPath, {
+      runId: 'run-malformed',
+      status: 'in_progress',
+      notes: '{not-json',
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-malformed-notes',
+      subagents: [createSubagent('agent-a', ['implementation'])],
+      issueRequirements: [
+        {
+          issueId: 'issue-safe',
+          candidateFilePaths: ['src/runtime/safe.ts'],
+        },
+      ],
+    });
+
+    assert.equal(result.status, 'dispatched');
+    assert.deepEqual(
+      result.dispatches.map((dispatch) => dispatch.issue.id),
+      ['issue-safe'],
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher uses artifact-table worktree locks as a fallback', async () => {
+  const tempDir = createLocalTempDir('artifact-table-lock');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-active-source',
+      status: 'in_progress',
+      priority: 'critical',
+    });
+    seedIssue(dbPath, {
+      issueId: 'issue-target',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedArtifact(dbPath, {
+      artifactId: 'artifact-worktree-lock',
+      issueId: 'issue-active-source',
+      kind: 'orchestration_worktree',
+      path: '/workspace/worktrees/issue-target',
+      metadata: { status: 'active' },
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-artifact-lock',
+      subagents: [createSubagent('agent-a', ['implementation'])],
+    });
+
+    assert.equal(result.status, 'idle');
+    assert.equal(result.dispatches.length, 0);
+    assert.equal(result.unassignedIssues[0]?.reason, 'worktree_path_conflict');
+    assert.equal(selectIssue(dbPath, 'issue-target')?.status, 'ready');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher enforces worktree conflicts across campaigns', async () => {
+  const tempDir = createLocalTempDir('cross-campaign-worktree-conflict');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedCampaign(dbPath, 'campaign-a');
+    seedCampaign(dbPath, 'campaign-b');
+    seedIssue(dbPath, {
+      issueId: 'issue-campaign-a',
+      status: 'ready',
+      priority: 'critical',
+      campaignId: 'campaign-a',
+    });
+    seedActiveRunArtifacts(dbPath, {
+      runId: 'run-campaign-b-worktree',
+      campaignId: 'campaign-b',
+      artifacts: [
+        {
+          kind: 'orchestration_worktree',
+          path: '/workspace/worktrees/issue-campaign-a',
+        },
+      ],
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      campaignId: 'campaign-a',
+      dispatchId: 'dispatch-cross-campaign-worktree',
+      subagents: [createSubagent('agent-a', ['implementation'])],
+    });
+
+    assert.equal(result.status, 'idle');
+    assert.equal(result.dispatches.length, 0);
+    assert.equal(result.unassignedIssues[0]?.reason, 'worktree_path_conflict');
+    assert.equal(selectIssue(dbPath, 'issue-campaign-a')?.status, 'ready');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher allows non-overlapping candidate files', async () => {
+  const tempDir = createLocalTempDir('candidate-non-overlap');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-api-orders',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedIssue(dbPath, {
+      issueId: 'issue-ui-orders',
+      status: 'ready',
+      priority: 'critical',
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-candidate-non-overlap',
+      maxAssignments: 2,
+      maxConcurrentAgents: 2,
+      subagents: [
+        createSubagent('agent-a', ['implementation']),
+        createSubagent('agent-b', ['implementation']),
+      ],
+      issueRequirements: [
+        {
+          issueId: 'issue-api-orders',
+          candidateFilePaths: ['src/api/orders.ts'],
+        },
+        {
+          issueId: 'issue-ui-orders',
+          candidateFilePaths: ['src/ui/orders.ts'],
+        },
+      ],
+    });
+
+    assert.equal(result.status, 'dispatched');
+    assert.deepEqual(
+      result.dispatches.map((dispatch) => dispatch.issue.id),
+      ['issue-api-orders', 'issue-ui-orders'],
+    );
+    assert.equal(result.unassignedIssues.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 function baseDispatchInput(dbPath: string) {
   return {
     dbPath,
@@ -478,6 +819,96 @@ function seedLease(
         input.expiresAt,
         null,
         null,
+      ],
+    );
+  } finally {
+    database.close();
+  }
+}
+
+function seedActiveRunArtifacts(
+  dbPath: string,
+  input: {
+    runId: string;
+    campaignId?: string;
+    artifacts: ReadonlyArray<{ kind: string; path: string }>;
+  },
+): void {
+  seedRunNotes(dbPath, {
+    runId: input.runId,
+    campaignId: input.campaignId,
+    status: 'in_progress',
+    notes: JSON.stringify({ artifacts: input.artifacts }),
+  });
+}
+
+function seedRunNotes(
+  dbPath: string,
+  input: {
+    runId: string;
+    campaignId?: string;
+    status: string;
+    notes: string;
+  },
+): void {
+  const database = openHarnessDatabase({ dbPath });
+
+  try {
+    runStatement(
+      database.connection,
+      `INSERT INTO runs (
+         id, workspace_id, project_id, campaign_id, session_type, host, status,
+         started_at, finished_at, notes
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.runId,
+        'workspace-1',
+        'project-1',
+        input.campaignId ?? null,
+        'incremental',
+        'copilot',
+        input.status,
+        '2026-03-21T00:00:00.000Z',
+        null,
+        input.notes,
+      ],
+    );
+  } finally {
+    database.close();
+  }
+}
+
+function seedArtifact(
+  dbPath: string,
+  input: {
+    artifactId: string;
+    issueId: string;
+    kind: string;
+    path: string;
+    metadata: Record<string, unknown>;
+  },
+): void {
+  const database = openHarnessDatabase({ dbPath });
+
+  try {
+    runStatement(
+      database.connection,
+      `INSERT INTO artifacts (
+         id, workspace_id, project_id, campaign_id, issue_id, kind, path,
+         metadata_json, created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.artifactId,
+        'workspace-1',
+        'project-1',
+        null,
+        input.issueId,
+        input.kind,
+        input.path,
+        JSON.stringify(input.metadata),
+        '2026-03-21T00:00:00.000Z',
       ],
     );
   } finally {

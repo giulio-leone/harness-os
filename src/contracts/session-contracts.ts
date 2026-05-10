@@ -26,6 +26,12 @@ export interface SessionArtifactReference {
   path: string;
 }
 
+export interface SessionOrchestrationConflictGuard {
+  worktreePath: string;
+  worktreeBranch: string;
+  candidateFilePaths?: readonly string[];
+}
+
 export interface IncrementalSessionInput {
   sessionId: string;
   dbPath: string;
@@ -40,6 +46,7 @@ export interface IncrementalSessionInput {
   hostCapabilities: HarnessHostCapabilities;
   leaseTtlSeconds?: number;
   agentMaxConcurrentLeases?: number;
+  orchestrationConflictGuard?: SessionOrchestrationConflictGuard;
   checkpointFreshnessSeconds?: number;
   memoryQuery?: string;
   memorySearchLimit?: number;
