@@ -43,6 +43,7 @@ import {
   selectOne,
 } from '../db/store.js';
 import { assertValidTransition } from '../db/state-machine.js';
+import { assertNoOrchestrationConflicts } from './orchestration-conflicts.js';
 import { Mem0SessionBridge } from './mem0-session-bridge.js';
 
 export interface SessionCheckpointResult {
@@ -398,6 +399,20 @@ export class SessionOrchestrator {
           .map((blocker) => `${blocker.issueId}:${blocker.reason}`)
           .join(', ')}`,
       };
+    }
+
+    if (input.orchestrationConflictGuard !== undefined) {
+      assertNoOrchestrationConflicts(connection, {
+        projectId: input.projectId,
+        campaignId: input.campaignId,
+        excludeRunId: runId,
+        guard: {
+          worktreePath: input.orchestrationConflictGuard.worktreePath,
+          worktreeBranch: input.orchestrationConflictGuard.worktreeBranch,
+          candidateFilePaths:
+            input.orchestrationConflictGuard.candidateFilePaths ?? [],
+        },
+      });
     }
 
     const leaseResult = claimOrResumeLease(connection, {

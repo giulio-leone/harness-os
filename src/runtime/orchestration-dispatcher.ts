@@ -28,6 +28,17 @@ import {
   validateWorktreeCandidate,
 } from './worktree-manager.js';
 import {
+  encodeCandidateFilesArtifactPath,
+  encodeWorktreeBranchArtifactPath,
+  findOrchestrationConflict,
+  normalizeCandidateFilePaths,
+  selectActiveOrchestrationConflictLocks,
+  OrchestrationConflictError,
+  type OrchestrationConflictGuard,
+  type OrchestrationConflictKind,
+  type OrchestrationConflictLock,
+} from './orchestration-conflicts.js';
+import {
   checkSubagentCompatibility,
   createDefaultGpt5HighSubagents,
   createSubagentRegistry,
@@ -46,8 +57,20 @@ const dispatchIssueRequirementSchema = z
   .object({
     issueId: nonEmptyString,
     requiredCapabilityIds: z.array(nonEmptyString).optional(),
+    candidateFilePaths: z.array(nonEmptyString).max(500).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    try {
+      normalizeCandidateFilePaths(value.candidateFilePaths ?? []);
+    } catch (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: getErrorMessage(error),
+        path: ['candidateFilePaths'],
+      });
+    }
+  });
 
 export const dispatchReadyOrchestrationIssuesInputSchema = z
   .object({
@@ -105,7 +128,8 @@ export type OrchestrationDispatcherStatus =
 export type OrchestrationDispatchUnassignedReason =
   | 'dispatch_limit_reached'
   | 'no_compatible_subagent'
-  | 'subagent_capacity_exhausted';
+  | 'subagent_capacity_exhausted'
+  | OrchestrationConflictKind;
 
 export interface OrchestrationDispatchIssueCandidate {
   readonly id: string;
@@ -160,6 +184,16 @@ interface ActiveLeaseCountRow {
   active_count: number;
 }
 
+interface NormalizedIssueRequirement {
+  readonly requiredCapabilityIds: readonly string[];
+  readonly candidateFilePaths: readonly string[];
+}
+
+const emptyIssueRequirement: NormalizedIssueRequirement = {
+  requiredCapabilityIds: [],
+  candidateFilePaths: [],
+};
+
 export async function dispatchReadyOrchestrationIssues(
   rawInput: DispatchReadyOrchestrationIssuesInput,
   orchestrator = new SessionOrchestrator(),
@@ -181,41 +215,24 @@ export async function dispatchReadyOrchestrationIssues(
   });
   const readyIssues = selectReadyIssues(input);
   const activeCounts = selectActiveLeaseCounts(input);
+  const activeConflictLocks = selectActiveConflictLocks(input);
   const plannedCounts = new Map<string, number>();
   const requirementByIssueId = indexIssueRequirements(input.issueRequirements ?? []);
   const dispatches: OrchestrationIssueDispatch[] = [];
   const unassignedIssues: OrchestrationDispatchUnassignedIssue[] = [];
   const failures: OrchestrationDispatchFailure[] = [];
   const worktrees: OrchestrationWorktree[] = [];
+  const plannedConflictLocks: OrchestrationConflictLock[] = [];
 
   for (const issue of readyIssues) {
-    const requiredCapabilityIds = requirementByIssueId.get(issue.id) ?? [];
+    const requirement = requirementByIssueId.get(issue.id) ?? emptyIssueRequirement;
 
     if (dispatches.length >= maxAssignments) {
       unassignedIssues.push({
         issueId: issue.id,
         reason: 'dispatch_limit_reached',
-        requiredCapabilityIds,
+        requiredCapabilityIds: requirement.requiredCapabilityIds,
         message: `Dispatch limit ${maxAssignments} reached before issue ${issue.id}.`,
-      });
-      continue;
-    }
-
-    const selection = selectSubagentForIssue({
-      registry,
-      host: input.host,
-      hostCapabilities: input.hostCapabilities,
-      requiredCapabilityIds,
-      activeCounts,
-      plannedCounts,
-    });
-
-    if (selection.kind !== 'selected') {
-      unassignedIssues.push({
-        issueId: issue.id,
-        reason: selection.reason,
-        requiredCapabilityIds,
-        message: selection.message,
       });
       continue;
     }
@@ -224,13 +241,60 @@ export async function dispatchReadyOrchestrationIssues(
     const worktreeValidation = validateWorktreeCandidate(worktree, worktrees);
 
     if (!worktreeValidation.ok) {
-      failures.push({
+      const worktreeConflict = mapWorktreeValidationConflict(
+        issue.id,
+        requirement.requiredCapabilityIds,
+        worktreeValidation.issues,
+      );
+
+      if (worktreeConflict !== null) {
+        unassignedIssues.push(worktreeConflict);
+      } else {
+        failures.push({
+          issueId: issue.id,
+          message: worktreeValidation.issues
+            .map((validationIssue) => validationIssue.message)
+            .join('; '),
+        });
+      }
+
+      continue;
+    }
+
+    const conflictGuard = buildConflictGuard(
+      worktreeValidation.worktree,
+      requirement.candidateFilePaths,
+    );
+    const conflict = findOrchestrationConflict(conflictGuard, [
+      ...activeConflictLocks,
+      ...plannedConflictLocks,
+    ]);
+
+    if (conflict !== null) {
+      unassignedIssues.push({
         issueId: issue.id,
-        subagentId: selection.subagent.id,
-        worktreeId: worktree.id,
-        message: worktreeValidation.issues
-          .map((validationIssue) => validationIssue.message)
-          .join('; '),
+        reason: conflict.kind,
+        requiredCapabilityIds: requirement.requiredCapabilityIds,
+        message: conflict.message,
+      });
+      continue;
+    }
+
+    const selection = selectSubagentForIssue({
+      registry,
+      host: input.host,
+      hostCapabilities: input.hostCapabilities,
+      requiredCapabilityIds: requirement.requiredCapabilityIds,
+      activeCounts,
+      plannedCounts,
+    });
+
+    if (selection.kind !== 'selected') {
+      unassignedIssues.push({
+        issueId: issue.id,
+        reason: selection.reason,
+        requiredCapabilityIds: requirement.requiredCapabilityIds,
+        message: selection.message,
       });
       continue;
     }
@@ -240,7 +304,7 @@ export async function dispatchReadyOrchestrationIssues(
         issueId: issue.id,
         subagentId: selection.subagent.id,
         worktreeId: worktreeValidation.worktree.id,
-        requiredCapabilityIds,
+        requiredCapabilityIds: requirement.requiredCapabilityIds,
       });
       const session = await orchestrator.beginIncrementalSession({
         sessionId: `${dispatchId}-${assignment.id}`,
@@ -255,10 +319,12 @@ export async function dispatchReadyOrchestrationIssues(
         artifacts: buildSessionArtifacts(input.artifacts ?? [], {
           assignment,
           worktree: worktreeValidation.worktree,
+          candidateFilePaths: requirement.candidateFilePaths,
         }),
         mem0Enabled: input.mem0Enabled ?? false,
         leaseTtlSeconds: input.leaseTtlSeconds ?? defaultLeaseTtlSeconds,
         agentMaxConcurrentLeases: selection.subagent.maxConcurrency,
+        orchestrationConflictGuard: conflictGuard,
         ...(input.checkpointFreshnessSeconds !== undefined
           ? { checkpointFreshnessSeconds: input.checkpointFreshnessSeconds }
           : {}),
@@ -269,6 +335,13 @@ export async function dispatchReadyOrchestrationIssues(
 
       incrementCount(plannedCounts, selection.subagent.id);
       worktrees.push(worktreeValidation.worktree);
+      plannedConflictLocks.push({
+        source: `planned:${issue.id}`,
+        issueId: issue.id,
+        worktreePath: worktreeValidation.worktree.path,
+        worktreeBranch: worktreeValidation.worktree.branch,
+        candidateFilePaths: requirement.candidateFilePaths,
+      });
       dispatches.push({
         assignment,
         issue,
@@ -277,6 +350,16 @@ export async function dispatchReadyOrchestrationIssues(
         session,
       });
     } catch (error) {
+      if (error instanceof OrchestrationConflictError) {
+        unassignedIssues.push({
+          issueId: issue.id,
+          reason: error.kind,
+          requiredCapabilityIds: requirement.requiredCapabilityIds,
+          message: error.message,
+        });
+        continue;
+      }
+
       failures.push({
         issueId: issue.id,
         subagentId: selection.subagent.id,
@@ -342,6 +425,24 @@ function selectReadyIssues(
       status: row.status,
       createdAt: row.created_at,
     }));
+  } finally {
+    database.close();
+  }
+}
+
+function selectActiveConflictLocks(
+  input: Pick<
+    DispatchReadyOrchestrationIssuesInput,
+    'dbPath' | 'projectId' | 'campaignId'
+  >,
+): OrchestrationConflictLock[] {
+  const database = openReadonlyHarnessDatabase({ dbPath: input.dbPath });
+
+  try {
+    return selectActiveOrchestrationConflictLocks(database.connection, {
+      projectId: input.projectId,
+      campaignId: input.campaignId,
+    });
   } finally {
     database.close();
   }
@@ -477,9 +578,10 @@ function buildSessionArtifacts(
   input: {
     assignment: OrchestrationAssignment;
     worktree: OrchestrationWorktree;
+    candidateFilePaths: readonly string[];
   },
 ): SessionArtifactReference[] {
-  return [
+  const orchestrationArtifacts: SessionArtifactReference[] = [
     ...artifacts,
     {
       kind: 'orchestration_assignment',
@@ -489,7 +591,20 @@ function buildSessionArtifacts(
       kind: 'orchestration_worktree',
       path: input.worktree.path,
     },
+    {
+      kind: 'orchestration_worktree_branch',
+      path: encodeWorktreeBranchArtifactPath(input.worktree.branch),
+    },
   ];
+
+  if (input.candidateFilePaths.length > 0) {
+    orchestrationArtifacts.push({
+      kind: 'orchestration_candidate_files',
+      path: encodeCandidateFilesArtifactPath(input.candidateFilePaths),
+    });
+  }
+
+  return orchestrationArtifacts;
 }
 
 function buildPlan(input: {
@@ -519,13 +634,63 @@ function buildPlan(input: {
 
 function indexIssueRequirements(
   requirements: readonly z.infer<typeof dispatchIssueRequirementSchema>[],
-): Map<string, readonly string[]> {
+): Map<string, NormalizedIssueRequirement> {
   return new Map(
     requirements.map((requirement) => [
       requirement.issueId,
-      normalizeStringSet(requirement.requiredCapabilityIds ?? []),
+      {
+        requiredCapabilityIds: normalizeStringSet(
+          requirement.requiredCapabilityIds ?? [],
+        ),
+        candidateFilePaths: normalizeCandidateFilePaths(
+          requirement.candidateFilePaths ?? [],
+        ),
+      },
     ]),
   );
+}
+
+function buildConflictGuard(
+  worktree: OrchestrationWorktree,
+  candidateFilePaths: readonly string[],
+): OrchestrationConflictGuard {
+  return {
+    worktreePath: worktree.path,
+    worktreeBranch: worktree.branch,
+    candidateFilePaths,
+  };
+}
+
+function mapWorktreeValidationConflict(
+  issueId: string,
+  requiredCapabilityIds: readonly string[],
+  issues: readonly { code: string; message: string }[],
+): OrchestrationDispatchUnassignedIssue | null {
+  const duplicatePath = issues.find((issue) => issue.code === 'duplicate_path');
+
+  if (duplicatePath !== undefined) {
+    return {
+      issueId,
+      reason: 'worktree_path_conflict',
+      requiredCapabilityIds,
+      message: duplicatePath.message,
+    };
+  }
+
+  const duplicateBranch = issues.find(
+    (issue) => issue.code === 'duplicate_branch',
+  );
+
+  if (duplicateBranch !== undefined) {
+    return {
+      issueId,
+      reason: 'worktree_branch_conflict',
+      requiredCapabilityIds,
+      message: duplicateBranch.message,
+    };
+  }
+
+  return null;
 }
 
 function hasRequiredCapabilities(
