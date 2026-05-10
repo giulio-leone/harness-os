@@ -16,6 +16,7 @@ import {
   encodeWorktreeBranchArtifactPath,
 } from '../runtime/orchestration-conflicts.js';
 import { dispatchReadyOrchestrationIssues } from '../runtime/orchestration-dispatcher.js';
+import { inspectOrchestration } from '../runtime/orchestration-inspector.js';
 
 let tempCounter = 0;
 
@@ -301,6 +302,70 @@ test('orchestration dispatcher reports incompatible issue capability requirement
     assert.equal(result.dispatches.length, 0);
     assert.equal(result.unassignedIssues[0]?.reason, 'no_compatible_subagent');
     assert.equal(selectIssue(dbPath, 'issue-test')?.status, 'ready');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher persists orchestration evidence artifacts', async () => {
+  const tempDir = createLocalTempDir('dispatch-evidence-persistence');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-evidence',
+      status: 'ready',
+      priority: 'critical',
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-evidence',
+      subagents: [createSubagent('agent-a', ['implementation'])],
+      issueRequirements: [
+        {
+          issueId: 'issue-evidence',
+          candidateFilePaths: ['src/runtime/orchestration-dispatcher.ts'],
+        },
+      ],
+    });
+    const summary = inspectOrchestration({ dbPath, projectId: 'project-1' });
+    const artifacts = readArtifacts(dbPath, 'issue-evidence');
+    const checkpointArtifactIds = readCheckpointArtifactIds(
+      dbPath,
+      result.dispatches[0]!.session.runId,
+      'claim',
+    );
+
+    assert.equal(result.status, 'dispatched');
+    assert.deepEqual(
+      artifacts.map((artifact) => artifact.kind).sort(),
+      [
+        'orchestration_assignment',
+        'orchestration_candidate_files',
+        'orchestration_worktree',
+        'orchestration_worktree_branch',
+      ],
+    );
+    assert.deepEqual(
+      checkpointArtifactIds.sort(),
+      artifacts.map((artifact) => artifact.id).sort(),
+    );
+    assert.deepEqual(summary.artifacts.references.worktreePaths, [
+      '/workspace/worktrees/issue-evidence',
+    ]);
+    assert.equal(
+      artifacts.every((artifact) => {
+        const metadata = JSON.parse(artifact.metadata_json) as Record<string, string>;
+        return (
+          metadata.source === 'session_orchestrator' &&
+          metadata.runId === result.dispatches[0]!.session.runId &&
+          metadata.status === 'active'
+        );
+      }),
+      true,
+    );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -944,6 +1009,61 @@ function readActiveLeases(dbPath: string): Array<[string, string | null]> {
     );
 
     return rows.map((row) => [row.agent_id, row.issue_id]);
+  } finally {
+    database.close();
+  }
+}
+
+function readArtifacts(
+  dbPath: string,
+  issueId: string,
+): Array<{ id: string; kind: string; path: string; metadata_json: string }> {
+  const database = openHarnessDatabase({ dbPath });
+
+  try {
+    return selectAll<{
+      id: string;
+      kind: string;
+      path: string;
+      metadata_json: string;
+    }>(
+      database.connection,
+      `SELECT id, kind, path, metadata_json
+       FROM artifacts
+       WHERE issue_id = ?
+       ORDER BY kind ASC, path ASC, id ASC`,
+      [issueId],
+    );
+  } finally {
+    database.close();
+  }
+}
+
+function readCheckpointArtifactIds(
+  dbPath: string,
+  runId: string,
+  title: string,
+): string[] {
+  const database = openHarnessDatabase({ dbPath });
+
+  try {
+    const row = selectOne<{ artifact_ids_json: string }>(
+      database.connection,
+      `SELECT artifact_ids_json
+       FROM checkpoints
+       WHERE run_id = ? AND title = ?
+       LIMIT 1`,
+      [runId, title],
+    );
+
+    if (row === null) {
+      return [];
+    }
+
+    const parsed = JSON.parse(row.artifact_ids_json) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
   } finally {
     database.close();
   }

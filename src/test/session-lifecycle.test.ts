@@ -27,6 +27,7 @@ import {
   selectAll,
   selectOne,
 } from '../index.js';
+import { inspectOrchestration } from '../runtime/orchestration-inspector.js';
 
 class InMemoryMem0Adapter implements Mem0Adapter {
   private readonly memories: PublicMemoryRecord[] = [];
@@ -258,6 +259,217 @@ test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', 
         'decision',
         'summary',
       ]);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestrator persists session artifacts through artifacts checkpoints and events', async () => {
+  const tempDir = createTempDir('orchestrator-artifacts-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-artifact-flow',
+      task: 'Persist artifact evidence through lifecycle state',
+      status: 'ready',
+      nextBestAction: 'Validate artifact persistence.',
+    });
+
+    const orchestrator = new SessionOrchestrator();
+    const session = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-artifact-flow',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: 'agent-artifacts',
+      preferredIssueId: 'issue-artifact-flow',
+    }));
+    const artifactIds = session.artifacts.map((artifact) => artifact.id);
+
+    assert.equal(artifactIds.every((artifactId) => artifactId !== undefined), true);
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const persistedArtifacts = selectAll<{
+        id: string;
+        kind: string;
+        path: string;
+        metadata_json: string;
+      }>(
+        inspected.connection,
+        `SELECT id, kind, path, metadata_json
+         FROM artifacts
+         WHERE issue_id = ?
+         ORDER BY id ASC`,
+        ['issue-artifact-flow'],
+      );
+      const claimCheckpoint = selectOne<{ artifact_ids_json: string }>(
+        inspected.connection,
+        `SELECT artifact_ids_json
+         FROM checkpoints
+         WHERE run_id = ? AND title = ?
+         LIMIT 1`,
+        ['run-artifact-flow', 'claim'],
+      );
+      const registeredEvent = selectOne<{ payload: string }>(
+        inspected.connection,
+        `SELECT payload
+         FROM events
+         WHERE run_id = ? AND kind = ?
+         LIMIT 1`,
+        ['run-artifact-flow', 'session_artifacts_registered'],
+      );
+      const persistedIds = persistedArtifacts.map((artifact) => artifact.id);
+      const checkpointIds = parseJsonArray(claimCheckpoint?.artifact_ids_json);
+      const registeredPayload = parseJsonObject(registeredEvent?.payload);
+
+      assert.deepEqual(persistedIds, [...artifactIds].sort());
+      assert.deepEqual(checkpointIds.sort(), persistedIds);
+      assert.deepEqual(
+        parseJsonArray(registeredPayload['artifactIds']).sort(),
+        persistedIds,
+      );
+      assert.equal(
+        persistedArtifacts.every((artifact) => {
+          const metadata = parseJsonObject(artifact.metadata_json);
+          return (
+            metadata['source'] === 'session_orchestrator' &&
+            metadata['runId'] === 'run-artifact-flow' &&
+            metadata['status'] === 'active'
+          );
+        }),
+        true,
+      );
+    } finally {
+      inspected.close();
+    }
+
+    await orchestrator.close(session, {
+      title: 'done',
+      summary: 'Artifact evidence persisted and released.',
+      taskStatus: 'done',
+      nextStep: 'Continue with the next ready issue.',
+      artifactIds: artifactIds.filter((id): id is string => id !== undefined),
+    });
+
+    const closed = openHarnessDatabase({ dbPath });
+    try {
+      const releasedArtifacts = selectAll<{ id: string; metadata_json: string }>(
+        closed.connection,
+        `SELECT id, metadata_json
+         FROM artifacts
+         WHERE issue_id = ?
+         ORDER BY id ASC`,
+        ['issue-artifact-flow'],
+      );
+      const releaseEvent = selectOne<{ payload: string }>(
+        closed.connection,
+        `SELECT payload
+         FROM events
+         WHERE run_id = ? AND kind = ?
+         LIMIT 1`,
+        ['run-artifact-flow', 'session_artifacts_released'],
+      );
+      const releasePayload = parseJsonObject(releaseEvent?.payload);
+
+      assert.equal(
+        releasedArtifacts.every((artifact) => {
+          const metadata = parseJsonObject(artifact.metadata_json);
+          return (
+            metadata['status'] === 'released' &&
+            metadata['finalTaskStatus'] === 'done' &&
+            typeof metadata['releasedAt'] === 'string'
+          );
+        }),
+        true,
+      );
+      assert.deepEqual(
+        parseJsonArray(releasePayload['artifactIds']).sort(),
+        releasedArtifacts.map((artifact) => artifact.id),
+      );
+    } finally {
+      closed.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestrator supersedes active worktree artifacts on resume', async () => {
+  const tempDir = createTempDir('orchestrator-artifact-resume-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-resume-artifacts',
+      task: 'Resume with an existing orchestration worktree artifact',
+      status: 'ready',
+      nextBestAction: 'Resume the same isolated worktree.',
+    });
+
+    const orchestrator = new SessionOrchestrator();
+    const initialSession = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-resume-artifacts',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: [
+        {
+          kind: 'orchestration_worktree',
+          path: '/workspace/worktrees/issue-resume-artifacts',
+        },
+      ],
+      mem0Enabled: false,
+      agentId: 'agent-resume-artifacts',
+      preferredIssueId: 'issue-resume-artifacts',
+    }));
+    const resumedSession = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-resume-artifacts',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: initialSession.artifacts,
+      mem0Enabled: false,
+      agentId: 'agent-resume-artifacts',
+      preferredIssueId: 'issue-resume-artifacts',
+    }));
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const artifacts = selectAll<{ id: string; metadata_json: string }>(
+        inspected.connection,
+        `SELECT id, metadata_json
+         FROM artifacts
+         WHERE issue_id = ? AND kind = ?
+         ORDER BY created_at ASC, id ASC`,
+        ['issue-resume-artifacts', 'orchestration_worktree'],
+      );
+      const statuses = artifacts.map(
+        (artifact) => parseJsonObject(artifact.metadata_json)['status'],
+      );
+      const firstMetadata = parseJsonObject(artifacts[0]?.metadata_json);
+      const summary = inspectOrchestration({ dbPath, projectId: 'project-1' });
+
+      assert.deepEqual(statuses, ['released', 'active']);
+      assert.notEqual(resumedSession.artifacts[0]?.id, initialSession.artifacts[0]?.id);
+      assert.equal(artifacts[1]?.id, resumedSession.artifacts[0]?.id);
+      assert.equal(firstMetadata['supersededByRunId'], 'run-resume-artifacts');
+      assert.equal(
+        summary.health.flags.some(
+          (flag) => flag.kind === 'duplicate_active_worktree_artifact_path',
+        ),
+        false,
+      );
     } finally {
       inspected.close();
     }
@@ -3075,6 +3287,26 @@ function seedCheckpoint(
   } finally {
     database.close();
   }
+}
+
+function parseJsonObject(json: string | undefined): Record<string, unknown> {
+  if (json === undefined) {
+    return {};
+  }
+
+  const parsed = JSON.parse(json) as unknown;
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+}
+
+function parseJsonArray(value: unknown): string[] {
+  const parsed =
+    typeof value === 'string' ? JSON.parse(value) as unknown : value;
+
+  return Array.isArray(parsed)
+    ? parsed.filter((item): item is string => typeof item === 'string')
+    : [];
 }
 
 async function runCliCommand(

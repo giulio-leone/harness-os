@@ -22,6 +22,7 @@ export interface InitializerSessionOutput {
 }
 
 export interface SessionArtifactReference {
+  id?: string;
   kind: string;
   path: string;
 }

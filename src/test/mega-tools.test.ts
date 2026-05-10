@@ -112,7 +112,7 @@ class StrictHarnessAdminMem0Adapter extends StubMem0Adapter {
 
 interface ServerInternals {
   tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
-  tokenStore: { resolve(token: string): unknown };
+  tokenStore: { resolve(token: string): { context: Record<string, unknown> } };
 }
 
 function createServer(): {
@@ -1091,6 +1091,71 @@ test('harness_session: full begin → checkpoint → close lifecycle via mega-to
 
     // Verify token was cleaned up
     assert.throws(() => internals.tokenStore.resolve(started.sessionToken), 'token should be invalidated after close');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_session: begin retry with same sessionId reuses active token', async () => {
+  const tempDir = createTempDir('session-begin-retry-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-retry-begin', 'ready');
+
+    const { internals } = createServer();
+    const tool = internals.tools.get('harness_session')!;
+    const firstInput = beginArgs(dbPath, {
+      sessionId: 'run-public-begin-retry',
+      preferredIssueId: 'issue-retry-begin',
+    });
+
+    const first = (await tool.handler({
+      action: 'begin',
+      ...firstInput,
+    })) as {
+      sessionToken: string;
+      context: {
+        runId: string;
+        artifacts: Array<{ id?: string; kind: string; path: string }>;
+      };
+    };
+    const second = (await tool.handler({
+      action: 'begin',
+      ...firstInput,
+      artifacts: first.context.artifacts,
+    })) as {
+      sessionToken: string;
+      context: {
+        runId: string;
+        artifacts: Array<{ id?: string; kind: string; path: string }>;
+      };
+    };
+    const resolved = internals.tokenStore.resolve(first.sessionToken);
+
+    assert.equal(second.sessionToken, first.sessionToken);
+    assert.equal(second.context.runId, first.context.runId);
+    assert.notEqual(second.context.artifacts[0]?.id, first.context.artifacts[0]?.id);
+    assert.equal(
+      (resolved.context['artifacts'] as Array<{ id?: string }> | undefined)?.[0]?.id,
+      second.context.artifacts[0]?.id,
+    );
+
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      const activeSessions = selectAll<{ token: string }>(
+        db.connection,
+        `SELECT token
+         FROM active_sessions
+         WHERE run_id = ? AND status = 'active'`,
+        ['run-public-begin-retry'],
+      );
+      assert.deepEqual(activeSessions.map((session) => session.token), [
+        first.sessionToken,
+      ]);
+    } finally {
+      db.close();
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

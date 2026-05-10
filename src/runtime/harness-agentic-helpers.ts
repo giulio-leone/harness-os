@@ -5,6 +5,7 @@ import {
   closeActiveSession,
   insertActiveSession,
   loadActiveSession,
+  loadActiveSessionByRunId,
   updateActiveSessionContext,
 } from '../db/active-session-store.js';
 import {
@@ -35,15 +36,18 @@ export class SessionTokenStore {
     beginInput: Record<string, unknown>,
   ): string {
     const dbPath = resolveSessionDbPath(context, beginInput);
-    const token = `ST-${randomUUID().slice(0, 12)}`;
+    const runId = extractStringField(context, 'runId');
+    let token = `ST-${randomUUID().slice(0, 12)}`;
     const now = new Date().toISOString();
     const database = openHarnessDatabase({ dbPath });
 
     try {
       runInTransaction(database.connection, () => {
+        token =
+          loadActiveSessionByRunId(database.connection, runId)?.token ?? token;
         insertActiveSession(database.connection, {
           token,
-          runId: extractStringField(context, 'runId'),
+          runId,
           workspaceId: extractStringField(context, 'workspaceId'),
           projectId: extractStringField(context, 'projectId'),
           campaignId: extractOptionalStringField(context, 'campaignId'),

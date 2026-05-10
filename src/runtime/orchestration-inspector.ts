@@ -513,10 +513,15 @@ function isActiveWorktreeArtifact(artifact: OrchestrationArtifactSummary): boole
 
 function isWorktreeArtifact(artifact: OrchestrationArtifactSummary): boolean {
   return (
-    artifact.kind.toLowerCase().includes('worktree') ||
+    isWorktreePathArtifactKind(artifact.kind) ||
     artifact.references.worktreeId !== undefined ||
     artifact.references.worktreePath !== undefined
   );
+}
+
+function isWorktreePathArtifactKind(kind: string): boolean {
+  const normalized = kind.toLowerCase();
+  return normalized.includes('worktree') && !normalized.includes('branch');
 }
 
 function isEvidenceArtifact(artifact: OrchestrationArtifactSummary): boolean {
@@ -537,7 +542,7 @@ function extractArtifactReferences(
     worktreeId: readMetadataString(metadata, ['worktreeId', 'worktree_id']),
     worktreePath:
       worktreePath ??
-      (row.kind.toLowerCase().includes('worktree') ? row.path : undefined),
+      (isWorktreePathArtifactKind(row.kind) ? row.path : undefined),
     subagentId: readMetadataString(metadata, [
       'subagentId',
       'subagent_id',
