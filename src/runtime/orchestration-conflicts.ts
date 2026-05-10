@@ -281,6 +281,11 @@ function extractLocksFromArtifacts(
   return artifacts.flatMap((artifact) => {
     const kind = artifact.kind.toLowerCase();
     const metadata = isRecord(artifact.metadata) ? artifact.metadata : {};
+
+    if (isInactiveArtifactMetadata(metadata)) {
+      return [];
+    }
+
     const worktreeBranch =
       decodeWorktreeBranchArtifactPath(artifact.path) ??
       readMetadataString(metadata, ['worktreeBranch', 'worktree_branch', 'branch']);
@@ -435,6 +440,18 @@ function readMetadataStringArray(
   }
 
   return [];
+}
+
+function isInactiveArtifactMetadata(metadata: Record<string, unknown>): boolean {
+  const status = readMetadataString(metadata, [
+    'status',
+    'state',
+    'lifecycle',
+  ])?.toLowerCase();
+
+  return ['archived', 'closed', 'done', 'inactive', 'released'].includes(
+    status ?? '',
+  );
 }
 
 function parseJson(json: string | null): unknown {

@@ -12,6 +12,7 @@ export const SESSION_LIFECYCLE_CLI_CONTRACT_VERSION = '6.0.0' as const;
 
 export const sessionArtifactReferenceSchema = z
   .object({
+    id: z.string().min(1).optional(),
     kind: z.string().min(1),
     path: z.string().min(1),
   })

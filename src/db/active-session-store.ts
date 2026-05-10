@@ -67,7 +67,20 @@ export function insertActiveSession(
        created_at,
        updated_at,
        closed_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL)
+      ON CONFLICT(run_id) DO UPDATE SET
+        token = excluded.token,
+        workspace_id = excluded.workspace_id,
+        project_id = excluded.project_id,
+        campaign_id = excluded.campaign_id,
+        issue_id = excluded.issue_id,
+        lease_id = excluded.lease_id,
+        status = 'active',
+        context_json = excluded.context_json,
+        begin_input_json = excluded.begin_input_json,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        closed_at = NULL`,
     [
       input.token,
       input.runId,
@@ -125,6 +138,37 @@ export function loadActiveSession(
        AND closed_at IS NULL
      LIMIT 1`,
     [token],
+  );
+
+  return row === null ? null : mapActiveSessionRow(row);
+}
+
+export function loadActiveSessionByRunId(
+  connection: DatabaseSync,
+  runId: string,
+): ActiveSessionRecord | null {
+  const row = selectOne<RawActiveSessionRow>(
+    connection,
+    `SELECT
+       token,
+       run_id,
+       workspace_id,
+       project_id,
+       campaign_id,
+       issue_id,
+       lease_id,
+       status,
+       context_json,
+       begin_input_json,
+       created_at,
+       updated_at,
+       closed_at
+     FROM active_sessions
+     WHERE run_id = ?
+       AND status = 'active'
+       AND closed_at IS NULL
+     LIMIT 1`,
+    [runId],
   );
 
   return row === null ? null : mapActiveSessionRow(row);

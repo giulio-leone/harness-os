@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   IncrementalSessionInput,
   QueuePromotionInput,
@@ -40,6 +41,7 @@ import {
   openHarnessDatabase,
   runInTransaction,
   runStatement,
+  selectAll,
   selectOne,
 } from '../db/store.js';
 import { assertValidTransition } from '../db/state-machine.js';
@@ -507,6 +509,20 @@ export class SessionOrchestrator {
 
     updateRunStatus(connection, runId, 'in_progress', undefined);
     updateIssueStatus(connection, recoveryIssue.id, 'in_progress', null);
+    const registeredArtifacts = persistSessionArtifacts(connection, {
+      runId,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      campaignId: input.campaignId,
+      issueId: recoveryIssue.id,
+      leaseId: recoveryLease.id,
+      agentId,
+      host,
+      claimMode: 'recovery',
+      artifacts: input.artifacts,
+      createdAt: now,
+    });
+    const artifactIds = registeredArtifacts.map((artifact) => artifact.id!);
 
     const recoveryCheckpoint = writeCheckpoint(connection, {
       runId,
@@ -518,7 +534,15 @@ export class SessionOrchestrator {
         input.recoveryNextStep ??
         recoveryIssue.nextBestAction ??
         `Continue recovery work on issue ${recoveryIssue.id}.`,
-      artifactIds: [],
+      artifactIds,
+      createdAt: now,
+    });
+    appendSessionArtifactsRegisteredEvent(connection, {
+      runId,
+      issueId: recoveryIssue.id,
+      checkpointId: recoveryCheckpoint.id,
+      claimMode: 'recovery',
+      artifacts: registeredArtifacts,
       createdAt: now,
     });
 
@@ -548,7 +572,7 @@ export class SessionOrchestrator {
       issueId: recoveryIssue.id,
       issueTask: recoveryIssue.task,
       claimMode: 'recovery',
-      artifacts: cloneArtifacts(input),
+      artifacts: registeredArtifacts,
       currentTaskStatus: 'in_progress',
       currentCheckpointId: recoveryCheckpoint.id,
     });
@@ -624,6 +648,12 @@ export class SessionOrchestrator {
     if (input.releaseLease !== false) {
       releaseLease(connection, context.leaseId, finishedAt);
     }
+    const releasedArtifactIds = releaseSessionArtifacts(connection, {
+      runId: context.runId,
+      issueId: context.issueId,
+      finalTaskStatus: input.taskStatus,
+      releasedAt: finishedAt,
+    });
 
     const promotedIssueIds =
       input.taskStatus === 'done'
@@ -656,6 +686,20 @@ export class SessionOrchestrator {
       },
       createdAt: finishedAt,
     });
+    if (releasedArtifactIds.length > 0) {
+      appendRunEvent(connection, {
+        runId: context.runId,
+        issueId: context.issueId,
+        kind: 'session_artifacts_released',
+        payload: {
+          source: 'session_orchestrator',
+          checkpointId: checkpointState.checkpoint.id,
+          artifactIds: releasedArtifactIds,
+          finalStatus: input.taskStatus,
+        },
+        createdAt: finishedAt,
+      });
+    }
 
     return {
       ...checkpointState,
@@ -807,9 +851,15 @@ interface BuildClaimedBeginInput {
   leaseResult: ClaimedLeaseResult;
 }
 
+interface ArtifactMetadataRow {
+  id: string;
+  metadata_json: string;
+}
+
 function buildClaimedBeginResult(
   input: BuildClaimedBeginInput,
 ): BeginClaimCanonicalResult {
+  const claimMode = input.leaseResult.resumed ? 'resume' : 'claim';
   updateRunStatus(input.connection, input.runId, 'in_progress', undefined);
   updateIssueStatus(
     input.connection,
@@ -817,19 +867,41 @@ function buildClaimedBeginResult(
     'in_progress',
     null,
   );
+  const registeredArtifacts = persistSessionArtifacts(input.connection, {
+    runId: input.runId,
+    workspaceId: input.input.workspaceId,
+    projectId: input.input.projectId,
+    campaignId: input.input.campaignId,
+    issueId: input.leaseResult.issue.id,
+    leaseId: input.leaseResult.lease.id,
+    agentId: input.agentId,
+    host: input.host,
+    claimMode,
+    artifacts: input.input.artifacts,
+    createdAt: input.now,
+  });
+  const artifactIds = registeredArtifacts.map((artifact) => artifact.id!);
 
   const claimCheckpoint = writeCheckpoint(input.connection, {
     runId: input.runId,
     issueId: input.leaseResult.issue.id,
-    title: input.leaseResult.resumed ? 'resume' : 'claim',
-    summary: input.leaseResult.resumed
+    title: claimMode,
+    summary: claimMode === 'resume'
       ? `Resumed issue ${input.leaseResult.issue.id} under active lease ${input.leaseResult.lease.id}.`
       : `Claimed issue ${input.leaseResult.issue.id} under lease ${input.leaseResult.lease.id}.`,
     taskStatus: 'in_progress',
     nextStep:
       input.leaseResult.issue.nextBestAction ??
       `Continue work on issue ${input.leaseResult.issue.id}.`,
-    artifactIds: [],
+    artifactIds,
+    createdAt: input.now,
+  });
+  appendSessionArtifactsRegisteredEvent(input.connection, {
+    runId: input.runId,
+    issueId: input.leaseResult.issue.id,
+    checkpointId: claimCheckpoint.id,
+    claimMode,
+    artifacts: registeredArtifacts,
     createdAt: input.now,
   });
 
@@ -858,8 +930,8 @@ function buildClaimedBeginResult(
       leaseExpiresAt: input.leaseResult.lease.expiresAt,
       issueId: input.leaseResult.issue.id,
       issueTask: input.leaseResult.issue.task,
-      claimMode: input.leaseResult.resumed ? 'resume' : 'claim',
-      artifacts: cloneArtifacts(input.input),
+      claimMode,
+      artifacts: registeredArtifacts,
       currentTaskStatus: 'in_progress',
       currentCheckpointId: claimCheckpoint.id,
     }),
@@ -896,6 +968,293 @@ function createRunRecord(
       null,
       input.notes,
     ],
+  );
+}
+
+function persistSessionArtifacts(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    runId: string;
+    workspaceId: string;
+    projectId: string;
+    campaignId?: string;
+    issueId: string;
+    leaseId: string;
+    agentId: string;
+    host: string;
+    claimMode: 'claim' | 'resume' | 'recovery';
+    artifacts: readonly SessionArtifactReference[];
+    createdAt: string;
+  },
+): SessionArtifactReference[] {
+  const seen = new Set<string>();
+
+  return input.artifacts.map((artifact, index) => {
+    const kind = normalizeNonEmptyArtifactField('kind', artifact.kind);
+    const path = normalizeNonEmptyArtifactField('path', artifact.path);
+    const logicalKey = `${kind}\u0000${path}`;
+
+    if (seen.has(logicalKey)) {
+      throw new Error(`duplicate session artifact "${kind}" at "${path}".`);
+    }
+    seen.add(logicalKey);
+
+    supersedePriorSessionArtifacts(connection, {
+      projectId: input.projectId,
+      issueId: input.issueId,
+      kind,
+      path,
+      supersededAt: input.createdAt,
+      supersededByRunId: input.runId,
+    });
+
+    const id = buildSessionArtifactId(input.runId, index);
+    const metadata = buildSessionArtifactMetadata({
+      runId: input.runId,
+      leaseId: input.leaseId,
+      agentId: input.agentId,
+      host: input.host,
+      claimMode: input.claimMode,
+      status: 'active',
+    });
+
+    runStatement(
+      connection,
+      `INSERT INTO artifacts (
+         id, workspace_id, project_id, campaign_id, issue_id, kind, path,
+         metadata_json, created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        input.workspaceId,
+        input.projectId,
+        input.campaignId ?? null,
+        input.issueId,
+        kind,
+        path,
+        JSON.stringify(metadata),
+        input.createdAt,
+      ],
+    );
+
+    return {
+      id,
+      kind,
+      path,
+    };
+  });
+}
+
+function supersedePriorSessionArtifacts(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    projectId: string;
+    issueId: string;
+    kind: string;
+    path: string;
+    supersededAt: string;
+    supersededByRunId: string;
+  },
+): void {
+  const rows = selectSessionArtifactRows(connection, {
+    projectId: input.projectId,
+    issueId: input.issueId,
+    kind: input.kind,
+    path: input.path,
+  });
+
+  for (const row of rows) {
+    const metadata = parseMetadata(row.metadata_json);
+
+    if (!isActiveSessionArtifactMetadata(metadata)) {
+      continue;
+    }
+
+    updateArtifactMetadata(connection, row.id, {
+      ...metadata,
+      status: 'released',
+      supersededAt: input.supersededAt,
+      supersededByRunId: input.supersededByRunId,
+    });
+  }
+}
+
+function releaseSessionArtifacts(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    runId: string;
+    issueId: string;
+    finalTaskStatus: TaskStatus;
+    releasedAt: string;
+  },
+): string[] {
+  const rows = selectAll<ArtifactMetadataRow>(
+    connection,
+    `SELECT id, metadata_json
+     FROM artifacts
+     WHERE issue_id = ?
+     ORDER BY created_at ASC, id ASC`,
+    [input.issueId],
+  );
+  const releasedArtifactIds: string[] = [];
+
+  for (const row of rows) {
+    const metadata = parseMetadata(row.metadata_json);
+
+    if (
+      metadata['source'] !== 'session_orchestrator' ||
+      metadata['runId'] !== input.runId ||
+      !isActiveSessionArtifactMetadata(metadata)
+    ) {
+      continue;
+    }
+
+    updateArtifactMetadata(connection, row.id, {
+      ...metadata,
+      status: 'released',
+      finalTaskStatus: input.finalTaskStatus,
+      releasedAt: input.releasedAt,
+    });
+    releasedArtifactIds.push(row.id);
+  }
+
+  return releasedArtifactIds;
+}
+
+function selectSessionArtifactRows(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    projectId: string;
+    issueId: string;
+    kind: string;
+    path: string;
+  },
+): ArtifactMetadataRow[] {
+  return selectAll<ArtifactMetadataRow>(
+    connection,
+    `SELECT id, metadata_json
+     FROM artifacts
+     WHERE project_id = ?
+       AND issue_id = ?
+       AND kind = ?
+       AND path = ?
+     ORDER BY created_at ASC, id ASC`,
+    [input.projectId, input.issueId, input.kind, input.path],
+  );
+}
+
+function updateArtifactMetadata(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  artifactId: string,
+  metadata: Record<string, string>,
+): void {
+  runStatement(
+    connection,
+    `UPDATE artifacts
+     SET metadata_json = ?
+     WHERE id = ?`,
+    [JSON.stringify(metadata), artifactId],
+  );
+}
+
+function appendSessionArtifactsRegisteredEvent(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    runId: string;
+    issueId: string;
+    checkpointId: string;
+    claimMode: 'claim' | 'resume' | 'recovery';
+    artifacts: readonly SessionArtifactReference[];
+    createdAt: string;
+  },
+): void {
+  appendRunEvent(connection, {
+    runId: input.runId,
+    issueId: input.issueId,
+    kind: 'session_artifacts_registered',
+    payload: {
+      source: 'session_orchestrator',
+      checkpointId: input.checkpointId,
+      claimMode: input.claimMode,
+      artifactIds: input.artifacts.map((artifact) => artifact.id),
+      artifacts: input.artifacts.map((artifact) => ({
+        id: artifact.id,
+        kind: artifact.kind,
+        path: artifact.path,
+      })),
+    },
+    createdAt: input.createdAt,
+  });
+}
+
+function buildSessionArtifactMetadata(input: {
+  runId: string;
+  leaseId: string;
+  agentId: string;
+  host: string;
+  claimMode: string;
+  status: string;
+}): Record<string, string> {
+  return {
+    source: 'session_orchestrator',
+    runId: input.runId,
+    leaseId: input.leaseId,
+    agentId: input.agentId,
+    host: input.host,
+    claimMode: input.claimMode,
+    status: input.status,
+  };
+}
+
+function buildSessionArtifactId(runId: string, index: number): string {
+  return normalizeNonEmptyArtifactField(
+    'id',
+    `session-artifact-${sanitizeArtifactIdSegment(runId)}-${String(index + 1).padStart(3, '0')}-${randomUUID()}`,
+  );
+}
+
+function sanitizeArtifactIdSegment(value: string): string {
+  return value
+    .trim()
+    .replace(/[^A-Za-z0-9._:-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function normalizeNonEmptyArtifactField(label: string, value: string): string {
+  const normalized = value.trim();
+
+  if (normalized.length === 0) {
+    throw new Error(`session artifact ${label} must not be empty.`);
+  }
+
+  return normalized;
+}
+
+function parseMetadata(metadataJson: string): Record<string, string> {
+  const parsed = JSON.parse(metadataJson) as unknown;
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(parsed).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string',
+    ),
+  );
+}
+
+function isActiveSessionArtifactMetadata(
+  metadata: Record<string, string>,
+): boolean {
+  if (metadata['source'] !== 'session_orchestrator') {
+    return false;
+  }
+
+  return !['archived', 'closed', 'done', 'inactive', 'released'].includes(
+    metadata['status']?.toLowerCase() ?? '',
   );
 }
 
@@ -969,15 +1328,6 @@ function buildContextBase(input: {
     currentTaskStatus: input.currentTaskStatus,
     currentCheckpointId: input.currentCheckpointId,
   };
-}
-
-function cloneArtifacts(
-  input: Pick<IncrementalSessionInput, 'artifacts'>,
-): SessionArtifactReference[] {
-  return input.artifacts.map((artifact) => ({
-    kind: artifact.kind,
-    path: artifact.path,
-  }));
 }
 
 function buildMemoryScope(input: {
