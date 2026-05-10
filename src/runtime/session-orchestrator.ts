@@ -409,6 +409,7 @@ export class SessionOrchestrator {
       host,
       hostCapabilities: input.hostCapabilities,
       leaseTtlSeconds: input.leaseTtlSeconds ?? this.defaultLeaseTtlSeconds,
+      agentMaxConcurrentLeases: input.agentMaxConcurrentLeases,
       now,
     });
 

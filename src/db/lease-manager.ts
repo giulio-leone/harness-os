@@ -63,6 +63,7 @@ export interface ClaimLeaseInput {
   host: string;
   hostCapabilities: HarnessHostCapabilities;
   leaseTtlSeconds: number;
+  agentMaxConcurrentLeases?: number;
   now?: string;
 }
 
@@ -498,6 +499,13 @@ export function claimOrResumeLease(
           input.campaignId,
         );
 
+  assertAgentLeaseCapacity(connection, {
+    projectId: input.projectId,
+    agentId: input.agentId,
+    maxConcurrentLeases: input.agentMaxConcurrentLeases,
+    now,
+  });
+
   const acquiredAt = now;
   const expiresAt = new Date(
     Date.parse(acquiredAt) + input.leaseTtlSeconds * 1000,
@@ -530,6 +538,44 @@ export function claimOrResumeLease(
     },
     resumed: false,
   };
+}
+
+function assertAgentLeaseCapacity(
+  connection: DatabaseSync,
+  input: {
+    projectId: string;
+    agentId: string;
+    maxConcurrentLeases?: number;
+    now: string;
+  },
+): void {
+  if (input.maxConcurrentLeases === undefined) {
+    return;
+  }
+
+  const row = selectOne<{ active_count: number }>(
+    connection,
+    `SELECT COUNT(*) AS active_count
+     FROM leases
+     WHERE project_id = ?
+       AND agent_id = ?
+       AND status = 'active'
+       AND released_at IS NULL
+       AND expires_at > ?`,
+    [
+      input.projectId,
+      input.agentId,
+      input.now,
+    ],
+  );
+  const activeCount = Number(row?.active_count ?? 0);
+
+  if (activeCount >= input.maxConcurrentLeases) {
+    throw new Error(
+      `Agent ${input.agentId} already has ${activeCount} active lease(s); ` +
+        `maxConcurrentLeases is ${input.maxConcurrentLeases}.`,
+    );
+  }
 }
 
 export function releaseLease(
