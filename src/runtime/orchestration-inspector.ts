@@ -1,4 +1,4 @@
-import { openHarnessDatabase, selectAll } from '../db/store.js';
+import { openReadonlyHarnessDatabase, selectAll } from '../db/store.js';
 
 export interface InspectOrchestrationInput {
   dbPath: string;
@@ -179,7 +179,7 @@ interface CheckpointEvidenceRow {
 export function inspectOrchestration(
   input: InspectOrchestrationInput,
 ): OrchestrationInspectorSummary {
-  const database = openHarnessDatabase({ dbPath: input.dbPath });
+  const database = openReadonlyHarnessDatabase({ dbPath: input.dbPath });
   const generatedAt = new Date().toISOString();
   const campaignFilter = input.campaignId ?? null;
   const issueFilter = input.issueId ?? null;

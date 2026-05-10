@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -181,6 +181,32 @@ test('orchestration inspector flags done issues missing evidence', () => {
     assert.equal(missingEvidenceFlag.issueId, 'issue-done');
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration inspector refuses to create or initialize databases', () => {
+  const missingDir = createLocalTempDir('missing-db');
+  const missingDbPath = join(missingDir, 'missing.sqlite');
+  const emptyDir = createLocalTempDir('empty-db-file');
+  const emptyDbPath = join(emptyDir, 'empty.sqlite');
+
+  try {
+    assert.throws(
+      () => inspectOrchestration({ dbPath: missingDbPath, projectId: 'project-1' }),
+      /unable to open database file|cannot open/,
+    );
+    assert.equal(existsSync(missingDbPath), false);
+
+    writeFileSync(emptyDbPath, '');
+
+    assert.throws(
+      () => inspectOrchestration({ dbPath: emptyDbPath, projectId: 'project-1' }),
+      /not a current agent-harness database/,
+    );
+    assert.equal(statSync(emptyDbPath).size, 0);
+  } finally {
+    rmSync(missingDir, { recursive: true, force: true });
+    rmSync(emptyDir, { recursive: true, force: true });
   }
 });
 

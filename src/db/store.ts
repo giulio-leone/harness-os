@@ -124,6 +124,31 @@ export function openHarnessDatabase(config: HarnessStoreConfig): HarnessDatabase
   };
 }
 
+export function openReadonlyHarnessDatabase(
+  config: HarnessStoreConfig,
+): HarnessDatabase {
+  const snapshot = loadSchemaSnapshot(config);
+  const connection = new DatabaseSync(snapshot.dbPath, {
+    readOnly: true,
+    timeout: 5000,
+  });
+
+  try {
+    validateExistingHarnessSchema(connection);
+  } catch (error) {
+    connection.close();
+    throw error;
+  }
+
+  return {
+    dbPath: snapshot.dbPath,
+    connection,
+    close() {
+      connection.close();
+    },
+  };
+}
+
 export function ensureHarnessSchema(
   connection: DatabaseSync,
   schemaSql: string,
@@ -148,6 +173,27 @@ export function ensureHarnessSchema(
     throw new Error(
       `Harness schema version mismatch: expected v${CURRENT_SCHEMA_VERSION}, got v${version}. ` +
         `Backward compatibility is disabled. Please recreate the harness database.`,
+    );
+  }
+
+  validateCurrentSchema(connection);
+}
+
+function validateExistingHarnessSchema(connection: DatabaseSync): void {
+  if (!hasTable(connection, 'runs')) {
+    throw new Error(
+      'This SQLite database is not a current agent-harness database. ' +
+        `Only schema v${MINIMUM_SUPPORTED_VERSION}–v${CURRENT_SCHEMA_VERSION} databases are supported. ` +
+        'Open an existing harness database before inspecting it.',
+    );
+  }
+
+  const version = getUserVersion(connection);
+
+  if (version !== CURRENT_SCHEMA_VERSION) {
+    throw new Error(
+      `Harness schema version mismatch: expected v${CURRENT_SCHEMA_VERSION}, got v${version}. ` +
+        'Read-only inspection requires an existing current harness database.',
     );
   }
 
