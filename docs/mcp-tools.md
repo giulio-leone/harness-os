@@ -25,7 +25,7 @@ called through `harness_inspector`.
 | --- | --- | --- |
 | `harness_inspector` | read-only discovery and operational visibility | `capabilities`, `get_context`, `next_action`, `export`, `audit`, `health_snapshot` |
 | `harness_orchestrator` | creating scope, injecting plans, promoting or resetting work | `init_workspace`, `create_campaign`, `plan_issues`, `promote_queue`, `rollback_issue` |
-| `harness_symphony` | fully agentic orchestration planning, fan-out dispatch, and state inspection | `compile_plan`, `dispatch_ready`, `inspect_state` |
+| `harness_symphony` | fully agentic orchestration planning, fan-out dispatch, state inspection, and dashboard read models | `compile_plan`, `dispatch_ready`, `inspect_state`, `dashboard_view` |
 | `harness_session` | claim/recovery, checkpoints, close/advance, heartbeats | `begin`, `begin_recovery`, `checkpoint`, `close`, `advance`, `heartbeat` |
 | `harness_artifacts` | register or list durable task evidence | `save`, `list` |
 | `harness_admin` | maintenance, cleanup, drain/archive, memory snapshots | `reconcile`, `drain`, `archive`, `cleanup`, `mem0_snapshot`, `mem0_rollup` |
@@ -35,13 +35,13 @@ called through `harness_inspector`.
 `harness_inspector(action: "capabilities")` returns a top-level `orchestration` block so hosts can detect fully agentic Symphony support without hardcoding tool names or action lists. The block declares:
 
 - `mode: "symphony"` and `tool: "harness_symphony"`
-- `actions.compilePlan`, `actions.dispatchReady`, and `actions.inspectState`
+- `actions.compilePlan`, `actions.dispatchReady`, `actions.inspectState`, and `actions.dashboardView`
 - `defaultModelProfile: "gpt-5-high"` and `defaultMaxConcurrentAgents: 4`
 - `requiredDispatchFields` for `dispatch_ready`
 - `hostResponsibilities` for creating/running/cleaning isolated worktrees and collecting gate evidence
 - `worktreeIsolation` conflict guards, `evidence.acceptedArtifactKinds`, and `evidence.runtimeMetadataArtifactKinds`
 
-The same response includes `suggestedBootstrap` entries for `harness_symphony(action: "inspect_state")` and `harness_symphony(action: "dispatch_ready")`, including the dispatch fields an MCP host must supply.
+The same response includes `suggestedBootstrap` entries for `harness_symphony(action: "inspect_state")`, `harness_symphony(action: "dashboard_view")`, and `harness_symphony(action: "dispatch_ready")`, including the dispatch fields an MCP host must supply.
 
 ## `harness_inspector`
 

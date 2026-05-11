@@ -114,6 +114,7 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.
 - `harness_symphony(action: "compile_plan")` converts tracker-style milestones and slices into the canonical `plan_issues` batch without mutating state.
 - `harness_symphony(action: "dispatch_ready")` assigns ready issues to one compatible subagent and one isolated worktree per issue, with `gpt-5-high` and four-agent fan-out as the discoverable defaults.
 - `harness_symphony(action: "inspect_state")` reads leases, worktree artifacts, evidence references, recent events, and orchestration health flags.
+- Public supervisor contracts define durable dry-run/execute ticks, host-owned execution hooks, decision traces, backoff/stop conditions, and run summaries for the upcoming autonomous loop.
 - Completion remains no-human-checkpoint: hosts create/run/cleanup git worktrees, then attach typecheck, test, E2E, screenshot, state export, and codebase evidence before closing work.
 - Copy/paste MCP payloads live in [`examples/orchestration-symphony/`](examples/orchestration-symphony/), and the runtime contract is documented in [docs/orchestration-no-schema-v1.md](docs/orchestration-no-schema-v1.md).
 

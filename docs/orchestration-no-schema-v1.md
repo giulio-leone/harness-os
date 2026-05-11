@@ -18,6 +18,7 @@ Source references:
 | Per-issue workspace | Validated worktree allocation metadata, not shell-created worktrees | `src/runtime/worktree-manager.ts` |
 | Agent registry | Typed subagent definitions with host, model profile, capabilities, and capacity | `src/contracts/orchestration-contracts.ts`, `src/runtime/subagent-registry.ts` |
 | Dispatch loop | Ready-issue selection, subagent/worktree assignment, session claim, and bounded fan-out | `src/runtime/orchestration-dispatcher.ts` |
+| Supervisor loop contract | Durable tick inputs, host execution hooks, decision traces, backoff/stop conditions, and run summaries | `src/contracts/orchestration-contracts.ts` |
 | Conflict avoidance | Project-wide worktree path, branch, and candidate-file locks | `src/runtime/orchestration-conflicts.ts` |
 | Proof of work | Evidence packet contracts plus persisted session artifacts and checkpoint references | `src/contracts/orchestration-contracts.ts`, `src/runtime/session-orchestrator.ts` |
 | Status surface | Read-only orchestration summary and health flags | `src/runtime/orchestration-inspector.ts` |
@@ -57,11 +58,22 @@ No orchestration-specific table is required for v1 because the existing store al
 
 It does not execute `git worktree add`, run a coding agent process, open a PR, or mark work done. Those are host/agent responsibilities and must report evidence back through the session and artifact contracts.
 
-### 3. Worktree boundary
+### 3. Supervisor contract boundary
+
+The autonomous supervisor contracts define the durable control-loop envelope without starting a daemon yet. The public schemas cover:
+
+- `OrchestrationSupervisorTickInput` for one bounded tick over a project/campaign scope, with default `dry_run` mode, event limits, required evidence kinds, backoff, and stop-condition fields;
+- `OrchestrationSupervisorHostExecution` for host-owned execution hooks used only in `execute` mode: repo/worktree roots, base ref, host identity, host capabilities, optional subagents, cleanup policy, and concurrency limit;
+- `OrchestrationSupervisorDecision` and `OrchestrationSupervisorTickResult` for auditable decisions such as `inspect_dashboard`, `promote_queue`, `dispatch_ready`, `await_evidence`, `idle`, `blocked`, and `error`;
+- `OrchestrationSupervisorRunSummary` for aggregating tick results, stop reason, and supervisor evidence.
+
+The contract deliberately separates read-only decisions from mutating decisions. Dry-run ticks may execute read-only inspection decisions, but cannot execute or report outcomes for mutating decisions such as queue promotion or dispatch. Mutability is derived from the decision kind/action, so callers cannot mark `dispatch_ready` or `promote_queue` as read-only to bypass dry-run guarantees. Execute-mode inputs require canonical `workspaceId`, `projectId`, and host execution details before a later runtime can promote or dispatch work. Tick and run evidence ids must be referenced by the decision or tick that produced them, so future supervisor traces remain replayable from artifacts instead of free-floating JSON.
+
+### 4. Worktree boundary
 
 `worktree-manager` validates and describes workspace isolation. It normalizes absolute repo/worktree roots, rejects unsafe git refs and traversal segments, detects duplicate paths/branches within a planned batch, and emits cleanup command plans. It intentionally does not run shell commands; callers must execute generated git commands in their host environment and register the resulting paths as artifacts.
 
-### 4. Conflict boundary
+### 5. Conflict boundary
 
 Conflict checks run twice:
 
@@ -70,7 +82,7 @@ Conflict checks run twice:
 
 This second check is the authoritative guard against race conditions. It scans active run notes and active session artifacts, ignores released/inactive artifact metadata, and blocks duplicate worktree paths, duplicate worktree branches, and overlapping candidate file paths across the project.
 
-### 5. Evidence boundary
+### 6. Evidence boundary
 
 Session artifacts are the no-schema persistence mechanism for orchestration evidence. On claim, resume, and recovery, `SessionOrchestrator` inserts each session artifact into `artifacts`, links the generated artifact ids from the claim/recovery checkpoint, and emits `session_artifacts_registered`.
 
@@ -96,15 +108,15 @@ CSQR-lite scorecard artifacts are not session-owned worktree/handoff artifacts, 
 
 `close()` and `advanceSession()` enforce the CSQR-lite completion gate whenever `taskStatus` is `done`: at least one run-scoped scorecard must exist for the active `runId`, and every applicable run scorecard must meet `max(8.0, scorecard.targetScore)`. The gate is evaluated before task-state mutation; success emits `csqr_lite_completion_gate_evaluated`, while missing or below-threshold scorecards abort without mutating issue, run, lease, checkpoint, event, or artifact state.
 
-### 6. Inspector boundary
+### 7. Inspector boundary
 
 `inspectOrchestration()` is read-only and never initializes or mutates a database. It summarizes issue state, active leases, artifacts grouped by kind, recent events, extracted worktree/subagent/evidence/CSQR-lite references, and health flags. Branch marker artifacts are not treated as worktree path artifacts; only actual worktree path artifacts participate in duplicate active worktree health checks.
 
 `loadOrchestrationDashboardViewModel()` and `buildOrchestrationDashboardViewModel()` are the dashboard API boundary for the Linear-like UI in [`../apps/dashboard`](../apps/dashboard). The loader delegates to `inspectOrchestration()`; the builder is pure and converts the inspector summary into a stable v1 view model with ordered issue lanes, enriched issue cards, active-agent lease cards, evidence rollups, recent timeline entries, and routed health flags. Unknown or future issue statuses are preserved in the `other` lane so no issue card disappears when orchestration status vocabulary evolves.
 
-### 7. Public API boundary
+### 8. Public API boundary
 
-The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, and the MCP surface exposes a dedicated `harness_symphony` tool for compile/dispatch/inspect orchestration workflows.
+The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, including the supervisor tick/result/run-summary schemas. The MCP surface exposes a dedicated `harness_symphony` tool for compile/dispatch/inspect/dashboard workflows; supervisor execution entrypoints are intentionally deferred until the contract-only boundary is validated.
 
 ## Fully agentic completion posture
 
@@ -144,7 +156,7 @@ Scorecards passed to `harness_session(action: "checkpoint" | "close")` are durab
 
 ## Current v1 limits
 
-- The dispatcher assigns work and claims sessions; it is not yet a long-running daemon.
+- The dispatcher assigns work and claims sessions; supervisor schemas now define the durable tick/run envelope, but CLI/MCP supervisor execution entrypoints are not implemented yet.
 - Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
 - Evidence packet validation and deterministic reference E2E assertions exist; the full E2E/CI gate runner remains host-owned until later hardening milestones.
 - Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.

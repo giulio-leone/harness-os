@@ -4,7 +4,10 @@ import { z } from 'zod';
 
 import { evaluateCsqrLiteCompletionGate } from './csqr-lite-completion-gate.js';
 import { csqrLiteScorecardSchema } from './csqr-lite-contracts.js';
-import { harnessDispatchPolicySchema } from './policy-contracts.js';
+import {
+  harnessDispatchPolicySchema,
+  harnessHostCapabilitiesSchema,
+} from './policy-contracts.js';
 
 const orchestrationContractVersion = '1.0.0';
 const nonEmptyString = z.string().min(1);
@@ -95,6 +98,40 @@ export const orchestrationDispatchStrategySchema = z.enum(
 );
 export const orchestrationRunStatusSchema = z.enum(
   orchestrationRunStatusValues,
+);
+
+export const orchestrationSupervisorTickModeValues = [
+  'dry_run',
+  'execute',
+] as const;
+
+export const orchestrationSupervisorStopReasonValues = [
+  'not_started',
+  'tick_limit_reached',
+  'idle',
+  'blocked',
+  'error',
+  'external_stop',
+] as const;
+
+export const orchestrationSupervisorDecisionKindValues = [
+  'inspect_dashboard',
+  'promote_queue',
+  'dispatch_ready',
+  'await_evidence',
+  'idle',
+  'blocked',
+  'error',
+] as const;
+
+export const orchestrationSupervisorTickModeSchema = z.enum(
+  orchestrationSupervisorTickModeValues,
+);
+export const orchestrationSupervisorStopReasonSchema = z.enum(
+  orchestrationSupervisorStopReasonValues,
+);
+export const orchestrationSupervisorDecisionKindSchema = z.enum(
+  orchestrationSupervisorDecisionKindValues,
 );
 
 export const orchestrationSubagentSchema = z
@@ -719,6 +756,282 @@ export const orchestrationRunResultSchema = z
     }
   });
 
+export const orchestrationSupervisorHostExecutionSchema = z
+  .object({
+    repoRoot: absolutePathSchema(),
+    worktreeRoot: absolutePathSchema(),
+    baseRef: safeRefSchema(),
+    host: nonEmptyString,
+    hostCapabilities: harnessHostCapabilitiesSchema,
+    branchPrefix: nonEmptyString.optional(),
+    cleanupPolicy: orchestrationWorktreeCleanupPolicySchema.optional(),
+    maxConcurrentAgents: positiveInteger.default(4),
+    subagents: z.array(orchestrationSubagentSchema).min(1).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (!isPathWithin(value.worktreeRoot, value.repoRoot)) {
+      return;
+    }
+
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'repoRoot must not be contained by worktreeRoot.',
+      path: ['repoRoot'],
+    });
+  });
+
+export const orchestrationSupervisorBackoffSchema = z
+  .object({
+    idleDelayMs: positiveInteger.default(30_000),
+    blockedDelayMs: positiveInteger.default(60_000),
+    errorDelayMs: positiveInteger.default(120_000),
+  })
+  .strict();
+
+export const orchestrationSupervisorStopConditionSchema = z
+  .object({
+    maxTicks: positiveInteger.optional(),
+    stopWhenIdle: z.boolean().default(false),
+    stopWhenBlocked: z.boolean().default(false),
+    externalStopFile: absolutePathSchema().optional(),
+  })
+  .strict();
+
+export const orchestrationSupervisorTickInputSchema = z
+  .object({
+    contractVersion: z.literal(orchestrationContractVersion),
+    tickId: identifierString,
+    dbPath: nonEmptyString,
+    workspaceId: nonEmptyString.optional(),
+    projectId: nonEmptyString.optional(),
+    projectName: nonEmptyString.optional(),
+    campaignId: nonEmptyString.optional(),
+    campaignName: nonEmptyString.optional(),
+    issueId: nonEmptyString.optional(),
+    mode: orchestrationSupervisorTickModeSchema.default('dry_run'),
+    objective: nonEmptyString.optional(),
+    eventLimit: positiveInteger.default(25),
+    dispatch: orchestrationSupervisorHostExecutionSchema.optional(),
+    backoff: orchestrationSupervisorBackoffSchema.default({
+      idleDelayMs: 30_000,
+      blockedDelayMs: 60_000,
+      errorDelayMs: 120_000,
+    }),
+    stopCondition: orchestrationSupervisorStopConditionSchema.default({
+      stopWhenIdle: false,
+      stopWhenBlocked: false,
+    }),
+    requiredEvidenceArtifactKinds: z
+      .array(orchestrationEvidenceArtifactKindSchema)
+      .default(['test_report', 'e2e_report', 'screenshot', 'csqr_lite_scorecard']),
+    metadata: z.record(z.string(), z.string()).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.projectId === undefined && value.projectName === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'supervisor ticks require projectId or projectName.',
+        path: ['projectId'],
+      });
+    }
+
+    if (value.mode === 'execute' && value.dispatch === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'execute supervisor ticks require dispatch host execution inputs.',
+        path: ['dispatch'],
+      });
+    }
+
+    if (value.mode === 'execute' && value.workspaceId === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'execute supervisor ticks require workspaceId.',
+        path: ['workspaceId'],
+      });
+    }
+
+    if (value.mode === 'execute' && value.projectId === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'execute supervisor ticks require projectId.',
+        path: ['projectId'],
+      });
+    }
+
+    validateUniqueStrings(
+      value.requiredEvidenceArtifactKinds,
+      'requiredEvidenceArtifactKinds',
+      ctx,
+    );
+  });
+
+export const orchestrationSupervisorDecisionSchema = z
+  .object({
+    id: identifierString,
+    kind: orchestrationSupervisorDecisionKindSchema,
+    summary: nonEmptyString,
+    tool: nonEmptyString.optional(),
+    action: nonEmptyString.optional(),
+    wouldMutate: z.boolean(),
+    executed: z.boolean(),
+    startedAt: z.string().datetime({ offset: true }).optional(),
+    completedAt: z.string().datetime({ offset: true }).optional(),
+    evidenceArtifactIds: z.array(identifierString).default([]),
+    metadata: z.record(z.string(), z.string()).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    validateUniqueStrings(value.evidenceArtifactIds, 'evidenceArtifactIds', ctx);
+
+    if (isSupervisorMutatingDecision(value) && !value.wouldMutate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `supervisor decision kind "${value.kind}" is mutating and must set wouldMutate to true.`,
+        path: ['wouldMutate'],
+      });
+    }
+  });
+
+export const orchestrationSupervisorTickResultSchema = z
+  .object({
+    contractVersion: z.literal(orchestrationContractVersion),
+    tickId: identifierString,
+    mode: orchestrationSupervisorTickModeSchema,
+    startedAt: z.string().datetime({ offset: true }),
+    completedAt: z.string().datetime({ offset: true }).optional(),
+    stopReason: orchestrationSupervisorStopReasonSchema.optional(),
+    decisions: z.array(orchestrationSupervisorDecisionSchema).min(1),
+    readyIssueCount: z.number().int().nonnegative(),
+    dispatchedIssueIds: z.array(nonEmptyString).default([]),
+    promotedIssueIds: z.array(nonEmptyString).default([]),
+    evidenceArtifactIds: z.array(identifierString).default([]),
+    nextDelayMs: z.number().int().nonnegative().optional(),
+    summary: nonEmptyString,
+    metadata: z.record(z.string(), z.string()).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    validateUniqueIds(value.decisions, 'decisions', ctx);
+    validateUniqueStrings(value.dispatchedIssueIds, 'dispatchedIssueIds', ctx);
+    validateUniqueStrings(value.promotedIssueIds, 'promotedIssueIds', ctx);
+    validateUniqueStrings(value.evidenceArtifactIds, 'evidenceArtifactIds', ctx);
+
+    const decisionEvidenceIds = new Set(
+      value.decisions.flatMap((decision) => decision.evidenceArtifactIds),
+    );
+    value.evidenceArtifactIds.forEach((artifactId, index) => {
+      if (decisionEvidenceIds.has(artifactId)) {
+        return;
+      }
+
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `tick evidence artifact "${artifactId}" must be referenced by at least one decision.`,
+        path: ['evidenceArtifactIds', index],
+      });
+    });
+
+    if (value.mode === 'dry_run') {
+      value.decisions.forEach((decision, index) => {
+        if (!isSupervisorMutatingDecision(decision) || !decision.executed) {
+          return;
+        }
+
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'dry-run ticks cannot execute mutating decisions.',
+          path: ['decisions', index, 'executed'],
+        });
+      });
+
+      if (value.dispatchedIssueIds.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'dry-run ticks cannot report dispatched issues.',
+          path: ['dispatchedIssueIds'],
+        });
+      }
+
+      if (value.promotedIssueIds.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'dry-run ticks cannot report promoted issues.',
+          path: ['promotedIssueIds'],
+        });
+      }
+    }
+
+    if (value.dispatchedIssueIds.length > 0) {
+      const hasDispatchDecision = value.decisions.some(
+        (decision) => decision.kind === 'dispatch_ready',
+      );
+      if (!hasDispatchDecision) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'dispatchedIssueIds require a dispatch_ready decision.',
+          path: ['dispatchedIssueIds'],
+        });
+      }
+    }
+
+    if (value.promotedIssueIds.length > 0) {
+      const hasPromotionDecision = value.decisions.some(
+        (decision) => decision.kind === 'promote_queue',
+      );
+      if (!hasPromotionDecision) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'promotedIssueIds require a promote_queue decision.',
+          path: ['promotedIssueIds'],
+        });
+      }
+    }
+  });
+
+export const orchestrationSupervisorRunSummarySchema = z
+  .object({
+    contractVersion: z.literal(orchestrationContractVersion),
+    runId: identifierString,
+    status: orchestrationRunStatusSchema,
+    startedAt: z.string().datetime({ offset: true }),
+    completedAt: z.string().datetime({ offset: true }).optional(),
+    tickResults: z.array(orchestrationSupervisorTickResultSchema).min(1),
+    stopReason: orchestrationSupervisorStopReasonSchema,
+    evidenceArtifactIds: z.array(identifierString).default([]),
+    summary: nonEmptyString,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    validateUniqueBy(value.tickResults, 'tickResults', (tick) => tick.tickId, ctx);
+    validateUniqueStrings(value.evidenceArtifactIds, 'evidenceArtifactIds', ctx);
+
+    const tickEvidenceIds = new Set(
+      value.tickResults.flatMap((tick) => tick.evidenceArtifactIds),
+    );
+    value.evidenceArtifactIds.forEach((artifactId, index) => {
+      if (tickEvidenceIds.has(artifactId)) {
+        return;
+      }
+
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `run evidence artifact "${artifactId}" must be referenced by at least one tick.`,
+        path: ['evidenceArtifactIds', index],
+      });
+    });
+
+    if (value.status === 'succeeded' && value.stopReason === 'error') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'succeeded supervisor runs cannot stop because of error.',
+        path: ['stopReason'],
+      });
+    }
+  });
+
 export type OrchestrationModelProfile = z.infer<
   typeof orchestrationModelProfileSchema
 >;
@@ -739,6 +1052,15 @@ export type OrchestrationDispatchStrategy = z.infer<
 >;
 export type OrchestrationRunStatus = z.infer<
   typeof orchestrationRunStatusSchema
+>;
+export type OrchestrationSupervisorTickMode = z.infer<
+  typeof orchestrationSupervisorTickModeSchema
+>;
+export type OrchestrationSupervisorStopReason = z.infer<
+  typeof orchestrationSupervisorStopReasonSchema
+>;
+export type OrchestrationSupervisorDecisionKind = z.infer<
+  typeof orchestrationSupervisorDecisionKindSchema
 >;
 export type OrchestrationSubagent = z.infer<
   typeof orchestrationSubagentSchema
@@ -773,6 +1095,27 @@ export type OrchestrationAssignmentResult = z.infer<
 >;
 export type OrchestrationRunResult = z.infer<
   typeof orchestrationRunResultSchema
+>;
+export type OrchestrationSupervisorHostExecution = z.infer<
+  typeof orchestrationSupervisorHostExecutionSchema
+>;
+export type OrchestrationSupervisorBackoff = z.infer<
+  typeof orchestrationSupervisorBackoffSchema
+>;
+export type OrchestrationSupervisorStopCondition = z.infer<
+  typeof orchestrationSupervisorStopConditionSchema
+>;
+export type OrchestrationSupervisorTickInput = z.infer<
+  typeof orchestrationSupervisorTickInputSchema
+>;
+export type OrchestrationSupervisorDecision = z.infer<
+  typeof orchestrationSupervisorDecisionSchema
+>;
+export type OrchestrationSupervisorTickResult = z.infer<
+  typeof orchestrationSupervisorTickResultSchema
+>;
+export type OrchestrationSupervisorRunSummary = z.infer<
+  typeof orchestrationSupervisorRunSummarySchema
 >;
 
 function validateSucceededRunCsqrLiteCompletionGate(
@@ -919,6 +1262,18 @@ function isPathWithin(parent: string, child: string): boolean {
 
 function hasPathTraversalSegment(value: string): boolean {
   return value.split(/[\\/]+/).includes('..');
+}
+
+function isSupervisorMutatingDecision(value: {
+  kind: string;
+  action?: string;
+}): boolean {
+  return (
+    value.kind === 'promote_queue' ||
+    value.kind === 'dispatch_ready' ||
+    value.action === 'promote_queue' ||
+    value.action === 'dispatch_ready'
+  );
 }
 
 function validateUniqueIds(

@@ -8,9 +8,15 @@ import {
   orchestrationPlanSchema,
   orchestrationRunResultSchema,
   orchestrationSubagentSchema,
+  orchestrationSupervisorRunSummarySchema,
+  orchestrationSupervisorTickInputSchema,
+  orchestrationSupervisorTickResultSchema,
   type OrchestrationEvidencePacket,
   type OrchestrationPlan,
   type OrchestrationRunResult,
+  type OrchestrationSupervisorRunSummary,
+  type OrchestrationSupervisorTickInput,
+  type OrchestrationSupervisorTickResult,
 } from '../index.js';
 
 const timestamp = '2026-05-10T20:00:00.000Z';
@@ -363,6 +369,236 @@ test('orchestrationRunResultSchema rejects succeeded runs with CSQR-lite scoreca
   );
 });
 
+test('orchestrationSupervisorTickInputSchema defaults to dry-run and requires project scope', () => {
+  const parsed = orchestrationSupervisorTickInputSchema.parse(
+    createValidSupervisorTickInput(),
+  );
+
+  assert.equal(parsed.contractVersion, '1.0.0');
+  assert.equal(parsed.mode, 'dry_run');
+  assert.equal(parsed.eventLimit, 25);
+  assert.deepEqual(parsed.backoff, {
+    idleDelayMs: 30_000,
+    blockedDelayMs: 60_000,
+    errorDelayMs: 120_000,
+  });
+  assert.deepEqual(parsed.stopCondition, {
+    stopWhenIdle: false,
+    stopWhenBlocked: false,
+  });
+  assert.deepEqual(parsed.requiredEvidenceArtifactKinds, [
+    'test_report',
+    'e2e_report',
+    'screenshot',
+    'csqr_lite_scorecard',
+  ]);
+
+  assert.throws(
+    () =>
+      orchestrationSupervisorTickInputSchema.parse({
+        ...createValidSupervisorTickInput(),
+        projectId: undefined,
+      }),
+    /projectId or projectName/,
+  );
+});
+
+test('orchestrationSupervisorTickInputSchema requires host execution inputs in execute mode', () => {
+  assert.throws(
+    () =>
+      orchestrationSupervisorTickInputSchema.parse({
+        ...createValidSupervisorTickInput(),
+        mode: 'execute',
+      }),
+    /require dispatch host execution inputs/,
+  );
+
+  assert.throws(
+    () =>
+      orchestrationSupervisorTickInputSchema.parse({
+        ...createValidSupervisorTickInput(),
+        workspaceId: undefined,
+        mode: 'execute',
+        dispatch: {
+          repoRoot,
+          worktreeRoot,
+          baseRef: 'main',
+          host: 'copilot-cli',
+          hostCapabilities: {
+            workloadClasses: ['typescript'],
+          },
+        },
+      }),
+    /execute supervisor ticks require workspaceId/,
+  );
+
+  assert.throws(
+    () =>
+      orchestrationSupervisorTickInputSchema.parse({
+        ...createValidSupervisorTickInput(),
+        projectId: undefined,
+        projectName: 'Autonomous Supervisor Campaign',
+        mode: 'execute',
+        dispatch: {
+          repoRoot,
+          worktreeRoot,
+          baseRef: 'main',
+          host: 'copilot-cli',
+          hostCapabilities: {
+            workloadClasses: ['typescript'],
+          },
+        },
+      }),
+    /execute supervisor ticks require projectId/,
+  );
+
+  const parsed = orchestrationSupervisorTickInputSchema.parse({
+    ...createValidSupervisorTickInput(),
+    mode: 'execute',
+    dispatch: {
+      repoRoot,
+      worktreeRoot,
+      baseRef: 'main',
+      host: 'copilot-cli',
+      hostCapabilities: {
+        workloadClasses: ['typescript'],
+        capabilities: ['node', 'sqlite', 'git'],
+      },
+      maxConcurrentAgents: 4,
+    },
+  });
+
+  assert.equal(parsed.mode, 'execute');
+  assert.equal(parsed.dispatch?.host, 'copilot-cli');
+});
+
+test('orchestrationSupervisorTickInputSchema rejects unsafe host worktree containment', () => {
+  assert.throws(
+    () =>
+      orchestrationSupervisorTickInputSchema.parse({
+        ...createValidSupervisorTickInput(),
+        mode: 'execute',
+        dispatch: {
+          repoRoot: join(worktreeRoot, 'repo-inside-worktrees'),
+          worktreeRoot,
+          baseRef: 'main',
+          host: 'copilot-cli',
+          hostCapabilities: {
+            workloadClasses: ['typescript'],
+          },
+        },
+      }),
+    /repoRoot must not be contained by worktreeRoot/,
+  );
+});
+
+test('orchestrationSupervisorTickResultSchema allows executed read-only decisions but blocks dry-run mutations', () => {
+  const parsed = orchestrationSupervisorTickResultSchema.parse(
+    createValidSupervisorTickResult(),
+  );
+
+  assert.equal(parsed.mode, 'dry_run');
+  assert.equal(parsed.decisions[0]?.kind, 'inspect_dashboard');
+  assert.equal(parsed.decisions[0]?.executed, true);
+
+  const result = createValidSupervisorTickResult();
+  result.decisions.push({
+    id: 'decision-dispatch',
+    kind: 'dispatch_ready',
+    summary: 'Would dispatch the visible ready issue.',
+    tool: 'harness_symphony',
+    action: 'dispatch_ready',
+    wouldMutate: true,
+    executed: true,
+    evidenceArtifactIds: [],
+  });
+
+  assert.throws(
+    () => orchestrationSupervisorTickResultSchema.parse(result),
+    /dry-run ticks cannot execute mutating decisions/,
+  );
+
+  const falsifiedMutability = createValidSupervisorTickResult();
+  falsifiedMutability.decisions.push({
+    id: 'decision-dispatch-false-mutability',
+    kind: 'dispatch_ready',
+    summary: 'Incorrectly reports an executed dispatch as read-only.',
+    tool: 'harness_symphony',
+    action: 'dispatch_ready',
+    wouldMutate: false,
+    executed: true,
+    evidenceArtifactIds: [],
+  });
+  falsifiedMutability.dispatchedIssueIds = ['issue-ready'];
+
+  assert.throws(
+    () => orchestrationSupervisorTickResultSchema.parse(falsifiedMutability),
+    /must set wouldMutate to true/,
+  );
+
+  const dryRunOutcome = createValidSupervisorTickResult();
+  dryRunOutcome.decisions.push({
+    id: 'decision-dispatch-plan',
+    kind: 'dispatch_ready',
+    summary: 'Would dispatch a visible ready issue, but does not mutate state.',
+    tool: 'harness_symphony',
+    action: 'dispatch_ready',
+    wouldMutate: true,
+    executed: false,
+    evidenceArtifactIds: [],
+  });
+  dryRunOutcome.dispatchedIssueIds = ['issue-ready'];
+
+  assert.throws(
+    () => orchestrationSupervisorTickResultSchema.parse(dryRunOutcome),
+    /dry-run ticks cannot report dispatched issues/,
+  );
+});
+
+test('orchestrationSupervisorTickResultSchema links dispatch and evidence to decisions', () => {
+  const missingDecision = createValidSupervisorTickResult();
+  missingDecision.dispatchedIssueIds = ['issue-ready'];
+
+  assert.throws(
+    () => orchestrationSupervisorTickResultSchema.parse(missingDecision),
+    /require a dispatch_ready decision/,
+  );
+
+  const missingEvidenceReference = createValidSupervisorTickResult();
+  missingEvidenceReference.evidenceArtifactIds = ['supervisor-trace'];
+
+  assert.throws(
+    () => orchestrationSupervisorTickResultSchema.parse(missingEvidenceReference),
+    /must be referenced by at least one decision/,
+  );
+
+  const missingPromotionDecision = createValidSupervisorTickResult();
+  missingPromotionDecision.mode = 'execute';
+  missingPromotionDecision.promotedIssueIds = ['issue-promoted'];
+
+  assert.throws(
+    () => orchestrationSupervisorTickResultSchema.parse(missingPromotionDecision),
+    /require a promote_queue decision/,
+  );
+});
+
+test('orchestrationSupervisorRunSummarySchema ties run evidence to ticks and rejects success-on-error', () => {
+  const parsed = orchestrationSupervisorRunSummarySchema.parse(
+    createValidSupervisorRunSummary(),
+  );
+
+  assert.equal(parsed.status, 'succeeded');
+  assert.equal(parsed.tickResults.length, 1);
+
+  const errorSummary = createValidSupervisorRunSummary();
+  errorSummary.stopReason = 'error';
+
+  assert.throws(
+    () => orchestrationSupervisorRunSummarySchema.parse(errorSummary),
+    /cannot stop because of error/,
+  );
+});
+
 test('orchestrationSubagentSchema remains strict at the public boundary', () => {
   assert.throws(
     () =>
@@ -556,6 +792,60 @@ function createRunCsqrLiteScorecard(score: number, runId = 'run-M1-I1') {
       },
     ],
   });
+}
+
+function createValidSupervisorTickInput(): Record<string, unknown> {
+  return {
+    contractVersion: '1.0.0',
+    tickId: 'tick-M8-I1-001',
+    dbPath: '/tmp/harness.sqlite',
+    workspaceId: 'workspace-1',
+    projectId: 'project-1',
+    campaignId: 'campaign-1',
+    objective: 'Run fully autonomous Symphony supervision without checkpoints.',
+  };
+}
+
+function createValidSupervisorTickResult(): OrchestrationSupervisorTickResult {
+  return {
+    contractVersion: '1.0.0',
+    tickId: 'tick-M8-I1-001',
+    mode: 'dry_run',
+    startedAt: timestamp,
+    completedAt: timestamp,
+    stopReason: 'idle',
+    decisions: [
+      {
+        id: 'decision-dashboard',
+        kind: 'inspect_dashboard',
+        summary: 'Read the filtered dashboard view before deciding whether to dispatch.',
+        tool: 'harness_symphony',
+        action: 'dashboard_view',
+        wouldMutate: false,
+        executed: true,
+        evidenceArtifactIds: [],
+      },
+    ],
+    readyIssueCount: 0,
+    dispatchedIssueIds: [],
+    promotedIssueIds: [],
+    evidenceArtifactIds: [],
+    summary: 'No ready issues were visible; supervisor remains idle.',
+  };
+}
+
+function createValidSupervisorRunSummary(): OrchestrationSupervisorRunSummary {
+  return {
+    contractVersion: '1.0.0',
+    runId: 'supervisor-run-M8-I1',
+    status: 'succeeded',
+    startedAt: timestamp,
+    completedAt: timestamp,
+    tickResults: [createValidSupervisorTickResult()],
+    stopReason: 'idle',
+    evidenceArtifactIds: [],
+    summary: 'Supervisor completed one deterministic idle tick.',
+  };
 }
 
 function createValidRunResult(): OrchestrationRunResult {

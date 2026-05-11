@@ -224,6 +224,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           inspectOrchestration,
           orchestrationDashboardViewModelSchema,
           orchestrationPlanSchema,
+          orchestrationSupervisorRunSummarySchema,
+          orchestrationSupervisorTickInputSchema,
+          orchestrationSupervisorTickResultSchema,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromSubpath,
         } from 'harness-os/orchestration';
 
@@ -253,6 +256,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           filterSameReference: applyFiltersFromRoot === applyFiltersFromSubpath,
           inspectorType: typeof inspectOrchestration,
           schemaType: typeof orchestrationPlanSchema.safeParse,
+          supervisorSchemaType: typeof orchestrationSupervisorTickInputSchema.safeParse,
+          supervisorTickResultSchemaType: typeof orchestrationSupervisorTickResultSchema.safeParse,
+          supervisorRunSummarySchemaType: typeof orchestrationSupervisorRunSummarySchema.safeParse,
           worktreeBranch: worktree.branch,
           subagentCount: createDefaultGpt5HighSubagents().length,
         }));
@@ -277,6 +283,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         filterSameReference: boolean;
         inspectorType: string;
         schemaType: string;
+        supervisorSchemaType: string;
+        supervisorTickResultSchemaType: string;
+        supervisorRunSummarySchemaType: string;
         worktreeBranch: string;
         subagentCount: number;
       };
@@ -299,6 +308,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         filterSameReference: true,
         inspectorType: 'function',
         schemaType: 'function',
+        supervisorSchemaType: 'function',
+        supervisorTickResultSchemaType: 'function',
+        supervisorRunSummarySchemaType: 'function',
         worktreeBranch: 'feat/m4-i1-public-exports',
         subagentCount: 4,
       });

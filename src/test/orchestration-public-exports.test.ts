@@ -20,6 +20,10 @@ import {
   referenceOrchestrationE2eEvidenceMatrix,
   inspectOrchestration,
   orchestrationPlanSchema,
+  orchestrationSupervisorDecisionSchema,
+  orchestrationSupervisorRunSummarySchema,
+  orchestrationSupervisorTickInputSchema,
+  orchestrationSupervisorTickResultSchema,
   planOrchestrationMilestones,
 } from '../index.js';
 import * as orchestration from '../orchestration.js';
@@ -42,6 +46,10 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof applyOrchestrationDashboardIssueFilters, 'function');
   assert.equal(typeof normalizeOrchestrationDashboardIssueFilters, 'function');
   assert.equal(typeof orchestrationDashboardViewModelSchema.safeParse, 'function');
+  assert.equal(typeof orchestrationSupervisorTickInputSchema.safeParse, 'function');
+  assert.equal(typeof orchestrationSupervisorDecisionSchema.safeParse, 'function');
+  assert.equal(typeof orchestrationSupervisorTickResultSchema.safeParse, 'function');
+  assert.equal(typeof orchestrationSupervisorRunSummarySchema.safeParse, 'function');
   assert.equal(typeof csqrLiteScorecardSchema.safeParse, 'function');
   assert.equal(csqrLiteDefaultCriteria.length, 4);
 });
@@ -99,6 +107,22 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
   assert.equal(
     orchestration.orchestrationDashboardViewModelSchema,
     orchestrationDashboardViewModelSchema,
+  );
+  assert.equal(
+    orchestration.orchestrationSupervisorTickInputSchema,
+    orchestrationSupervisorTickInputSchema,
+  );
+  assert.equal(
+    orchestration.orchestrationSupervisorDecisionSchema,
+    orchestrationSupervisorDecisionSchema,
+  );
+  assert.equal(
+    orchestration.orchestrationSupervisorTickResultSchema,
+    orchestrationSupervisorTickResultSchema,
+  );
+  assert.equal(
+    orchestration.orchestrationSupervisorRunSummarySchema,
+    orchestrationSupervisorRunSummarySchema,
   );
   assert.equal(orchestration.csqrLiteScorecardSchema, csqrLiteScorecardSchema);
   assert.equal(orchestration.csqrLiteDefaultCriteria, csqrLiteDefaultCriteria);
