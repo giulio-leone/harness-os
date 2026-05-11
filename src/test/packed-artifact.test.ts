@@ -201,13 +201,16 @@ test('packed npm artifact executes installable bins and host smoke paths', async
     await t.test('installed package exposes orchestration root and subpath exports', () => {
       const result = runInstalledPackageScript(installRoot, baseEnv, `
         import {
+          buildCsqrLiteScorecard,
           buildWorktreeAllocation as buildFromRoot,
           createDefaultGpt5HighSubagents,
+          csqrLiteDefaultCriteria,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromRoot,
         } from 'harness-os';
         import {
           buildWorktreeAllocation as buildFromSubpath,
           assertReferenceOrchestrationEvidencePacket,
+          csqrLiteScorecardSchema,
           inspectOrchestration,
           orchestrationPlanSchema,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromSubpath,
@@ -224,6 +227,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         console.log(JSON.stringify({
           rootBuilderType: typeof buildFromRoot,
           assertionType: typeof assertReferenceOrchestrationEvidencePacket,
+          scorecardBuilderType: typeof buildCsqrLiteScorecard,
+          csqrCriteriaCount: csqrLiteDefaultCriteria.length,
+          csqrSchemaType: typeof csqrLiteScorecardSchema.safeParse,
           matrixSameReference: matrixFromRoot === matrixFromSubpath,
           inspectorType: typeof inspectOrchestration,
           schemaType: typeof orchestrationPlanSchema.safeParse,
@@ -236,6 +242,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
       const parsed = JSON.parse(result.stdout) as {
         rootBuilderType: string;
         assertionType: string;
+        scorecardBuilderType: string;
+        csqrCriteriaCount: number;
+        csqrSchemaType: string;
         matrixSameReference: boolean;
         inspectorType: string;
         schemaType: string;
@@ -246,6 +255,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
       assert.deepEqual(parsed, {
         rootBuilderType: 'function',
         assertionType: 'function',
+        scorecardBuilderType: 'function',
+        csqrCriteriaCount: 4,
+        csqrSchemaType: 'function',
         matrixSameReference: true,
         inspectorType: 'function',
         schemaType: 'function',
