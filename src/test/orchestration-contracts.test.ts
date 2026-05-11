@@ -94,6 +94,19 @@ test('orchestrationPlanSchema rejects duplicate worktree paths', () => {
   );
 });
 
+test('orchestrationPlanSchema rejects duplicate worktree branches', () => {
+  const plan = createValidPlan();
+  plan.worktrees[1] = {
+    ...plan.worktrees[1],
+    branch: plan.worktrees[0].branch,
+  };
+
+  assert.throws(
+    () => orchestrationPlanSchema.parse(plan),
+    /Duplicate worktrees branch/,
+  );
+});
+
 test('orchestrationEvidencePacketSchema requires gate evidence to reference known artifacts', () => {
   const packet = createValidEvidencePacket();
   packet.gates[0] = {
@@ -105,6 +118,19 @@ test('orchestrationEvidencePacketSchema requires gate evidence to reference know
   assert.throws(
     () => orchestrationEvidencePacketSchema.parse(packet),
     /missing-report/,
+  );
+});
+
+test('orchestrationEvidencePacketSchema rejects unknown provided evidence artifact ids', () => {
+  const packet = createValidEvidencePacket();
+  packet.gates[0] = {
+    ...packet.gates[0],
+    providedEvidenceArtifactIds: ['typecheck-report', 'missing-report'],
+  };
+
+  assert.throws(
+    () => orchestrationEvidencePacketSchema.parse(packet),
+    /Unknown provided evidence artifact/,
   );
 });
 
@@ -129,6 +155,22 @@ test('orchestrationEvidencePacketSchema rejects passed gates without all require
   assert.throws(
     () => orchestrationEvidencePacketSchema.parse(packet),
     /e2e-report/,
+  );
+});
+
+test('orchestrationEvidencePacketSchema rejects skipped gates without reason', () => {
+  const packet = createValidEvidencePacket();
+  packet.gates[0] = {
+    ...packet.gates[0],
+    status: 'skipped',
+    reason: undefined,
+    requiredEvidenceArtifactIds: [],
+    providedEvidenceArtifactIds: [],
+  };
+
+  assert.throws(
+    () => orchestrationEvidencePacketSchema.parse(packet),
+    /skipped gates require a reason/,
   );
 });
 
@@ -158,6 +200,20 @@ test('orchestrationRunResultSchema requires successful runs to have all gates an
   assert.throws(
     () => orchestrationRunResultSchema.parse(result),
     /require every evidence gate to pass/,
+  );
+});
+
+test('orchestrationRunResultSchema rejects succeeded runs with non-succeeded assignment results', () => {
+  const result = createValidRunResult();
+  result.assignmentResults[0] = {
+    ...result.assignmentResults[0],
+    status: 'partial',
+    summary: 'The implementation agent produced incomplete evidence.',
+  };
+
+  assert.throws(
+    () => orchestrationRunResultSchema.parse(result),
+    /require every assignment to succeed/,
   );
 });
 

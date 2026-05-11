@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import type { OrchestrationSubagent } from '../contracts/orchestration-contracts.js';
+import type {
+  IncrementalSessionInput,
+  SessionContext,
+} from '../contracts/session-contracts.js';
 import { orchestrationPlanSchema } from '../contracts/orchestration-contracts.js';
 import {
   openHarnessDatabase,
@@ -14,9 +18,11 @@ import {
 import {
   encodeCandidateFilesArtifactPath,
   encodeWorktreeBranchArtifactPath,
+  OrchestrationConflictError,
 } from '../runtime/orchestration-conflicts.js';
 import { dispatchReadyOrchestrationIssues } from '../runtime/orchestration-dispatcher.js';
 import { inspectOrchestration } from '../runtime/orchestration-inspector.js';
+import { SessionOrchestrator } from '../runtime/session-orchestrator.js';
 
 let tempCounter = 0;
 
@@ -173,6 +179,199 @@ test('orchestration dispatcher respects active subagent lease capacity', async (
     assert.equal(selectIssue(dbPath, 'issue-ready')?.status, 'ready');
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher reports ready issues left outside the dispatch limit', async () => {
+  const tempDir = createLocalTempDir('dispatch-limit');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-first',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedIssue(dbPath, {
+      issueId: 'issue-second',
+      status: 'ready',
+      priority: 'high',
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-limit',
+      maxAssignments: 1,
+      maxConcurrentAgents: 1,
+      subagents: [createSubagent('agent-a', ['implementation'])],
+    });
+
+    assert.equal(result.status, 'dispatched');
+    assert.deepEqual(
+      result.dispatches.map((dispatch) => dispatch.issue.id),
+      ['issue-first'],
+    );
+    assert.deepEqual(result.unassignedIssues, [
+      {
+        issueId: 'issue-second',
+        reason: 'dispatch_limit_reached',
+        requiredCapabilityIds: [],
+        message: 'Dispatch limit 1 reached before issue issue-second.',
+      },
+    ]);
+    assert.equal(selectIssue(dbPath, 'issue-second')?.status, 'ready');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher maps transactional conflict errors to unassigned issues', async () => {
+  const tempDir = createLocalTempDir('transactional-conflict');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-conflict',
+      status: 'ready',
+      priority: 'critical',
+    });
+
+    const orchestrator = createStubOrchestrator({
+      begin: async () => {
+        throw new OrchestrationConflictError({
+          kind: 'candidate_file_conflict',
+          message: 'Candidate file src/runtime/session.ts conflicts with active run.',
+          candidateFilePath: 'src/runtime/session.ts',
+          conflictingLock: {
+            source: 'active:run-existing',
+            issueId: 'issue-existing',
+            runId: 'run-existing',
+            candidateFilePaths: ['src/runtime/session.ts'],
+          },
+        });
+      },
+    });
+    const result = await dispatchReadyOrchestrationIssues(
+      {
+        ...baseDispatchInput(dbPath),
+        dispatchId: 'dispatch-transactional-conflict',
+        subagents: [createSubagent('agent-a', ['implementation'])],
+        issueRequirements: [
+          {
+            issueId: 'issue-conflict',
+            candidateFilePaths: ['src/runtime/session.ts'],
+          },
+        ],
+      },
+      orchestrator,
+    );
+
+    assert.equal(result.status, 'idle');
+    assert.deepEqual(result.failures, []);
+    assert.deepEqual(result.unassignedIssues, [
+      {
+        issueId: 'issue-conflict',
+        reason: 'candidate_file_conflict',
+        requiredCapabilityIds: [],
+        message: 'Candidate file src/runtime/session.ts conflicts with active run.',
+      },
+    ]);
+    assert.equal(selectIssue(dbPath, 'issue-conflict')?.status, 'ready');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration dispatcher records begin failures as failed or partial results', async () => {
+  const failedDir = createLocalTempDir('begin-failed');
+  const partialDir = createLocalTempDir('begin-partial');
+
+  try {
+    const failedDbPath = join(failedDir, 'harness.sqlite');
+    seedBaseProject(failedDbPath);
+    seedIssue(failedDbPath, {
+      issueId: 'issue-failed',
+      status: 'ready',
+      priority: 'critical',
+    });
+
+    const failedResult = await dispatchReadyOrchestrationIssues(
+      {
+        ...baseDispatchInput(failedDbPath),
+        dispatchId: 'dispatch-failed',
+        subagents: [createSubagent('agent-a', ['implementation'])],
+      },
+      createStubOrchestrator({
+        begin: async () => {
+          throw new Error('session backend unavailable');
+        },
+      }),
+    );
+
+    assert.equal(failedResult.status, 'failed');
+    assert.deepEqual(failedResult.dispatches, []);
+    assert.deepEqual(failedResult.failures, [
+      {
+        issueId: 'issue-failed',
+        subagentId: 'agent-a',
+        worktreeId: 'issue-failed',
+        message: 'session backend unavailable',
+      },
+    ]);
+
+    const partialDbPath = join(partialDir, 'harness.sqlite');
+    seedBaseProject(partialDbPath);
+    seedIssue(partialDbPath, {
+      issueId: 'issue-partial-a',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedIssue(partialDbPath, {
+      issueId: 'issue-partial-b',
+      status: 'ready',
+      priority: 'high',
+    });
+
+    const partialResult = await dispatchReadyOrchestrationIssues(
+      {
+        ...baseDispatchInput(partialDbPath),
+        dispatchId: 'dispatch-partial',
+        maxAssignments: 2,
+        maxConcurrentAgents: 2,
+        subagents: [
+          createSubagent('agent-a', ['implementation']),
+          createSubagent('agent-b', ['implementation']),
+        ],
+      },
+      createStubOrchestrator({
+        begin: async (input) => {
+          if (input.preferredIssueId === 'issue-partial-b') {
+            throw new Error('lease store timeout');
+          }
+
+          return createSessionContext(input);
+        },
+      }),
+    );
+
+    assert.equal(partialResult.status, 'partial');
+    assert.deepEqual(
+      partialResult.dispatches.map((dispatch) => dispatch.issue.id),
+      ['issue-partial-a'],
+    );
+    assert.deepEqual(partialResult.failures, [
+      {
+        issueId: 'issue-partial-b',
+        subagentId: 'agent-b',
+        worktreeId: 'issue-partial-b',
+        message: 'lease store timeout',
+      },
+    ]);
+  } finally {
+    rmSync(failedDir, { recursive: true, force: true });
+    rmSync(partialDir, { recursive: true, force: true });
   }
 });
 
@@ -733,6 +932,52 @@ function createSubagent(
     modelProfile: 'gpt-5-high',
     capabilities: [...capabilities],
     maxConcurrency: 1,
+  };
+}
+
+function createStubOrchestrator(input: {
+  begin: (input: IncrementalSessionInput) => Promise<SessionContext>;
+}): SessionOrchestrator {
+  return {
+    promoteQueue: async () => ({ promotedIssueIds: [] }),
+    beginIncrementalSession: input.begin,
+  } as unknown as SessionOrchestrator;
+}
+
+function createSessionContext(input: IncrementalSessionInput): SessionContext {
+  const issueId = input.preferredIssueId ?? 'issue';
+
+  return {
+    sessionId: input.sessionId,
+    dbPath: input.dbPath,
+    workspaceId: input.workspaceId,
+    projectId: input.projectId,
+    ...(input.campaignId !== undefined ? { campaignId: input.campaignId } : {}),
+    agentId: input.agentId ?? 'agent',
+    host: input.host,
+    hostCapabilities: input.hostCapabilities,
+    runId: input.sessionId,
+    leaseId: `lease-${issueId}`,
+    leaseExpiresAt: '2999-01-01T00:00:00.000Z',
+    issueId,
+    issueTask: `Task ${issueId}`,
+    claimMode: 'claim',
+    artifacts: input.artifacts,
+    scope: {
+      workspace: input.workspaceId,
+      project: input.projectId,
+      ...(input.campaignId !== undefined ? { campaign: input.campaignId } : {}),
+      task: issueId,
+      run: input.sessionId,
+    },
+    currentTaskStatus: 'in_progress',
+    currentCheckpointId: `checkpoint-${issueId}`,
+    mem0: {
+      enabled: input.mem0Enabled,
+      available: false,
+      query: issueId,
+      recalledMemories: [],
+    },
   };
 }
 

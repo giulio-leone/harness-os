@@ -179,6 +179,103 @@ test('rejects unknown dependency ids', () => {
   );
 });
 
+test('rejects duplicate milestone keys before emitting plan payloads', () => {
+  assert.throws(
+    () =>
+      planOrchestrationMilestones({
+        milestones: [
+          {
+            id: 'm-api',
+            key: 'foundation',
+            description: 'API foundation',
+          },
+          {
+            id: 'm-ui',
+            key: 'foundation',
+            description: 'UI foundation',
+          },
+        ],
+        slices: [
+          {
+            id: 'slice-api',
+            milestoneId: 'm-api',
+            task: 'Build API',
+            priority: 'high',
+            size: 'S',
+          },
+          {
+            id: 'slice-ui',
+            milestoneId: 'm-ui',
+            task: 'Build UI',
+            priority: 'medium',
+            size: 'S',
+          },
+        ],
+      }),
+    /Duplicate milestone key "foundation"/,
+  );
+});
+
+test('rejects self and cyclic milestone dependencies', () => {
+  assert.throws(
+    () =>
+      planOrchestrationMilestones({
+        milestones: [
+          {
+            id: 'm1',
+            description: 'Milestone one',
+            dependsOnMilestoneIds: ['m1'],
+          },
+        ],
+        slices: [
+          {
+            id: 'slice-a',
+            milestoneId: 'm1',
+            task: 'Task A',
+            priority: 'high',
+            size: 'S',
+          },
+        ],
+      }),
+    /cannot depend on itself/,
+  );
+
+  assert.throws(
+    () =>
+      planOrchestrationMilestones({
+        milestones: [
+          {
+            id: 'm1',
+            description: 'Milestone one',
+            dependsOnMilestoneIds: ['m2'],
+          },
+          {
+            id: 'm2',
+            description: 'Milestone two',
+            dependsOnMilestoneIds: ['m1'],
+          },
+        ],
+        slices: [
+          {
+            id: 'slice-a',
+            milestoneId: 'm1',
+            task: 'Task A',
+            priority: 'high',
+            size: 'S',
+          },
+          {
+            id: 'slice-b',
+            milestoneId: 'm2',
+            task: 'Task B',
+            priority: 'medium',
+            size: 'S',
+          },
+        ],
+      }),
+    /Cycle detected in milestone dependencies/,
+  );
+});
+
 test('preserves policy, workflow metadata, and evidence external refs', () => {
   const milestones = planOrchestrationMilestones({
     milestones: [
