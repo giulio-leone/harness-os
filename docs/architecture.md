@@ -65,7 +65,13 @@ HarnessOS now models workload specialization as a first-class runtime concept in
 The repository also publishes reference workspaces that pair the profile model with concrete queue examples. `examples/consumer-workspace-template` is the generic `assistant` path, while `examples/research-workspace-template`, `examples/ops-workspace-template`, and `examples/support-workspace-template` demonstrate non-coding mission catalogs, handoff assets, and first-class workflow metadata in realistic domains.
 For authoritative action-by-action tool documentation, use [mcp-tools.md](mcp-tools.md); for command-level entrypoints, use [cli-reference.md](cli-reference.md).
 
-## 5. The Execution Flow
+## 5. Symphony-style orchestration without schema v6
+
+HarnessOS now has a Symphony-inspired orchestration layer that maps isolated, issue-scoped agent runs onto the existing schema-v5 lifecycle store instead of adding a parallel scheduler database. The design keeps the canonical state in `issues`, `leases`, `runs`, `checkpoints`, `events`, `artifacts`, and `active_sessions`, then layers deterministic worktree metadata, subagent routing, conflict locks, evidence artifact persistence, and read-only orchestration inspection on top.
+
+The detailed contract map, table ownership, and public/internal boundary rules live in [orchestration-no-schema-v1.md](orchestration-no-schema-v1.md).
+
+## 6. The Execution Flow
 
 1. **Plan Issues**: Using `harness_orchestrator(action: "plan_issues")`, top-level objectives are converted into a canonical `milestones[]` batch with issue-level chains and milestone-level dependencies.
 2. **Begin Task**: An agent claims an unblocked task. A lease is atomically assigned, saving the target task from duplicates.

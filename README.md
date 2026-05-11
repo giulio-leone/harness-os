@@ -299,7 +299,7 @@ As of `2.0.0`, queue planning is batch-first:
 
 ## 🧩 Architecture
 
-For an in-depth look at how HarnessOS works, refer to the [Architecture Documentation](docs/architecture.md). Release highlights and migrations live in [CHANGELOG.md](CHANGELOG.md).
+For an in-depth look at how HarnessOS works, refer to the [Architecture Documentation](docs/architecture.md). The Symphony-style no-schema orchestration boundary is documented in [docs/orchestration-no-schema-v1.md](docs/orchestration-no-schema-v1.md). Release highlights and migrations live in [CHANGELOG.md](CHANGELOG.md).
 
 The typical execution flow:
 1. `harness_orchestrator(action: "plan_issues")` — Imports a canonical milestone batch into the queue.
