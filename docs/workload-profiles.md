@@ -118,6 +118,7 @@ After installing MCP on a host, call `harness_inspector(action: "capabilities")`
 - the bundled MCP tools and their actions
 - the active `workloadProfiles` list
 - skill metadata with `workloadProfileIds`
+- the `orchestration` block for Symphony discovery, including `harness_symphony` actions, `gpt-5-high` defaults, four-agent fan-out, dispatch requirements, worktree isolation semantics, accepted evidence artifact kinds, and runtime metadata artifact kinds
 - mem0 availability and bootstrap guidance
 
 That makes `capabilities` the fastest machine-readable way to confirm both tool discoverability and workload-profile selection.

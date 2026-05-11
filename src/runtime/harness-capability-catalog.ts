@@ -5,6 +5,7 @@ import type {
   BundledWorkloadProfile,
   WorkloadProfileId,
 } from '../contracts/workload-profiles.js';
+import { orchestrationEvidenceArtifactKindValues } from '../contracts/orchestration-contracts.js';
 import {
   defaultSkillPolicies,
   type SkillFamilyPolicy,
@@ -51,12 +52,39 @@ export interface HarnessBootstrapStep {
   tool: string;
   action: string;
   reason: string;
+  requiredFields?: string[];
+}
+
+export interface HarnessOrchestrationCapability {
+  contractVersion: '1.0.0';
+  mode: 'symphony';
+  tool: 'harness_symphony';
+  defaultModelProfile: 'gpt-5-high';
+  defaultMaxConcurrentAgents: 4;
+  actions: {
+    compilePlan: 'compile_plan';
+    dispatchReady: 'dispatch_ready';
+    inspectState: 'inspect_state';
+  };
+  requiredDispatchFields: string[];
+  hostResponsibilities: string[];
+  worktreeIsolation: {
+    strategy: 'one_worktree_per_issue';
+    mcpCreatesWorktrees: boolean;
+    conflictGuards: string[];
+  };
+  evidence: {
+    acceptedArtifactKinds: string[];
+    runtimeMetadataArtifactKinds: string[];
+    healthFlags: string[];
+  };
 }
 
 export interface HarnessCapabilityCatalog {
   tools: HarnessToolCatalogEntry[];
   skills: HarnessSkillCatalogEntry[];
   workloadProfiles: BundledWorkloadProfile[];
+  orchestration: HarnessOrchestrationCapability;
   activeWorkloadProfileId?: WorkloadProfileId;
   skillPolicies: SkillFamilyPolicy[];
   suggestedBootstrap: HarnessBootstrapStep[];
@@ -71,6 +99,57 @@ const TOOL_CATALOG: HarnessToolCatalogEntry[] = getHarnessToolContracts().map(
     actions,
   }),
 );
+
+const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
+  contractVersion: '1.0.0',
+  mode: 'symphony',
+  tool: 'harness_symphony',
+  defaultModelProfile: 'gpt-5-high',
+  defaultMaxConcurrentAgents: 4,
+  actions: {
+    compilePlan: 'compile_plan',
+    dispatchReady: 'dispatch_ready',
+    inspectState: 'inspect_state',
+  },
+  requiredDispatchFields: [
+    'projectId or projectName',
+    'repoRoot',
+    'worktreeRoot',
+    'baseRef',
+    'host',
+    'hostCapabilities',
+  ],
+  hostResponsibilities: [
+    'create_git_worktrees',
+    'launch_subagents',
+    'run_quality_gates',
+    'collect_evidence_artifacts',
+    'cleanup_worktrees',
+  ],
+  worktreeIsolation: {
+    strategy: 'one_worktree_per_issue',
+    mcpCreatesWorktrees: false,
+    conflictGuards: [
+      'active_worktree_path',
+      'active_worktree_branch',
+      'candidate_file_overlap',
+    ],
+  },
+  evidence: {
+    acceptedArtifactKinds: [...orchestrationEvidenceArtifactKindValues],
+    runtimeMetadataArtifactKinds: [
+      'orchestration_assignment',
+      'orchestration_worktree',
+      'orchestration_worktree_branch',
+      'orchestration_candidate_files',
+    ],
+    healthFlags: [
+      'duplicate_active_worktree_artifact_path',
+      'done_issue_missing_evidence',
+      'expired_active_lease',
+    ],
+  },
+};
 
 const BOOTSTRAP_STEPS: HarnessBootstrapStep[] = [
   {
@@ -91,6 +170,20 @@ const BOOTSTRAP_STEPS: HarnessBootstrapStep[] = [
     action: 'next_action',
     reason: 'Let the runtime suggest the next deterministic tool call.',
   },
+  {
+    step: 4,
+    tool: 'harness_symphony',
+    action: 'inspect_state',
+    reason: 'Discover existing orchestration leases, worktree artifacts, evidence references, and health flags for the resolved project.',
+    requiredFields: ['projectId or projectName'],
+  },
+  {
+    step: 5,
+    tool: 'harness_symphony',
+    action: 'dispatch_ready',
+    reason: 'Fan out ready issues only after the host knows the repository root, worktree root, base ref, and host routing capabilities.',
+    requiredFields: ORCHESTRATION_CAPABILITY.requiredDispatchFields,
+  },
 ];
 
 export function getHarnessCapabilityCatalog(
@@ -106,6 +199,7 @@ export function getHarnessCapabilityCatalog(
     tools: TOOL_CATALOG,
     skills: loadBundledSkillCatalog(manifest, options.workloadProfileId),
     workloadProfiles: manifest.workloadProfiles,
+    orchestration: ORCHESTRATION_CAPABILITY,
     activeWorkloadProfileId: options.workloadProfileId,
     skillPolicies: defaultSkillPolicies,
     suggestedBootstrap: BOOTSTRAP_STEPS,
