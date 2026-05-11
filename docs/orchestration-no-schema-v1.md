@@ -18,7 +18,7 @@ Source references:
 | Per-issue workspace | Validated worktree allocation metadata, not shell-created worktrees | `src/runtime/worktree-manager.ts` |
 | Agent registry | Typed subagent definitions with host, model profile, capabilities, and capacity | `src/contracts/orchestration-contracts.ts`, `src/runtime/subagent-registry.ts` |
 | Dispatch loop | Ready-issue selection, subagent/worktree assignment, session claim, and bounded fan-out | `src/runtime/orchestration-dispatcher.ts` |
-| Supervisor loop contract | Durable tick inputs, host execution hooks, decision traces, backoff/stop conditions, and run summaries | `src/contracts/orchestration-contracts.ts` |
+| Supervisor tick runtime | Durable tick inputs, host execution hooks, filtered dashboard reads, queue promotion, ready dispatch, decision traces, backoff/stop conditions, and run summaries | `src/contracts/orchestration-contracts.ts`, `src/runtime/orchestration-supervisor.ts` |
 | Conflict avoidance | Project-wide worktree path, branch, and candidate-file locks | `src/runtime/orchestration-conflicts.ts` |
 | Proof of work | Evidence packet contracts plus persisted session artifacts and checkpoint references | `src/contracts/orchestration-contracts.ts`, `src/runtime/session-orchestrator.ts` |
 | Status surface | Read-only orchestration summary and health flags | `src/runtime/orchestration-inspector.ts` |
@@ -49,7 +49,7 @@ No orchestration-specific table is required for v1 because the existing store al
 
 `dispatchReadyOrchestrationIssues()` is an internal runtime boundary for selecting ready work and creating one assignment per issue. It:
 
-- promotes newly unblocked work before selection;
+- promotes newly unblocked work before selection unless a supervisor-owned caller sets `promoteBeforeDispatch: false`;
 - reads ready issues from the canonical SQLite store;
 - builds deterministic worktree metadata from `repoRoot`, `worktreeRoot`, `baseRef`, and issue id;
 - selects a compatible subagent from host/capability/model profile constraints;
@@ -58,16 +58,18 @@ No orchestration-specific table is required for v1 because the existing store al
 
 It does not execute `git worktree add`, run a coding agent process, open a PR, or mark work done. Those are host/agent responsibilities and must report evidence back through the session and artifact contracts.
 
-### 3. Supervisor contract boundary
+### 3. Supervisor runtime boundary
 
-The autonomous supervisor contracts define the durable control-loop envelope without starting a daemon yet. The public schemas cover:
+The autonomous supervisor runtime defines the durable control-loop envelope and executes one deterministic tick at a time. It is intentionally not a daemon yet; hosts can call the pure package function and own any later polling process. The public schemas cover:
 
 - `OrchestrationSupervisorTickInput` for one bounded tick over a project/campaign scope, with default `dry_run` mode, event limits, required evidence kinds, backoff, and stop-condition fields;
 - `OrchestrationSupervisorHostExecution` for host-owned execution hooks used only in `execute` mode: repo/worktree roots, base ref, host identity, host capabilities, optional subagents, cleanup policy, and concurrency limit;
 - `OrchestrationSupervisorDecision` and `OrchestrationSupervisorTickResult` for auditable decisions such as `inspect_dashboard`, `promote_queue`, `dispatch_ready`, `await_evidence`, `idle`, `blocked`, and `error`;
 - `OrchestrationSupervisorRunSummary` for aggregating tick results, stop reason, and supervisor evidence.
 
-The contract deliberately separates read-only decisions from mutating decisions. Dry-run ticks may execute read-only inspection decisions, but cannot execute or report outcomes for mutating decisions such as queue promotion or dispatch. Mutability is derived from the decision kind/action, so callers cannot mark `dispatch_ready` or `promote_queue` as read-only to bypass dry-run guarantees. Execute-mode inputs require canonical `workspaceId`, `projectId`, and host execution details before a later runtime can promote or dispatch work. Tick and run evidence ids must be referenced by the decision or tick that produced them, so future supervisor traces remain replayable from artifacts instead of free-floating JSON.
+The contract deliberately separates read-only decisions from mutating decisions. Dry-run ticks may execute read-only inspection decisions, but cannot execute or report outcomes for mutating decisions such as queue promotion or dispatch. Mutability is derived from the decision kind/action, so callers cannot mark `dispatch_ready` or `promote_queue` as read-only to bypass dry-run guarantees. Execute-mode inputs require canonical `workspaceId`, `projectId`, and host execution details before the runtime can promote or dispatch work. Tick and run evidence ids must be referenced by the decision or tick that produced them, so future supervisor traces remain replayable from artifacts instead of free-floating JSON.
+
+`runOrchestrationSupervisorTick()` is the M8-I2 runtime boundary. For every tick it validates input, checks an optional external stop file before database reads, resolves project/campaign scope, loads the dashboard view model, applies dashboard filters, and records an `inspect_dashboard` decision. In `dry_run` mode it only reports planned `promote_queue` and `dispatch_ready` decisions. In `execute` mode it owns queue promotion, reloads the filtered dashboard, and dispatches only visible ready issue ids through the dispatcher with `promoteBeforeDispatch: false` so promotion does not run twice. Idle, blocked, external-stop, and error outcomes still return schema-valid tick results with explicit stop reasons and backoff hints.
 
 ### 4. Worktree boundary
 
@@ -116,7 +118,7 @@ CSQR-lite scorecard artifacts are not session-owned worktree/handoff artifacts, 
 
 ### 8. Public API boundary
 
-The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, including the supervisor tick/result/run-summary schemas. The MCP surface exposes a dedicated `harness_symphony` tool for compile/dispatch/inspect/dashboard workflows; supervisor execution entrypoints are intentionally deferred until the contract-only boundary is validated.
+The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, including the supervisor tick/result/run-summary schemas and `runOrchestrationSupervisorTick()`. The MCP surface exposes a dedicated `harness_symphony` tool for compile/dispatch/inspect/dashboard workflows; long-running supervisor polling entrypoints are intentionally deferred until the single-tick runtime boundary is validated.
 
 ## Fully agentic completion posture
 
@@ -156,7 +158,7 @@ Scorecards passed to `harness_session(action: "checkpoint" | "close")` are durab
 
 ## Current v1 limits
 
-- The dispatcher assigns work and claims sessions; supervisor schemas now define the durable tick/run envelope, but CLI/MCP supervisor execution entrypoints are not implemented yet.
+- The dispatcher assigns work and claims sessions; the supervisor runtime executes one deterministic tick, but CLI/MCP supervisor polling entrypoints are not implemented yet.
 - Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
 - Evidence packet validation and deterministic reference E2E assertions exist; the full E2E/CI gate runner remains host-owned until later hardening milestones.
 - Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.

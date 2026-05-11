@@ -146,7 +146,7 @@ If you need a concise “which tool do I call next?” guide instead of raw exam
 
 ## 6. Fully Agentic Symphony Flow
 
-Use the Symphony flow when a project already has a campaign scope and you want ready issues to run without human runtime checkpoints. The runtime assigns work; the host executes it. For durable autonomous loops, the public supervisor schemas now define the tick input, host execution hook, decision trace, backoff/stop condition, tick result, and run-summary shapes; execute-mode ticks require canonical `workspaceId` and `projectId`, and the CLI/MCP supervisor runner lands after that contract boundary.
+Use the Symphony flow when a project already has a campaign scope and you want ready issues to run without human runtime checkpoints. The runtime assigns work; the host executes it. `runOrchestrationSupervisorTick()` now provides the deterministic single-tick runtime for durable autonomous loops: dry-runs inspect and plan without mutation, while execute ticks require canonical `workspaceId`, `projectId`, and host execution inputs before promotion or dispatch. CLI/MCP supervisor polling lands after this runtime boundary.
 
 The stabilized MCP sequence is:
 
@@ -154,7 +154,7 @@ The stabilized MCP sequence is:
 2. Create or reuse a workspace/campaign with `harness_orchestrator(action: "init_workspace")` and `harness_orchestrator(action: "create_campaign")`.
 3. Convert tracker-style milestones and slices with `harness_symphony(action: "compile_plan")`.
 4. Send the returned `planIssuesPayload.milestones` to `harness_orchestrator(action: "plan_issues")`.
-5. Fan out ready work with `harness_symphony(action: "dispatch_ready")`, using `repoRoot`, `worktreeRoot`, `baseRef`, `host`, `hostCapabilities`, and up to four compatible `gpt-5-high` subagents.
+5. Fan out ready work with `runOrchestrationSupervisorTick()` for a bounded autonomous tick, or directly with `harness_symphony(action: "dispatch_ready")` when a host wants to manage inspect/promote/dispatch steps itself. Use `repoRoot`, `worktreeRoot`, `baseRef`, `host`, `hostCapabilities`, and up to four compatible `gpt-5-high` subagents.
 6. In the host runtime, create the physical git worktrees, launch the assigned subagents, run the deterministic gates, capture screenshots/E2E reports, and save evidence with `harness_artifacts(action: "save")`.
 7. Inspect health with `harness_symphony(action: "inspect_state")` or retrieve the UI/agent read model with `harness_symphony(action: "dashboard_view")` before closing the worker sessions.
 

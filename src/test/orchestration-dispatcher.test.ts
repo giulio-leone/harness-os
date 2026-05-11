@@ -108,6 +108,56 @@ test('orchestration dispatcher claims ready issues through session lifecycle API
   }
 });
 
+test('orchestration dispatcher can skip promotion and dispatch only requested ready issues', async () => {
+  const tempDir = createLocalTempDir('filtered-no-promotion');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-visible',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedIssue(dbPath, {
+      issueId: 'issue-hidden-ready',
+      status: 'ready',
+      priority: 'critical',
+    });
+    seedIssue(dbPath, {
+      issueId: 'issue-pending',
+      status: 'pending',
+      priority: 'critical',
+    });
+
+    const result = await dispatchReadyOrchestrationIssues({
+      ...baseDispatchInput(dbPath),
+      dispatchId: 'dispatch-filtered-no-promotion',
+      promoteBeforeDispatch: false,
+      issueIds: ['issue-visible'],
+      maxAssignments: 2,
+      maxConcurrentAgents: 2,
+      subagents: [
+        createSubagent('agent-a', ['implementation']),
+        createSubagent('agent-b', ['implementation']),
+      ],
+    });
+
+    assert.equal(result.status, 'dispatched');
+    assert.deepEqual(result.promotedIssueIds, []);
+    assert.deepEqual(
+      result.dispatches.map((dispatch) => dispatch.issue.id),
+      ['issue-visible'],
+    );
+    assert.deepEqual(result.unassignedIssues, []);
+    assert.equal(selectIssue(dbPath, 'issue-visible')?.status, 'in_progress');
+    assert.equal(selectIssue(dbPath, 'issue-hidden-ready')?.status, 'ready');
+    assert.equal(selectIssue(dbPath, 'issue-pending')?.status, 'pending');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('orchestration dispatcher never bypasses pending dependency gates', async () => {
   const tempDir = createLocalTempDir('pending-gate');
   const dbPath = join(tempDir, 'harness.sqlite');

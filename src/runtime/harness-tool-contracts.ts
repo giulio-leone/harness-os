@@ -5,6 +5,9 @@ import {
   harnessPolicySchema,
 } from '../contracts/policy-contracts.js';
 import {
+  orchestrationDashboardIssueFiltersInputSchema,
+} from '../contracts/orchestration-dashboard-contracts.js';
+import {
   orchestrationSubagentSchema,
   orchestrationWorktreeCleanupPolicySchema,
 } from '../contracts/orchestration-contracts.js';
@@ -19,7 +22,6 @@ import {
   harnessPlanIssuesInputSchema,
   harnessRollbackIssueInputSchema,
 } from './harness-planning-tools.js';
-import { orchestrationDashboardIssueFiltersInputSchema } from './orchestration-dashboard-filters.js';
 import {
   incrementalSessionInputSchema,
   inspectAuditInputSchema,
@@ -272,12 +274,14 @@ const harnessSymphonyDispatchInputSchema = z
     cleanupPolicy: orchestrationWorktreeCleanupPolicySchema.optional(),
     maxAssignments: positiveInt.optional(),
     maxConcurrentAgents: positiveInt.optional(),
+    promoteBeforeDispatch: z.boolean().optional(),
     leaseTtlSeconds: positiveInt.optional(),
     checkpointFreshnessSeconds: positiveInt.optional(),
     mem0Enabled: z.boolean().optional(),
     memorySearchLimit: positiveInt.optional(),
     artifacts: z.array(harnessSymphonyArtifactReferenceInputSchema).optional(),
     subagents: z.array(orchestrationSubagentSchema).min(1).optional(),
+    issueIds: z.array(nonEmptyString).min(1).max(500).optional(),
     issueRequirements: z.array(harnessSymphonyIssueRequirementInputSchema).optional(),
   })
   .strict();

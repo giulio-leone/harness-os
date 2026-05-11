@@ -24,6 +24,36 @@ export const orchestrationDashboardLaneIdSchema = z.enum(
   orchestrationDashboardLaneIdValues,
 );
 
+export const orchestrationDashboardIssueFilterSignalValues = [
+  'active',
+  'evidence',
+  'csqr',
+  'health',
+  'blocked',
+] as const;
+
+const dashboardFilterValueSchema = z.union([
+  z.string().min(1),
+  z.array(z.string().min(1)).max(100),
+]);
+
+export const orchestrationDashboardIssueFilterSignalSchema = z.enum(
+  orchestrationDashboardIssueFilterSignalValues,
+);
+
+export const orchestrationDashboardIssueFiltersInputSchema = z
+  .object({
+    q: z.string().optional(),
+    lane: dashboardFilterValueSchema.optional(),
+    status: dashboardFilterValueSchema.optional(),
+    priority: dashboardFilterValueSchema.optional(),
+    evidenceKind: dashboardFilterValueSchema.optional(),
+    csqr: dashboardFilterValueSchema.optional(),
+    signal: orchestrationDashboardIssueFilterSignalSchema.optional(),
+    hasCsqr: z.boolean().optional(),
+  })
+  .strict();
+
 export const orchestrationDashboardHealthFlagSchema = z.discriminatedUnion(
   'kind',
   [
@@ -255,6 +285,11 @@ export const orchestrationDashboardViewModelSchema = z
 
 export type OrchestrationDashboardLaneId = z.infer<
   typeof orchestrationDashboardLaneIdSchema
+>;
+export type OrchestrationDashboardIssueFilterSignal =
+  (typeof orchestrationDashboardIssueFilterSignalValues)[number];
+export type OrchestrationDashboardIssueFiltersInput = z.input<
+  typeof orchestrationDashboardIssueFiltersInputSchema
 >;
 export type OrchestrationDashboardHealthFlag = z.infer<
   typeof orchestrationDashboardHealthFlagSchema

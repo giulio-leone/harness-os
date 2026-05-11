@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { evaluateCsqrLiteCompletionGate } from './csqr-lite-completion-gate.js';
 import { csqrLiteScorecardSchema } from './csqr-lite-contracts.js';
+import { orchestrationDashboardIssueFiltersInputSchema } from './orchestration-dashboard-contracts.js';
 import {
   harnessDispatchPolicySchema,
   harnessHostCapabilitiesSchema,
@@ -812,6 +813,7 @@ export const orchestrationSupervisorTickInputSchema = z
     mode: orchestrationSupervisorTickModeSchema.default('dry_run'),
     objective: nonEmptyString.optional(),
     eventLimit: positiveInteger.default(25),
+    dashboardFilters: orchestrationDashboardIssueFiltersInputSchema.optional(),
     dispatch: orchestrationSupervisorHostExecutionSchema.optional(),
     backoff: orchestrationSupervisorBackoffSchema.default({
       idleDelayMs: 30_000,

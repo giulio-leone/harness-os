@@ -1,24 +1,16 @@
-import { z } from 'zod';
-
 import {
+  orchestrationDashboardIssueFilterSignalSchema,
+  orchestrationDashboardIssueFilterSignalValues,
+  orchestrationDashboardIssueFiltersInputSchema,
   orchestrationDashboardLaneOrder,
   type OrchestrationDashboardIssueCard,
+  type OrchestrationDashboardIssueFilterSignal,
+  type OrchestrationDashboardIssueFiltersInput,
   type OrchestrationDashboardIssueLane,
   type OrchestrationDashboardLaneId,
   type OrchestrationDashboardOverview,
   type OrchestrationDashboardViewModel,
 } from '../contracts/orchestration-dashboard-contracts.js';
-
-export const orchestrationDashboardIssueFilterSignalValues = [
-  'active',
-  'evidence',
-  'csqr',
-  'health',
-  'blocked',
-] as const;
-
-export type OrchestrationDashboardIssueFilterSignal =
-  (typeof orchestrationDashboardIssueFilterSignalValues)[number];
 
 export interface OrchestrationDashboardIssueFilters {
   q?: string;
@@ -34,32 +26,6 @@ export interface OrchestrationDashboardIssueFilters {
 export type OrchestrationDashboardSearchParams = Record<
   string,
   string | string[] | undefined
->;
-
-const filterValueSchema = z.union([
-  z.string().min(1),
-  z.array(z.string().min(1)).max(100),
-]);
-
-export const orchestrationDashboardIssueFilterSignalSchema = z.enum(
-  orchestrationDashboardIssueFilterSignalValues,
-);
-
-export const orchestrationDashboardIssueFiltersInputSchema = z
-  .object({
-    q: z.string().optional(),
-    lane: filterValueSchema.optional(),
-    status: filterValueSchema.optional(),
-    priority: filterValueSchema.optional(),
-    evidenceKind: filterValueSchema.optional(),
-    csqr: filterValueSchema.optional(),
-    signal: orchestrationDashboardIssueFilterSignalSchema.optional(),
-    hasCsqr: z.boolean().optional(),
-  })
-  .strict();
-
-export type OrchestrationDashboardIssueFiltersInput = z.input<
-  typeof orchestrationDashboardIssueFiltersInputSchema
 >;
 
 const allowedLaneIds = new Set<string>(orchestrationDashboardLaneOrder);

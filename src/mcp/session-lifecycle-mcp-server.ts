@@ -569,12 +569,14 @@ export class SessionLifecycleMcpServer {
                   cleanupPolicy: parsed.cleanupPolicy,
                   maxAssignments: parsed.maxAssignments,
                   maxConcurrentAgents: parsed.maxConcurrentAgents,
+                  promoteBeforeDispatch: parsed.promoteBeforeDispatch,
                   leaseTtlSeconds: parsed.leaseTtlSeconds,
                   checkpointFreshnessSeconds: parsed.checkpointFreshnessSeconds,
                   mem0Enabled: parsed.mem0Enabled,
                   memorySearchLimit: parsed.memorySearchLimit,
                   artifacts: parsed.artifacts,
                   subagents: parsed.subagents,
+                  issueIds: parsed.issueIds,
                   issueRequirements: parsed.issueRequirements,
                 });
                 const hint =

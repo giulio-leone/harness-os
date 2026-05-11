@@ -15,6 +15,7 @@ import {
   evaluateCsqrLiteCompletionGate,
   loadOrchestrationDashboardViewModel,
   normalizeOrchestrationDashboardIssueFilters,
+  runOrchestrationSupervisorTick,
   assertReferenceOrchestrationEvidencePacket,
   orchestrationDashboardViewModelSchema,
   referenceOrchestrationE2eEvidenceMatrix,
@@ -45,6 +46,7 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof loadOrchestrationDashboardViewModel, 'function');
   assert.equal(typeof applyOrchestrationDashboardIssueFilters, 'function');
   assert.equal(typeof normalizeOrchestrationDashboardIssueFilters, 'function');
+  assert.equal(typeof runOrchestrationSupervisorTick, 'function');
   assert.equal(typeof orchestrationDashboardViewModelSchema.safeParse, 'function');
   assert.equal(typeof orchestrationSupervisorTickInputSchema.safeParse, 'function');
   assert.equal(typeof orchestrationSupervisorDecisionSchema.safeParse, 'function');
@@ -103,6 +105,10 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
   assert.equal(
     orchestration.normalizeOrchestrationDashboardIssueFilters,
     normalizeOrchestrationDashboardIssueFilters,
+  );
+  assert.equal(
+    orchestration.runOrchestrationSupervisorTick,
+    runOrchestrationSupervisorTick,
   );
   assert.equal(
     orchestration.orchestrationDashboardViewModelSchema,

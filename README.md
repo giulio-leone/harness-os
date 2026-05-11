@@ -114,7 +114,7 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.
 - `harness_symphony(action: "compile_plan")` converts tracker-style milestones and slices into the canonical `plan_issues` batch without mutating state.
 - `harness_symphony(action: "dispatch_ready")` assigns ready issues to one compatible subagent and one isolated worktree per issue, with `gpt-5-high` and four-agent fan-out as the discoverable defaults.
 - `harness_symphony(action: "inspect_state")` reads leases, worktree artifacts, evidence references, recent events, and orchestration health flags.
-- Public supervisor contracts define durable dry-run/execute ticks, host-owned execution hooks, decision traces, backoff/stop conditions, and run summaries for the upcoming autonomous loop.
+- `runOrchestrationSupervisorTick()` executes one deterministic autonomous supervisor tick: inspect the filtered dashboard, promote eligible queue work, dispatch only visible ready issues, and return an auditable decision trace. CLI/MCP polling entrypoints are intentionally deferred to the next increment.
 - Completion remains no-human-checkpoint: hosts create/run/cleanup git worktrees, then attach typecheck, test, E2E, screenshot, state export, and codebase evidence before closing work.
 - Copy/paste MCP payloads live in [`examples/orchestration-symphony/`](examples/orchestration-symphony/), and the runtime contract is documented in [docs/orchestration-no-schema-v1.md](docs/orchestration-no-schema-v1.md).
 
@@ -322,7 +322,7 @@ For an in-depth look at how HarnessOS works, refer to the [Architecture Document
 
 The typical execution flow:
 1. `harness_orchestrator(action: "plan_issues")` — Imports a canonical milestone batch into the queue.
-2. `harness_symphony(action: "dispatch_ready")` — Fans ready work out to isolated worktree/subagent assignments.
+2. `runOrchestrationSupervisorTick()` or `harness_symphony(action: "dispatch_ready")` — Promotes eligible work and/or fans visible ready issues out to isolated worktree/subagent assignments.
 3. `beginIncrementalSession()` — Claims a ready task when single-worker execution is preferred.
 4. `beginRecoverySession()` — Resolves and overrides a stuck or failed task.
 5. `checkpoint()` — Writes immediate progress to SQLite.

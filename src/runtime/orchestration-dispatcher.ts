@@ -96,6 +96,7 @@ export const dispatchReadyOrchestrationIssuesInputSchema = z
       .optional(),
     maxAssignments: positiveInteger.optional(),
     maxConcurrentAgents: positiveInteger.optional(),
+    promoteBeforeDispatch: z.boolean().optional(),
     leaseTtlSeconds: positiveInteger.optional(),
     checkpointFreshnessSeconds: positiveInteger.optional(),
     mem0Enabled: z.boolean().optional(),
@@ -111,6 +112,7 @@ export const dispatchReadyOrchestrationIssuesInputSchema = z
       )
       .optional(),
     subagents: z.array(orchestrationSubagentSchema).min(1).optional(),
+    issueIds: z.array(nonEmptyString).min(1).max(500).optional(),
     issueRequirements: z.array(dispatchIssueRequirementSchema).optional(),
   })
   .strict();
@@ -208,11 +210,14 @@ export async function dispatchReadyOrchestrationIssues(
     input.maxAssignments ?? maxConcurrentAgents,
     maxConcurrentAgents,
   );
-  const promoted = await orchestrator.promoteQueue({
-    dbPath: input.dbPath,
-    projectId: input.projectId,
-    ...(input.campaignId !== undefined ? { campaignId: input.campaignId } : {}),
-  });
+  const promoted =
+    input.promoteBeforeDispatch === false
+      ? { promotedIssueIds: [] }
+      : await orchestrator.promoteQueue({
+          dbPath: input.dbPath,
+          projectId: input.projectId,
+          ...(input.campaignId !== undefined ? { campaignId: input.campaignId } : {}),
+        });
   const readyIssues = selectReadyIssues(input);
   const activeCounts = selectActiveLeaseCounts(input);
   const activeConflictLocks = selectActiveConflictLocks(input);
@@ -393,29 +398,40 @@ export async function dispatchReadyOrchestrationIssues(
 function selectReadyIssues(
   input: Pick<
     DispatchReadyOrchestrationIssuesInput,
-    'dbPath' | 'projectId' | 'campaignId'
+    'dbPath' | 'projectId' | 'campaignId' | 'issueIds'
   >,
 ): OrchestrationDispatchIssueCandidate[] {
   const database = openReadonlyHarnessDatabase({ dbPath: input.dbPath });
+  const issueIds = normalizeStringSet(input.issueIds ?? []);
+  const issueFilter =
+    issueIds.length > 0
+      ? ` AND id IN (${issueIds.map(() => '?').join(', ')})`
+      : '';
 
   try {
     const rows = selectAll<ReadyIssueRow>(
       database.connection,
       `SELECT id, task, priority, status, created_at
        FROM issues
-       WHERE project_id = ?
-         AND (? IS NULL OR campaign_id = ?)
-         AND status = 'ready'
-       ORDER BY
-         CASE priority
-           WHEN 'critical' THEN 0
+        WHERE project_id = ?
+          AND (? IS NULL OR campaign_id = ?)
+          AND status = 'ready'
+          ${issueFilter}
+        ORDER BY
+          CASE priority
+            WHEN 'critical' THEN 0
            WHEN 'high' THEN 1
            WHEN 'medium' THEN 2
            ELSE 3
-         END,
-         created_at ASC,
-         id ASC`,
-      [input.projectId, input.campaignId ?? null, input.campaignId ?? null],
+          END,
+          created_at ASC,
+          id ASC`,
+      [
+        input.projectId,
+        input.campaignId ?? null,
+        input.campaignId ?? null,
+        ...issueIds,
+      ],
     );
 
     return rows.map((row) => ({

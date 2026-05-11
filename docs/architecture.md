@@ -67,7 +67,7 @@ For authoritative action-by-action tool documentation, use [mcp-tools.md](mcp-to
 
 ## 5. Symphony-style orchestration without schema v6
 
-HarnessOS now has a Symphony-inspired orchestration layer that maps isolated, issue-scoped agent runs onto the existing schema-v5 lifecycle store instead of adding a parallel scheduler database. The design keeps the canonical state in `issues`, `leases`, `runs`, `checkpoints`, `events`, `artifacts`, and `active_sessions`, then layers deterministic worktree metadata, subagent routing, conflict locks, evidence artifact persistence, read-only orchestration inspection, dashboard view models, and supervisor tick/run contracts on top.
+HarnessOS now has a Symphony-inspired orchestration layer that maps isolated, issue-scoped agent runs onto the existing schema-v5 lifecycle store instead of adding a parallel scheduler database. The design keeps the canonical state in `issues`, `leases`, `runs`, `checkpoints`, `events`, `artifacts`, and `active_sessions`, then layers deterministic worktree metadata, subagent routing, conflict locks, evidence artifact persistence, read-only orchestration inspection, dashboard view models, and a deterministic single-tick supervisor runtime on top.
 
 The detailed contract map, table ownership, and public/internal boundary rules live in [orchestration-no-schema-v1.md](orchestration-no-schema-v1.md).
 
@@ -75,7 +75,7 @@ The detailed contract map, table ownership, and public/internal boundary rules l
 
 1. **Discover Capabilities**: Using `harness_inspector(action: "capabilities")`, hosts read the tool catalog, workload profile, and `orchestration` block that advertises Symphony mode, `harness_symphony` actions, dispatch requirements, worktree isolation semantics, accepted evidence artifact kinds, and runtime metadata artifact kinds.
 2. **Plan Issues**: Using `harness_symphony(action: "compile_plan")` for Symphony-style slices or `harness_orchestrator(action: "plan_issues")` for canonical batches, top-level objectives are converted into a canonical `milestones[]` batch with issue-level chains and milestone-level dependencies.
-3. **Supervise, Dispatch, or Begin**: Fully agentic hosts can shape a bounded control loop with the public supervisor tick/result schemas, then use `harness_symphony(action: "dashboard_view")`, `harness_orchestrator(action: "promote_queue")`, and `harness_symphony(action: "dispatch_ready")` to inspect, promote, and assign multiple ready issues to isolated worktrees and compatible subagents. Single-worker hosts use `harness_session(action: "begin")` to claim one unblocked task. In all claim paths, leases are atomically assigned to prevent duplicate work.
+3. **Supervise, Dispatch, or Begin**: Fully agentic hosts can call `runOrchestrationSupervisorTick()` for one deterministic dry-run or execute tick that inspects the filtered dashboard, promotes eligible queue work, dispatches only visible ready issues, and returns an auditable decision trace. Direct MCP hosts can still use `harness_symphony(action: "dashboard_view")`, `harness_orchestrator(action: "promote_queue")`, and `harness_symphony(action: "dispatch_ready")` as separate steps. Single-worker hosts use `harness_session(action: "begin")` to claim one unblocked task. In all claim paths, leases are atomically assigned to prevent duplicate work.
 4. **Checkpoint**: While working, an agent stores checkpoint metadata and artifact links securely to the DB.
 5. **Close**: Task returns success/failure and its dependencies are subsequently unblocked or halted.
 
