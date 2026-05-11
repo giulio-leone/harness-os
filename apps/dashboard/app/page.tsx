@@ -1,13 +1,17 @@
 import 'server-only';
 
-import { DashboardShell } from '../components/dashboard-shell';
-import { getDashboardViewModel } from '../lib/dashboard-data.server';
+import { DashboardSetup, DashboardShell } from '../components/dashboard-shell';
+import { getDashboardPageState } from '../lib/dashboard-data.server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export default function DashboardPage() {
-  const viewModel = getDashboardViewModel();
+  const state = getDashboardPageState();
 
-  return <DashboardShell viewModel={viewModel} />;
+  if (state.kind === 'not_configured') {
+    return <DashboardSetup state={state} />;
+  }
+
+  return <DashboardShell dataSource={state.mode} viewModel={state.viewModel} />;
 }

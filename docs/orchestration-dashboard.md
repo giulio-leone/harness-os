@@ -19,16 +19,21 @@ From the repository root:
 
 ```bash
 npm run dashboard:install
-npm run dashboard:dev
 ```
 
-Without environment variables, the app renders a deterministic demo campaign that exercises every important UI state. To point it at a live HarnessOS database:
+Without environment variables, the app renders a setup screen instead of sample data. Start it with a live HarnessOS database:
 
 ```bash
 HARNESS_DASHBOARD_DB_PATH="$HOME/.agent-harness/harness.sqlite" \
-HARNESS_DASHBOARD_PROJECT_ID="harness-os" \
-HARNESS_DASHBOARD_CAMPAIGN_ID="symphony-dashboard" \
+HARNESS_DASHBOARD_PROJECT_ID="P-09c1da36-0432-4633-82d4-7109e7474559" \
+HARNESS_DASHBOARD_CAMPAIGN_ID="C-4ba66c16-2b7f-41a0-9b66-6bc9e91a556f" \
 npm run dashboard:dev
+```
+
+The deterministic sample campaign is available only when explicitly requested:
+
+```bash
+HARNESS_DASHBOARD_DEMO=1 npm run dashboard:dev
 ```
 
 Optional scope variables:
@@ -38,6 +43,7 @@ Optional scope variables:
 | `HARNESS_DASHBOARD_CAMPAIGN_ID` | Restrict the read model to one campaign. |
 | `HARNESS_DASHBOARD_ISSUE_ID` | Restrict the read model to one issue. |
 | `HARNESS_DASHBOARD_EVENT_LIMIT` | Recent event count, default `40`; must be a positive integer. |
+| `HARNESS_DASHBOARD_DEMO` | Set to `1`, `true`, or `yes` to render sample data instead of requiring a live DB. |
 
 ## Quality gate
 

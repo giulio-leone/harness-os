@@ -7,9 +7,11 @@ import type {
   OrchestrationDashboardIssueLane,
   OrchestrationDashboardViewModel,
 } from 'harness-os/orchestration';
+import type { DashboardPageState } from '../lib/dashboard-data';
 
 interface DashboardShellProps {
   viewModel: OrchestrationDashboardViewModel;
+  dataSource?: 'live' | 'demo';
 }
 
 const HEALTH_FLAG_LABELS: Record<OrchestrationDashboardHealthFlag['kind'], string> = {
@@ -18,7 +20,7 @@ const HEALTH_FLAG_LABELS: Record<OrchestrationDashboardHealthFlag['kind'], strin
   expired_active_lease: 'Expired lease',
 };
 
-export function DashboardShell({ viewModel }: DashboardShellProps) {
+export function DashboardShell({ dataSource = 'live', viewModel }: DashboardShellProps) {
   return (
     <main className="dashboard-root" data-testid="orchestration-dashboard">
       <div className="dashboard-frame">
@@ -38,7 +40,7 @@ export function DashboardShell({ viewModel }: DashboardShellProps) {
               <ScopePill label="Issue" value={viewModel.scope.issueId ?? 'All issues'} />
             </div>
           </div>
-          <OverviewPanel viewModel={viewModel} />
+          <OverviewPanel dataSource={dataSource} viewModel={viewModel} />
         </section>
 
         <section className="content-grid">
@@ -57,6 +59,33 @@ export function DashboardShell({ viewModel }: DashboardShellProps) {
   );
 }
 
+export function DashboardSetup({
+  state,
+}: {
+  state: Extract<DashboardPageState, { kind: 'not_configured' }>;
+}) {
+  return (
+    <main className="dashboard-root setup-root" data-testid="dashboard-setup">
+      <section className="hero-panel setup-panel" aria-labelledby="setup-title">
+        <p className="eyebrow">HarnessOS dashboard setup</p>
+        <h1 className="hero-title" id="setup-title">
+          Connect a live HarnessOS database.
+        </h1>
+        <p className="hero-copy">{state.message}</p>
+        <div className="setup-code" aria-label="Required environment variables">
+          {state.requiredEnvironment.map((name) => (
+            <code key={name}>{name}</code>
+          ))}
+        </div>
+        <p className="panel-copy">
+          Sample data is intentionally opt-in only: set <code>HARNESS_DASHBOARD_DEMO=1</code>
+          when you explicitly want the demo campaign.
+        </p>
+      </section>
+    </main>
+  );
+}
+
 function ScopePill({ label, value }: { label: string; value: string }) {
   return (
     <div className="scope-pill">
@@ -66,7 +95,7 @@ function ScopePill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function OverviewPanel({ viewModel }: DashboardShellProps) {
+function OverviewPanel({ dataSource = 'live', viewModel }: DashboardShellProps) {
   const metrics = [
     {
       id: 'total-issues',
@@ -103,9 +132,12 @@ function OverviewPanel({ viewModel }: DashboardShellProps) {
             Campaign pulse
           </h2>
         </div>
-        <span className={`status-pill ${viewModel.health.status}`}>
-          {viewModel.health.status}
-        </span>
+        <div className="header-pills">
+          <span className="status-pill">{dataSource} data</span>
+          <span className={`status-pill ${viewModel.health.status}`}>
+            {viewModel.health.status}
+          </span>
+        </div>
       </div>
       <div className="metric-grid">
         {metrics.map((metric) => (

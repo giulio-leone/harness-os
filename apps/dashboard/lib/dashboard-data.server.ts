@@ -1,3 +1,3 @@
 import 'server-only';
 
-export { getDashboardViewModel } from './dashboard-data';
+export { getDashboardPageState, getDashboardViewModel } from './dashboard-data';

@@ -220,6 +220,13 @@ select {
   margin-bottom: 18px;
 }
 
+.header-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .panel-title {
   margin: 0;
   font-size: 1rem;
@@ -449,6 +456,34 @@ select {
   background: rgba(0, 0, 0, 0.22);
   color: var(--muted);
   font-size: 0.75rem;
+}
+
+.setup-root {
+  display: grid;
+  place-items: center;
+}
+
+.setup-panel {
+  width: min(860px, 100%);
+}
+
+.setup-code {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 26px 0;
+}
+
+.setup-code code,
+.setup-panel code {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--accent-strong);
+  font-size: 0.82rem;
 }
 
 @media (max-width: 1280px) {
