@@ -13,6 +13,10 @@
       "types": "./dist/orchestration.d.ts",
       "default": "./dist/orchestration.js"
     },
+    "./dashboard-server": {
+      "types": "./dist/dashboard-server.d.ts",
+      "default": "./dist/dashboard-server.js"
+    },
     "./db/sqlite.schema.sql": "./dist/db/sqlite.schema.sql",
     "./package.json": "./package.json"
   },

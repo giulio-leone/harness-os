@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { createDashboardIssueAction } from './actions';
 import { DashboardSetup, DashboardShell } from '../components/dashboard-shell';
 import { getDashboardPageState } from '../lib/dashboard-data.server';
 
@@ -13,5 +14,11 @@ export default function DashboardPage() {
     return <DashboardSetup state={state} />;
   }
 
-  return <DashboardShell dataSource={state.mode} viewModel={state.viewModel} />;
+  return (
+    <DashboardShell
+      createIssueAction={state.mode === 'live' ? createDashboardIssueAction : undefined}
+      dataSource={state.mode}
+      viewModel={state.viewModel}
+    />
+  );
 }

@@ -9,9 +9,10 @@ HarnessOS ships a full Next.js dashboard under `apps/dashboard` for the Symphony
 - issue cards with priority, size, active leases, worktree paths, artifact kinds, CSQR scorecards, blockers, and next actions;
 - active-agent lease cards with expired/primary status;
 - evidence counters for worktrees, packets, screenshots, E2E reports, state exports, and CSQR-lite scorecards;
-- recent orchestration events and health flags.
+- recent orchestration events and health flags;
+- a live create-ticket form that inserts real `ready` issues into the configured project/campaign scope.
 
-The UI consumes `loadOrchestrationDashboardViewModel()` and `buildOrchestrationDashboardViewModel()` from `harness-os/orchestration`; it does not recompute orchestration relationships from raw SQLite rows.
+The UI consumes `loadOrchestrationDashboardViewModel()` and `buildOrchestrationDashboardViewModel()` from `harness-os/orchestration`; it does not recompute orchestration relationships from raw SQLite rows. Write actions use the server-only `harness-os/dashboard-server` package subpath so the Next.js app can create scoped tickets without importing the MCP server bundle.
 
 ## Run it locally
 
@@ -36,6 +37,8 @@ The deterministic sample campaign is available only when explicitly requested:
 HARNESS_DASHBOARD_DEMO=1 npm run dashboard:dev
 ```
 
+In live mode, the create-ticket form writes directly to the configured SQLite database. New dashboard-created tickets are standalone `ready` issues with no milestone dependency, scoped to `HARNESS_DASHBOARD_PROJECT_ID` and the optional `HARNESS_DASHBOARD_CAMPAIGN_ID`. Demo mode renders the form disabled so sample data cannot be mistaken for mutable state.
+
 Optional scope variables:
 
 | Variable | Meaning |
@@ -53,7 +56,7 @@ Use the dashboard gate whenever dashboard files change:
 npm run dashboard:verify
 ```
 
-The root script rebuilds the core package first, installs the app from its committed lockfile, then runs app typecheck, server-rendered UI tests, boundary tests, and `next build`.
+The root script rebuilds the core package first, installs the app from its committed lockfile, then runs app typecheck, server-rendered UI tests, ticket-writer integration tests, boundary tests, and `next build`.
 
 For release hardening, run both:
 

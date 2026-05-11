@@ -34,6 +34,7 @@ html {
 body {
   min-height: 100vh;
   margin: 0;
+  overflow-x: hidden;
   color: var(--text);
   background: transparent;
   font-family:
@@ -55,16 +56,18 @@ select {
 .dashboard-root {
   min-height: 100vh;
   padding: 32px;
+  overflow-x: hidden;
 }
 
 .dashboard-frame {
   width: min(1720px, 100%);
   margin: 0 auto;
+  overflow: hidden;
 }
 
 .dashboard-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(360px, 0.6fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(min(100%, 360px), 0.6fr);
   gap: 20px;
   align-items: stretch;
   margin-bottom: 20px;
@@ -89,6 +92,7 @@ select {
   position: relative;
   overflow: hidden;
   padding: 30px;
+  min-width: 0;
 }
 
 .hero-panel::after {
@@ -118,6 +122,7 @@ select {
   font-size: clamp(2.2rem, 5vw, 5.4rem);
   line-height: 0.93;
   letter-spacing: -0.08em;
+  overflow-wrap: anywhere;
 }
 
 .hero-copy {
@@ -200,12 +205,18 @@ select {
 }
 
 .content-grid {
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.36fr);
+  grid-template-columns: minmax(0, 1fr) minmax(min(100%, 360px), 0.36fr);
   align-items: start;
+}
+
+.content-grid > *,
+.dashboard-hero > * {
+  min-width: 0;
 }
 
 .panel {
   padding: 22px;
+  min-width: 0;
 }
 
 .panel + .panel {
@@ -242,7 +253,7 @@ select {
 
 .board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 14px;
 }
 
@@ -250,6 +261,7 @@ select {
   min-height: 260px;
   border-radius: 24px;
   padding: 14px;
+  min-width: 0;
 }
 
 .lane-header {
@@ -286,6 +298,8 @@ select {
   font-size: 0.73rem;
   font-weight: 700;
   line-height: 1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .count-pill {
@@ -373,6 +387,7 @@ select {
   margin: 0;
   font-size: 0.98rem;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .issue-meta {
@@ -456,6 +471,73 @@ select {
   background: rgba(0, 0, 0, 0.22);
   color: var(--muted);
   font-size: 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ticket-form,
+.field {
+  display: grid;
+  gap: 10px;
+}
+
+.ticket-form {
+  gap: 14px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 11px 12px;
+  background: rgba(0, 0, 0, 0.24);
+  color: var(--text);
+  outline: none;
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: rgba(167, 139, 250, 0.76);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.16);
+}
+
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled,
+.primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
+}
+
+.primary-button {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, var(--accent), var(--info));
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.form-note {
+  margin: 0;
+  color: var(--subtle);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .setup-root {
@@ -511,6 +593,7 @@ select {
   .scope-grid,
   .metric-grid,
   .evidence-grid,
+  .field-row,
   .board {
     grid-template-columns: 1fr;
   }

@@ -209,6 +209,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           referenceOrchestrationE2eEvidenceMatrix as matrixFromRoot,
         } from 'harness-os';
         import {
+          openHarnessDatabase,
+          selectOne,
+        } from 'harness-os/dashboard-server';
+        import {
           buildWorktreeAllocation as buildFromSubpath,
           assertReferenceOrchestrationEvidencePacket,
           csqrLiteScorecardSchema,
@@ -234,6 +238,8 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           csqrCriteriaCount: csqrLiteDefaultCriteria.length,
           csqrSchemaType: typeof csqrLiteScorecardSchema.safeParse,
           dashboardSchemaType: typeof orchestrationDashboardViewModelSchema.safeParse,
+          dashboardServerOpenType: typeof openHarnessDatabase,
+          dashboardServerSelectOneType: typeof selectOne,
           matrixSameReference: matrixFromRoot === matrixFromSubpath,
           inspectorType: typeof inspectOrchestration,
           schemaType: typeof orchestrationPlanSchema.safeParse,
@@ -251,6 +257,8 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         csqrCriteriaCount: number;
         csqrSchemaType: string;
         dashboardSchemaType: string;
+        dashboardServerOpenType: string;
+        dashboardServerSelectOneType: string;
         matrixSameReference: boolean;
         inspectorType: string;
         schemaType: string;
@@ -266,6 +274,8 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         csqrCriteriaCount: 4,
         csqrSchemaType: 'function',
         dashboardSchemaType: 'function',
+        dashboardServerOpenType: 'function',
+        dashboardServerSelectOneType: 'function',
         matrixSameReference: true,
         inspectorType: 'function',
         schemaType: 'function',

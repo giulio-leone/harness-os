@@ -12,6 +12,7 @@ import type { DashboardPageState } from '../lib/dashboard-data';
 interface DashboardShellProps {
   viewModel: OrchestrationDashboardViewModel;
   dataSource?: 'live' | 'demo';
+  createIssueAction?: React.ComponentProps<'form'>['action'];
 }
 
 const HEALTH_FLAG_LABELS: Record<OrchestrationDashboardHealthFlag['kind'], string> = {
@@ -20,7 +21,11 @@ const HEALTH_FLAG_LABELS: Record<OrchestrationDashboardHealthFlag['kind'], strin
   expired_active_lease: 'Expired lease',
 };
 
-export function DashboardShell({ dataSource = 'live', viewModel }: DashboardShellProps) {
+export function DashboardShell({
+  createIssueAction,
+  dataSource = 'live',
+  viewModel,
+}: DashboardShellProps) {
   return (
     <main className="dashboard-root" data-testid="orchestration-dashboard">
       <div className="dashboard-frame">
@@ -48,6 +53,7 @@ export function DashboardShell({ dataSource = 'live', viewModel }: DashboardShel
             <LaneBoard lanes={viewModel.issueLanes} />
           </div>
           <aside aria-label="Evidence and health summaries">
+            <CreateTicketPanel action={createIssueAction} dataSource={dataSource} />
             <HealthPanel viewModel={viewModel} />
             <ActiveAgentsPanel agents={viewModel.activeAgents} />
             <EvidencePanel viewModel={viewModel} />
@@ -56,6 +62,81 @@ export function DashboardShell({ dataSource = 'live', viewModel }: DashboardShel
         </section>
       </div>
     </main>
+  );
+}
+
+function CreateTicketPanel({
+  action,
+  dataSource,
+}: {
+  action?: React.ComponentProps<'form'>['action'];
+  dataSource: 'live' | 'demo';
+}) {
+  const disabled = dataSource !== 'live' || action === undefined;
+
+  return (
+    <section className="panel create-ticket-panel" data-testid="create-ticket-panel" aria-labelledby="create-ticket-title">
+      <div className="panel-header">
+        <div>
+          <p className="eyebrow">Create ticket</p>
+          <h2 className="panel-title" id="create-ticket-title">
+            Add work to this campaign
+          </h2>
+          <p className="panel-copy">
+            Creates a real ready issue in the configured HarnessOS database.
+          </p>
+        </div>
+      </div>
+      <form action={action} className="ticket-form">
+        <label className="field">
+          <span className="label">Task</span>
+          <textarea
+            disabled={disabled}
+            maxLength={280}
+            minLength={4}
+            name="task"
+            placeholder="Describe the next concrete task"
+            required
+            rows={4}
+          />
+        </label>
+        <div className="field-row">
+          <label className="field">
+            <span className="label">Priority</span>
+            <select defaultValue="high" disabled={disabled} name="priority" required>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label className="field">
+            <span className="label">Size</span>
+            <select defaultValue="M" disabled={disabled} name="size" required>
+              <option value="S">S</option>
+              <option value="M">M</option>
+              <option value="L">L</option>
+              <option value="XL">XL</option>
+            </select>
+          </label>
+        </div>
+        <label className="field">
+          <span className="label">Next best action</span>
+          <input
+            disabled={disabled}
+            maxLength={360}
+            name="nextBestAction"
+            placeholder="Review scope and dispatch to the best available agent"
+          />
+        </label>
+        <button className="primary-button" disabled={disabled} type="submit">
+          Create ready ticket
+        </button>
+        {disabled ? (
+          <p className="form-note">Ticket creation is available only in live DB mode.</p>
+        ) : null}
+      </form>
+    </section>
   );
 }
 
