@@ -7,7 +7,7 @@ These payloads document the stable fully agentic orchestration handoff:
 3. compile tracker-style milestones and slices;
 4. inject the compiled queue with `plan_issues`;
 5. dispatch up to four `gpt-5-high` subagents into isolated worktree assignments;
-6. save deterministic evidence artifacts;
+6. save deterministic evidence artifacts, including CSQR-lite scorecards for completed runs;
 7. inspect evidence-backed orchestration health.
 
 Each JSON file is shaped as:

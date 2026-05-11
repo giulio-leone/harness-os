@@ -72,6 +72,11 @@ test('reference orchestration E2E evidence matrix builds deterministic run resul
     'e2e_report',
     'screenshot',
   ]);
+  assert.deepEqual(referenceOrchestrationE2eEvidenceMatrix.runScope, [
+    'typecheck_report',
+    'state_export',
+    'csqr_lite_scorecard',
+  ]);
   assert.equal(runResult.status, 'succeeded');
   assert.equal(runResult.assignmentResults.length, plan.dispatch.assignments.length);
   assertReferenceOrchestrationEvidencePacket({ plan, packet: runResult.evidencePacket });
@@ -406,7 +411,7 @@ test('MCP Symphony E2E flow persists reference evidence packet artifacts', async
       artifactRoot: '.harness/evidence/reference-e2e',
       commitSha: '50c7cf4',
     });
-    assert.equal(runResult.evidencePacket.artifacts.length, 8);
+    assert.equal(runResult.evidencePacket.artifacts.length, 9);
     assertReferenceOrchestrationEvidencePacket({
       plan: dispatched.plan,
       packet: runResult.evidencePacket,
@@ -447,6 +452,7 @@ test('MCP Symphony E2E flow persists reference evidence packet artifacts', async
     assert.equal(artifactCounts.get('e2e_report'), 2);
     assert.equal(artifactCounts.get('screenshot'), 2);
     assert.equal(artifactCounts.get('test_report'), 2);
+    assert.equal(artifactCounts.get('csqr_lite_scorecard'), 1);
     assert.deepEqual(inspected.summary.artifacts.references.evidencePacketIds, [
       runResult.evidencePacket.id,
     ]);

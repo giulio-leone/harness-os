@@ -175,8 +175,8 @@ Use this tool for the live execution lifecycle.
 | `begin` | claim or resume the next ready issue |
 | `begin_recovery` | explicitly take over a `needs_recovery` issue |
 | `checkpoint` | save progress, status, artifact ids, CSQR-lite scorecards, or mem0 summaries |
-| `close` | mark the issue done/failed, persist final CSQR-lite scorecards, and release the lease |
-| `advance` | close the current issue and atomically claim the next ready one |
+| `close` | mark the issue done/failed, enforce CSQR-lite scorecards for `done`, and release the lease |
+| `advance` | close the current issue with the same completion gate and atomically claim the next ready one |
 | `heartbeat` | extend lease freshness during long-running work |
 
 Example:
@@ -189,6 +189,8 @@ Example:
 ```
 
 CSQR-lite scorecards are first-class checkpoint evidence. Pass them through `input.csqrLiteScorecards` for `checkpoint`, or `closeInput.csqrLiteScorecards` for `close`/`advance`; HarnessOS stores each scorecard as a `csqr_lite_scorecard` artifact, appends the generated artifact id to the checkpoint payload, and emits `csqr_lite_scorecards_registered`.
+
+When `taskStatus` is `done`, `close` and `advance` require at least one run-scoped CSQR-lite scorecard for the active `runId`, and every applicable scorecard must meet `max(8.0, scorecard.targetScore)`. Passing completion writes `csqr_lite_completion_gate_evaluated`; missing or below-threshold scorecards reject the transition before the issue, run, lease, checkpoint, or artifact rows are mutated.
 
 Close example with a run-scoped scorecard:
 

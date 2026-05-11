@@ -10,10 +10,17 @@ import {
   type OrchestrationRunResult,
   type OrchestrationWorktree,
 } from '../contracts/orchestration-contracts.js';
+import { evaluateCsqrLiteCompletionGate } from '../contracts/csqr-lite-completion-gate.js';
+import { buildCsqrLiteScorecard } from './csqr-lite-scorecard.js';
 
-const referenceRunEvidenceKinds = [
+const referenceStaticRunEvidenceKinds = [
   'typecheck_report',
   'state_export',
+] as const satisfies readonly OrchestrationEvidenceArtifactKind[];
+
+const referenceRunEvidenceKinds = [
+  ...referenceStaticRunEvidenceKinds,
+  'csqr_lite_scorecard',
 ] as const satisfies readonly OrchestrationEvidenceArtifactKind[];
 
 const referenceAssignmentEvidenceKinds = [
@@ -34,7 +41,12 @@ export const referenceOrchestrationE2eEvidenceMatrix = {
     {
       id: 'reference-static-gate',
       name: 'Reference static and state evidence',
-      requiredArtifactKinds: referenceRunEvidenceKinds,
+      requiredArtifactKinds: referenceStaticRunEvidenceKinds,
+    },
+    {
+      id: 'reference-csqr-lite-completion-gate',
+      name: 'Reference CSQR-lite completion threshold',
+      requiredArtifactKinds: ['csqr_lite_scorecard'],
     },
     {
       id: 'reference-assignment-e2e-gate',
@@ -49,6 +61,7 @@ export interface BuildReferenceOrchestrationEvidencePacketInput {
   createdAt: string;
   artifactRoot?: string;
   packetId?: string;
+  runId?: string;
   summary?: string;
   commitSha?: string;
   metadata?: Record<string, string>;
@@ -72,9 +85,10 @@ export function buildReferenceOrchestrationEvidencePacket(
 ): OrchestrationEvidencePacket {
   const artifactRoot = input.artifactRoot ?? '.harness/evidence/reference';
   const worktreeById = indexWorktrees(input.plan);
-  const runArtifactIds = referenceRunEvidenceKinds.map((kind) =>
+  const staticRunArtifactIds = referenceStaticRunEvidenceKinds.map((kind) =>
     buildRunArtifactId(kind),
   );
+  const csqrLiteScorecardArtifactId = buildRunArtifactId('csqr_lite_scorecard');
   const assignmentArtifacts = input.plan.dispatch.assignments.flatMap((assignment) =>
     buildAssignmentArtifacts({
       assignment,
@@ -85,6 +99,8 @@ export function buildReferenceOrchestrationEvidencePacket(
   const runArtifacts = referenceRunEvidenceKinds.map((kind) =>
     buildRunArtifact({
       kind,
+      plan: input.plan,
+      runId: input.runId ?? 'reference-run',
       artifactRoot,
       createdAt: input.createdAt,
     }),
@@ -100,9 +116,19 @@ export function buildReferenceOrchestrationEvidencePacket(
         id: 'reference-static-gate',
         name: 'Reference static and state evidence',
         status: 'passed',
-        requiredEvidenceArtifactIds: runArtifactIds,
-        providedEvidenceArtifactIds: runArtifactIds,
+        requiredEvidenceArtifactIds: staticRunArtifactIds,
+        providedEvidenceArtifactIds: staticRunArtifactIds,
         command: 'npm run typecheck && harness_inspector export',
+        exitCode: 0,
+        completedAt: input.createdAt,
+      },
+      {
+        id: 'reference-csqr-lite-completion-gate',
+        name: 'Reference CSQR-lite completion threshold',
+        status: 'passed',
+        requiredEvidenceArtifactIds: [csqrLiteScorecardArtifactId],
+        providedEvidenceArtifactIds: [csqrLiteScorecardArtifactId],
+        command: 'harness_session close --csqr-lite-completion-gate',
         exitCode: 0,
         completedAt: input.createdAt,
       },
@@ -189,6 +215,8 @@ export function assertReferenceOrchestrationEvidencePacket(
     }
   }
 
+  assertReferenceCsqrLiteCompletionGate(packet);
+
   for (const assignment of input.plan.dispatch.assignments) {
     assertCodebaseRefForAssignment(packet, assignment);
 
@@ -225,10 +253,21 @@ export function getReferenceAssignmentEvidenceArtifactIds(
 
 function buildRunArtifact(input: {
   kind: ReferenceRunEvidenceKind;
+  plan: OrchestrationPlan;
+  runId: string;
   artifactRoot: string;
   createdAt: string;
 }): OrchestrationEvidenceArtifact {
   const suffix = artifactKindSuffix(input.kind);
+  const scorecard =
+    input.kind === 'csqr_lite_scorecard'
+      ? buildReferenceCsqrLiteScorecard({
+          plan: input.plan,
+          runId: input.runId,
+          createdAt: input.createdAt,
+        })
+      : undefined;
+
   return {
     id: buildRunArtifactId(input.kind),
     kind: input.kind,
@@ -238,8 +277,64 @@ function buildRunArtifact(input: {
     metadata: {
       matrixScope: 'run',
       evidenceKind: input.kind,
+      ...(scorecard !== undefined
+        ? {
+            csqrLiteScorecardId: scorecard.id,
+            scorecardJson: JSON.stringify(scorecard),
+          }
+        : {}),
     },
   };
+}
+
+function buildReferenceCsqrLiteScorecard(input: {
+  plan: OrchestrationPlan;
+  runId: string;
+  createdAt: string;
+}) {
+  const staticRunArtifactIds = referenceStaticRunEvidenceKinds.map((kind) =>
+    buildRunArtifactId(kind),
+  );
+  const assignmentEvidenceArtifactIds = input.plan.dispatch.assignments.flatMap(
+    (assignment) => getReferenceAssignmentEvidenceArtifactIds(assignment.id),
+  );
+
+  return buildCsqrLiteScorecard({
+    id: 'reference-csqr-lite-scorecard',
+    scope: 'run',
+    runId: input.runId,
+    createdAt: input.createdAt,
+    metadata: {
+      matrixScope: 'run',
+      source: 'reference-orchestration-e2e',
+    },
+    scores: [
+      {
+        criterionId: 'correctness',
+        score: 9,
+        notes: 'Reference orchestration run satisfies the planned dispatch and inspection flow.',
+        evidenceArtifactIds: staticRunArtifactIds,
+      },
+      {
+        criterionId: 'security',
+        score: 8,
+        notes: 'Reference gates use persisted artifacts without secrets or unsafe fallback state.',
+        evidenceArtifactIds: staticRunArtifactIds,
+      },
+      {
+        criterionId: 'quality',
+        score: 8,
+        notes: 'Reference evidence remains deterministic, typed, and schema-v5 compatible.',
+        evidenceArtifactIds: staticRunArtifactIds,
+      },
+      {
+        criterionId: 'runtime-evidence',
+        score: 10,
+        notes: 'Assignment test, E2E, and screenshot artifacts prove every dispatched worker path.',
+        evidenceArtifactIds: assignmentEvidenceArtifactIds,
+      },
+    ],
+  });
 }
 
 function buildAssignmentArtifacts(input: {
@@ -342,6 +437,34 @@ function findRunArtifact(
   return artifact;
 }
 
+function assertReferenceCsqrLiteCompletionGate(
+  packet: OrchestrationEvidencePacket,
+): void {
+  const artifact = findRunArtifact(packet, 'csqr_lite_scorecard');
+  const scorecardJson = artifact?.metadata?.['scorecardJson'];
+
+  if (artifact === undefined || scorecardJson === undefined) {
+    throw new Error(
+      `Reference evidence packet "${packet.id}" is missing a persisted CSQR-lite scorecard.`,
+    );
+  }
+
+  const result = evaluateCsqrLiteCompletionGate({
+    requiredScope: 'run',
+    scorecards: [
+      {
+        artifactId: artifact.id,
+        path: artifact.path,
+        scorecard: JSON.parse(scorecardJson) as unknown,
+      },
+    ],
+  });
+
+  if (result.status !== 'passed') {
+    throw new Error(result.message);
+  }
+}
+
 function buildRunArtifactId(kind: ReferenceRunEvidenceKind): string {
   return `run-${artifactKindSuffix(kind)}`;
 }
@@ -361,6 +484,8 @@ function artifactKindSuffix(
       return 'typecheck-report';
     case 'state_export':
       return 'state-export';
+    case 'csqr_lite_scorecard':
+      return 'csqr-lite-scorecard';
     case 'test_report':
       return 'test-report';
     case 'e2e_report':
@@ -376,8 +501,9 @@ function artifactExtension(
   switch (kind) {
     case 'typecheck_report':
       return 'log';
+    case 'csqr_lite_scorecard':
     case 'screenshot':
-      return 'png';
+      return kind === 'screenshot' ? 'png' : 'json';
     case 'state_export':
     case 'test_report':
     case 'e2e_report':

@@ -9,7 +9,7 @@
     "metadata": {
       "evidencePacketId": "reference-orchestration-e2e-packet",
       "matrixContractVersion": "1.0.0",
-      "runScope": "typecheck_report,state_export",
+      "runScope": "typecheck_report,state_export,csqr_lite_scorecard",
       "assignmentScope": "test_report,e2e_report,screenshot"
     }
   }

@@ -23,6 +23,7 @@ import {
   SessionLifecycleAdapter,
   SessionLifecycleMcpServer,
   SessionOrchestrator,
+  buildCsqrLiteScorecard,
   openHarnessDatabase,
   runStatement,
   selectAll,
@@ -281,6 +282,56 @@ const beginArgs = (dbPath: string, extras?: Record<string, unknown>) => ({
   ...TEST_HOST_ROUTING_CONTEXT,
   ...extras,
 });
+
+function buildMcpCsqrLiteScorecardEvidence(input: {
+  id: string;
+  runId: string;
+  evidenceArtifactId: string;
+}) {
+  const scorecard = buildCsqrLiteScorecard({
+    id: input.id,
+    scope: 'run',
+    runId: input.runId,
+    targetScore: 8,
+    createdAt: '2026-05-10T20:00:00.000Z',
+    metadata: {
+      source: 'mega-tools-test',
+    },
+    scores: [
+      {
+        criterionId: 'correctness',
+        score: 8,
+        notes: 'MCP lifecycle state was persisted.',
+        evidenceArtifactIds: [input.evidenceArtifactId],
+      },
+      {
+        criterionId: 'security',
+        score: 8,
+        notes: 'No unsafe MCP boundary behavior was introduced.',
+        evidenceArtifactIds: [input.evidenceArtifactId],
+      },
+      {
+        criterionId: 'quality',
+        score: 8,
+        notes: 'MCP lifecycle contract remains deterministic.',
+        evidenceArtifactIds: [input.evidenceArtifactId],
+      },
+      {
+        criterionId: 'runtime-evidence',
+        score: 8,
+        notes: 'Database state verifies the completed lifecycle.',
+        evidenceArtifactIds: [input.evidenceArtifactId],
+      },
+    ],
+  });
+
+  return [
+    {
+      path: `/evidence/csqr/${input.runId}.json`,
+      scorecard,
+    },
+  ];
+}
 
 // ─── 1. harness_inspector ───────────────────────────────────────────
 
@@ -1273,6 +1324,12 @@ test('harness_session: full begin → checkpoint → close lifecycle via mega-to
         summary: 'Completed the task.',
         taskStatus: 'done',
         nextStep: 'Nothing more.',
+        artifactIds: ['artifact-lifecycle-close'],
+        csqrLiteScorecards: buildMcpCsqrLiteScorecardEvidence({
+          id: 'scorecard-lifecycle-close',
+          runId: String(started.context.runId),
+          evidenceArtifactId: 'artifact-lifecycle-close',
+        }),
       },
     })) as Record<string, unknown>;
     assert.ok(closed._meta, 'close should return _meta');
@@ -1410,7 +1467,7 @@ test('harness_session: advance atomically closes current and begins next', async
     const started = (await tool.handler({
       action: 'begin',
       ...beginArgs(dbPath, { preferredIssueId: 'issue-first' }),
-    })) as { sessionToken: string };
+    })) as { sessionToken: string; context: Record<string, unknown> };
 
     // Advance → close first, promote, begin second
     const advanced = (await tool.handler({
@@ -1421,6 +1478,12 @@ test('harness_session: advance atomically closes current and begins next', async
         summary: 'First task complete.',
         taskStatus: 'done',
         nextStep: 'Auto-advance.',
+        artifactIds: ['artifact-advance-close'],
+        csqrLiteScorecards: buildMcpCsqrLiteScorecardEvidence({
+          id: 'scorecard-advance-close',
+          runId: String(started.context.runId),
+          evidenceArtifactId: 'artifact-advance-close',
+        }),
       },
     })) as { sessionToken: string; context: Record<string, unknown> };
 

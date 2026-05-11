@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  buildCsqrLiteScorecard,
   orchestrationEvidencePacketSchema,
   orchestrationPlanSchema,
   orchestrationRunResultSchema,
@@ -313,6 +314,55 @@ test('orchestrationRunResultSchema rejects extra assignment-scoped evidence from
   );
 });
 
+test('orchestrationRunResultSchema rejects succeeded runs without a run-scoped CSQR-lite scorecard', () => {
+  const result = createValidRunResult();
+  result.evidencePacket.artifacts = result.evidencePacket.artifacts.filter(
+    (artifact) => artifact.kind !== 'csqr_lite_scorecard',
+  );
+  result.evidencePacket.gates = result.evidencePacket.gates.filter(
+    (gate) => gate.id !== 'csqr-lite-gate',
+  );
+
+  assert.throws(
+    () => orchestrationRunResultSchema.parse(result),
+    /requires at least one run-scoped scorecard/,
+  );
+});
+
+test('orchestrationRunResultSchema rejects succeeded runs with below-threshold CSQR-lite scorecards', () => {
+  const result = createValidRunResult();
+  const scorecardArtifact = result.evidencePacket.artifacts.find(
+    (artifact) => artifact.kind === 'csqr_lite_scorecard',
+  );
+
+  assert.ok(scorecardArtifact);
+  scorecardArtifact.metadata = {
+    scorecardJson: JSON.stringify(createRunCsqrLiteScorecard(6)),
+  };
+
+  assert.throws(
+    () => orchestrationRunResultSchema.parse(result),
+    /below threshold/,
+  );
+});
+
+test('orchestrationRunResultSchema rejects succeeded runs with CSQR-lite scorecards from another run', () => {
+  const result = createValidRunResult();
+  const scorecardArtifact = result.evidencePacket.artifacts.find(
+    (artifact) => artifact.kind === 'csqr_lite_scorecard',
+  );
+
+  assert.ok(scorecardArtifact);
+  scorecardArtifact.metadata = {
+    scorecardJson: JSON.stringify(createRunCsqrLiteScorecard(8, 'run-other')),
+  };
+
+  assert.throws(
+    () => orchestrationRunResultSchema.parse(result),
+    /runId must match orchestration runId/,
+  );
+});
+
 test('orchestrationSubagentSchema remains strict at the public boundary', () => {
   assert.throws(
     () =>
@@ -409,6 +459,18 @@ function createValidEvidencePacket(): OrchestrationEvidencePacket {
         worktreeId: 'worktree-3',
         createdAt: timestamp,
       },
+      {
+        id: 'csqr-lite-scorecard',
+        kind: 'csqr_lite_scorecard',
+        scope: 'run',
+        path: '.harness/runtime/M1-I1/csqr-lite-scorecard.json',
+        producedBySubagentId: 'agent-evidence',
+        worktreeId: 'worktree-3',
+        createdAt: timestamp,
+        metadata: {
+          scorecardJson: JSON.stringify(createRunCsqrLiteScorecard(8)),
+        },
+      },
     ],
     gates: [
       {
@@ -431,6 +493,16 @@ function createValidEvidencePacket(): OrchestrationEvidencePacket {
         exitCode: 0,
         completedAt: timestamp,
       },
+      {
+        id: 'csqr-lite-gate',
+        name: 'CSQR-lite completion threshold',
+        status: 'passed',
+        requiredEvidenceArtifactIds: ['csqr-lite-scorecard'],
+        providedEvidenceArtifactIds: ['csqr-lite-scorecard'],
+        command: 'harness_session close --csqr-lite-completion-gate',
+        exitCode: 0,
+        completedAt: timestamp,
+      },
     ],
     codebaseRefs: [
       {
@@ -445,6 +517,45 @@ function createValidEvidencePacket(): OrchestrationEvidencePacket {
     ],
     createdAt: timestamp,
   };
+}
+
+function createRunCsqrLiteScorecard(score: number, runId = 'run-M1-I1') {
+  return buildCsqrLiteScorecard({
+    id: 'scorecard-run-M1-I1',
+    scope: 'run',
+    runId,
+    targetScore: 8,
+    createdAt: timestamp,
+    metadata: {
+      source: 'orchestration-contracts-test',
+    },
+    scores: [
+      {
+        criterionId: 'correctness',
+        score,
+        notes: 'The planned behavior is covered by run-level evidence.',
+        evidenceArtifactIds: ['typecheck-report'],
+      },
+      {
+        criterionId: 'security',
+        score,
+        notes: 'Security-sensitive regressions are checked by evidence gates.',
+        evidenceArtifactIds: ['typecheck-report'],
+      },
+      {
+        criterionId: 'quality',
+        score,
+        notes: 'Code quality remains covered by automated checks.',
+        evidenceArtifactIds: ['typecheck-report'],
+      },
+      {
+        criterionId: 'runtime-evidence',
+        score,
+        notes: 'E2E and screenshot artifacts prove runtime behavior.',
+        evidenceArtifactIds: ['e2e-report', 'screenshot-summary'],
+      },
+    ],
+  });
 }
 
 function createValidRunResult(): OrchestrationRunResult {
