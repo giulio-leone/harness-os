@@ -109,10 +109,16 @@ HarnessOS does not encode a human-review state into the orchestration runtime. C
 
 The runtime therefore supports a no-human-checkpoint mode while keeping quality gates explicit. It does not weaken tests, schema validation, or conflict checks; it only changes who supplies the approval signal from a human operator to deterministic evidence.
 
+### Reference E2E evidence matrix
+
+HarnessOS now ships a deterministic reference matrix for automated orchestration evidence. It is intentionally a reference fixture and assertion helper, not a new database table, schema version, or long-running executor.
+
+The matrix requires run-scoped `typecheck_report` and `state_export` artifacts, plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every planned assignment. Reference packet assertions verify that those assignment artifacts are produced by the planned subagent, belong to the planned worktree, are covered by passed gates, and have codebase reference coverage. This keeps the no-human-review path auditable while leaving actual shell commands, screenshots, and CI execution host-owned.
+
 ## Current v1 limits
 
 - The dispatcher assigns work and claims sessions; it is not yet a long-running daemon.
 - Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
-- Evidence packet validation exists, but the full E2E/CI gate runner is scheduled for later hardening milestones.
+- Evidence packet validation and deterministic reference E2E assertions exist; the full E2E/CI gate runner remains host-owned until later hardening milestones.
 - Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.
 - Dashboard and CSQR-lite scorecards build on this evidence substrate rather than changing the schema.
