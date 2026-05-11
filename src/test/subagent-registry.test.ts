@@ -91,6 +91,46 @@ test('resolveAssignmentSubagent routes from assignment capability requirements',
   assert.equal(selected.id, 'agent-b');
 });
 
+test('resolveSubagent rejects host-filtered requests with no compatible subagent', () => {
+  const registry = createSubagentRegistry({
+    subagents: [
+      createSubagent('agent-a', ['build'], 'copilot'),
+      createSubagent('agent-b', ['build'], 'cursor'),
+    ],
+  });
+
+  assert.throws(
+    () =>
+      resolveSubagent(registry, {
+        requiredCapabilityIds: ['build'],
+        host: 'gemini',
+      }),
+    (error: unknown) =>
+      error instanceof SubagentRegistryError &&
+      error.code === 'NO_COMPATIBLE_SUBAGENT',
+  );
+});
+
+test('dispatch policy workload conflicts are explicit compatibility failures', () => {
+  const subagent = {
+    ...createSubagent('agent-a', ['build']),
+    dispatch: { workloadClass: 'typescript' },
+  };
+
+  const compatibility = checkSubagentCompatibility(subagent, {
+    dispatch: { workloadClass: 'python' },
+    hostCapabilities: {
+      workloadClasses: ['python', 'typescript'],
+      capabilities: [],
+    },
+  });
+
+  assert.equal(compatibility.compatible, false);
+  assert.equal(compatibility.dispatchConflict, true);
+  assert.deepEqual(compatibility.missingWorkloadClasses, []);
+  assert.deepEqual(compatibility.missingHostCapabilities, []);
+});
+
 test('host capability mismatch returns typed no-compatible error', () => {
   const registry = createSubagentRegistry({
     subagents: [createSubagent('agent-a', ['build'])],
@@ -182,11 +222,12 @@ test('custom model profile still requires model name via orchestration contract'
 function createSubagent(
   id: string,
   capabilities: readonly string[],
+  host = 'copilot',
 ): OrchestrationSubagent {
   return {
     id,
     role: 'worker',
-    host: 'copilot',
+    host,
     modelProfile: 'gpt-5-high',
     capabilities: [...capabilities],
     maxConcurrency: 1,

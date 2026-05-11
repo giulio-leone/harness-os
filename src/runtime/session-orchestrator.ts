@@ -491,6 +491,20 @@ export class SessionOrchestrator {
       recoveryIssue.id,
     );
 
+    if (input.orchestrationConflictGuard !== undefined) {
+      assertNoOrchestrationConflicts(connection, {
+        projectId: input.projectId,
+        campaignId: input.campaignId,
+        excludeRunId: runId,
+        guard: {
+          worktreePath: input.orchestrationConflictGuard.worktreePath,
+          worktreeBranch: input.orchestrationConflictGuard.worktreeBranch,
+          candidateFilePaths:
+            input.orchestrationConflictGuard.candidateFilePaths ?? [],
+        },
+      });
+    }
+
     for (const lease of recoverableLeases) {
       markLeaseRecovered(connection, lease.id, now);
     }

@@ -952,6 +952,30 @@ test('beginRecoverySession replaces stale leases with a fresh recovery lease', a
         'SELECT title FROM checkpoints WHERE run_id = ? ORDER BY created_at ASC',
         ['run-recovery'],
       );
+      const artifacts = selectAll<{ id: string; metadata_json: string }>(
+        inspected.connection,
+        `SELECT id, metadata_json
+         FROM artifacts
+         WHERE issue_id = ?
+         ORDER BY id ASC`,
+        ['issue-recovery'],
+      );
+      const recoveryClaimCheckpoint = selectOne<{ artifact_ids_json: string }>(
+        inspected.connection,
+        `SELECT artifact_ids_json
+         FROM checkpoints
+         WHERE run_id = ? AND title = ?
+         LIMIT 1`,
+        ['run-recovery', 'recovery_claim'],
+      );
+      const registeredEvent = selectOne<{ payload: string }>(
+        inspected.connection,
+        `SELECT payload
+         FROM events
+         WHERE run_id = ? AND kind = ?
+         LIMIT 1`,
+        ['run-recovery', 'session_artifacts_registered'],
+      );
 
       assert.equal(recoverySession.claimMode, 'recovery');
       assert.equal(issue?.status, 'done');
@@ -963,6 +987,317 @@ test('beginRecoverySession replaces stale leases with a fresh recovery lease', a
         'recovery_claim',
         'close',
       ]);
+      assert.deepEqual(
+        parseJsonArray(recoveryClaimCheckpoint?.artifact_ids_json).sort(),
+        artifacts.map((artifact) => artifact.id),
+      );
+      assert.deepEqual(
+        parseJsonArray(parseJsonObject(registeredEvent?.payload)['artifactIds']).sort(),
+        artifacts.map((artifact) => artifact.id),
+      );
+      assert.equal(
+        artifacts.every((artifact) => {
+          const metadata = parseJsonObject(artifact.metadata_json);
+          return (
+            metadata['claimMode'] === 'recovery' &&
+            metadata['status'] === 'released' &&
+            metadata['finalTaskStatus'] === 'done'
+          );
+        }),
+        true,
+      );
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('close releases session artifacts even when the lease is intentionally retained', async () => {
+  const tempDir = createTempDir('release-artifacts-retain-lease-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-retain-lease',
+      task: 'Retain the lease but release session-owned artifacts',
+      status: 'ready',
+      nextBestAction: 'Close while retaining the lease for caller cleanup.',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const session = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-retain-lease',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: [
+        {
+          kind: 'orchestration_worktree',
+          path: '/workspace/worktrees/issue-retain-lease',
+        },
+      ],
+      mem0Enabled: false,
+      agentId: 'agent-retain-lease',
+      preferredIssueId: 'issue-retain-lease',
+    }));
+
+    await orchestrator.close(session, {
+      title: 'blocked',
+      summary: 'Blocked after preserving the active lease.',
+      taskStatus: 'blocked',
+      nextStep: 'Caller will clean up the lease.',
+      blockedReason: 'external_cleanup_required',
+      releaseLease: false,
+      artifactIds: session.artifacts
+        .map((artifact) => artifact.id)
+        .filter((artifactId): artifactId is string => artifactId !== undefined),
+    });
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const sessionArtifactId = session.artifacts[0]?.id;
+      assert.ok(sessionArtifactId);
+
+      const lease = selectOne<{ status: string; released_at: string | null }>(
+        inspected.connection,
+        'SELECT status, released_at FROM leases WHERE id = ?',
+        [session.leaseId],
+      );
+      const artifact = selectOne<{ metadata_json: string }>(
+        inspected.connection,
+        'SELECT metadata_json FROM artifacts WHERE id = ?',
+        [sessionArtifactId],
+      );
+      const closedEvent = selectOne<{ payload: string }>(
+        inspected.connection,
+        `SELECT payload
+         FROM events
+         WHERE run_id = ? AND kind = ?
+         LIMIT 1`,
+        ['run-retain-lease', 'session_closed'],
+      );
+
+      assert.equal(lease?.status, 'active');
+      assert.equal(lease?.released_at, null);
+      assert.equal(parseJsonObject(artifact?.metadata_json)['status'], 'released');
+      assert.equal(
+        parseJsonObject(artifact?.metadata_json)['finalTaskStatus'],
+        'blocked',
+      );
+      assert.equal(parseJsonObject(closedEvent?.payload)['releasedLease'], false);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('advanceSession releases prior artifacts and hands off fresh artifacts to the next issue', async () => {
+  const tempDir = createTempDir('advance-artifact-handoff-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-advance-first',
+      task: 'Complete the first advance issue',
+      status: 'ready',
+      nextBestAction: 'Advance to the follow-up issue.',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-advance-next',
+      task: 'Receive the advanced session',
+      status: 'pending',
+      dependsOn: ['issue-advance-first'],
+      nextBestAction: 'Continue with fresh artifacts.',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const firstSession = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-advance-first',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: [
+        {
+          kind: 'orchestration_worktree',
+          path: '/workspace/worktrees/issue-advance-first',
+        },
+      ],
+      mem0Enabled: false,
+      agentId: 'agent-advance',
+      preferredIssueId: 'issue-advance-first',
+    }));
+    const advanced = await orchestrator.advanceSession(
+      firstSession,
+      {
+        title: 'close',
+        summary: 'First issue completed and ready to hand off.',
+        taskStatus: 'done',
+        nextStep: 'Claim the next issue.',
+        artifactIds: firstSession.artifacts
+          .map((artifact) => artifact.id)
+          .filter((artifactId): artifactId is string => artifactId !== undefined),
+      },
+      withHostRoutingContext({
+        sessionId: 'run-advance-next',
+        dbPath,
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        artifacts: [
+          {
+            kind: 'orchestration_worktree',
+            path: '/workspace/worktrees/issue-advance-next',
+          },
+        ],
+        mem0Enabled: false,
+        agentId: 'agent-advance',
+        preferredIssueId: 'issue-advance-next',
+      }),
+    );
+
+    assert.equal(advanced.advanced, true);
+    assert.equal(advanced.nextContext?.issueId, 'issue-advance-next');
+    assert.notEqual(
+      advanced.nextContext?.artifacts[0]?.id,
+      firstSession.artifacts[0]?.id,
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const firstArtifactId = firstSession.artifacts[0]?.id;
+      const nextArtifactId = advanced.nextContext?.artifacts[0]?.id;
+      assert.ok(firstArtifactId);
+      assert.ok(nextArtifactId);
+
+      const firstArtifact = selectOne<{ metadata_json: string }>(
+        inspected.connection,
+        'SELECT metadata_json FROM artifacts WHERE id = ?',
+        [firstArtifactId],
+      );
+      const nextArtifact = selectOne<{ metadata_json: string }>(
+        inspected.connection,
+        'SELECT metadata_json FROM artifacts WHERE id = ?',
+        [nextArtifactId],
+      );
+
+      assert.equal(parseJsonObject(firstArtifact?.metadata_json)['status'], 'released');
+      assert.equal(parseJsonObject(nextArtifact?.metadata_json)['status'], 'active');
+      assert.equal(parseJsonObject(nextArtifact?.metadata_json)['runId'], 'run-advance-next');
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('beginRecoverySession applies orchestration conflict guards transactionally', async () => {
+  const tempDir = createTempDir('recovery-conflict-guard-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-active-conflict',
+      task: 'Hold an active conflicting worktree',
+      status: 'in_progress',
+      nextBestAction: 'Keep the active lock.',
+    });
+    insertIssue({
+      dbPath,
+      issueId: 'issue-recovery-conflict',
+      task: 'Recover without stealing an active worktree',
+      status: 'needs_recovery',
+      nextBestAction: 'Recover only if the worktree is isolated.',
+    });
+    seedLease(
+      dbPath,
+      'lease-recovery-conflict-old',
+      'issue-recovery-conflict',
+      'needs_recovery',
+    );
+    insertArtifact({
+      dbPath,
+      artifactId: 'artifact-active-conflict',
+      issueId: 'issue-active-conflict',
+      kind: 'orchestration_worktree',
+      path: '/workspace/worktrees/shared',
+      metadata: { status: 'active' },
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter: new InMemoryMem0Adapter(),
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+
+    await assert.rejects(
+      () =>
+        orchestrator.beginRecoverySession(withHostRoutingContext({
+          sessionId: 'run-recovery-conflict',
+          dbPath,
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          artifacts: [
+            {
+              kind: 'orchestration_worktree',
+              path: '/workspace/worktrees/shared',
+            },
+          ],
+          mem0Enabled: false,
+          agentId: 'agent-recovery-conflict',
+          preferredIssueId: 'issue-recovery-conflict',
+          recoverySummary: 'Attempt recovery with a conflicting worktree.',
+          orchestrationConflictGuard: {
+            worktreePath: '/workspace/worktrees/shared',
+            worktreeBranch: 'feat/shared',
+            candidateFilePaths: [],
+          },
+        })),
+      /conflicts with active artifact:artifact-active-conflict/,
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const run = selectOne<{ id: string }>(
+        inspected.connection,
+        'SELECT id FROM runs WHERE id = ?',
+        ['run-recovery-conflict'],
+      );
+      const issue = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-recovery-conflict'],
+      );
+      const lease = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM leases WHERE id = ?',
+        ['lease-recovery-conflict-old'],
+      );
+      const recoveryArtifacts = selectAll<{ id: string }>(
+        inspected.connection,
+        'SELECT id FROM artifacts WHERE issue_id = ?',
+        ['issue-recovery-conflict'],
+      );
+
+      assert.equal(run, null);
+      assert.equal(issue?.status, 'needs_recovery');
+      assert.equal(lease?.status, 'needs_recovery');
+      assert.deepEqual(recoveryArtifacts, []);
     } finally {
       inspected.close();
     }
@@ -3282,6 +3617,41 @@ function seedCheckpoint(
         'Inspect stale work.',
         '[]',
         createdAt,
+      ],
+    );
+  } finally {
+    database.close();
+  }
+}
+
+function insertArtifact(input: {
+  dbPath: string;
+  artifactId: string;
+  issueId: string;
+  kind: string;
+  path: string;
+  metadata: Record<string, unknown>;
+}): void {
+  const database = openHarnessDatabase({ dbPath: input.dbPath });
+
+  try {
+    runStatement(
+      database.connection,
+      `INSERT INTO artifacts (
+         id, workspace_id, project_id, campaign_id, issue_id, kind, path,
+         metadata_json, created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.artifactId,
+        'workspace-1',
+        'project-1',
+        null,
+        input.issueId,
+        input.kind,
+        input.path,
+        JSON.stringify(input.metadata),
+        '2026-03-21T00:00:00.000Z',
       ],
     );
   } finally {

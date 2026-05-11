@@ -126,6 +126,107 @@ test('orchestration inspector groups artifacts and surfaces orchestration refere
   }
 });
 
+test('orchestration inspector scopes issues artifacts leases and events by campaign and issue', () => {
+  const tempDir = createLocalTempDir('scoped');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedCampaign(dbPath, 'campaign-a');
+    seedCampaign(dbPath, 'campaign-b');
+    seedIssue(dbPath, {
+      issueId: 'issue-a',
+      status: 'in_progress',
+      campaignId: 'campaign-a',
+    });
+    seedIssue(dbPath, {
+      issueId: 'issue-b',
+      status: 'in_progress',
+      campaignId: 'campaign-b',
+    });
+    seedLease(dbPath, {
+      leaseId: 'lease-a',
+      issueId: 'issue-a',
+      agentId: 'agent-a',
+      expiresAt: '2999-01-01T00:00:00.000Z',
+      campaignId: 'campaign-a',
+    });
+    seedLease(dbPath, {
+      leaseId: 'lease-b',
+      issueId: 'issue-b',
+      agentId: 'agent-b',
+      expiresAt: '2999-01-01T00:00:00.000Z',
+      campaignId: 'campaign-b',
+    });
+    seedArtifact(dbPath, {
+      artifactId: 'artifact-a',
+      issueId: 'issue-a',
+      campaignId: 'campaign-a',
+      kind: 'evidence_packet',
+      path: 'evidence/a.json',
+      metadata: { evidencePacketId: 'packet-a' },
+    });
+    seedArtifact(dbPath, {
+      artifactId: 'artifact-b',
+      issueId: 'issue-b',
+      campaignId: 'campaign-b',
+      kind: 'evidence_packet',
+      path: 'evidence/b.json',
+      metadata: { evidencePacketId: 'packet-b' },
+    });
+    seedRunAndEvent(dbPath, {
+      runId: 'run-a-1',
+      issueId: 'issue-a',
+      campaignId: 'campaign-a',
+      eventId: 'event-a-1',
+      kind: 'orchestration_status',
+      payload: { phase: 'first' },
+      createdAt: '2026-03-21T00:01:00.000Z',
+    });
+    seedRunAndEvent(dbPath, {
+      runId: 'run-a-2',
+      issueId: 'issue-a',
+      campaignId: 'campaign-a',
+      eventId: 'event-a-2',
+      kind: 'orchestration_status',
+      payload: { phase: 'second' },
+      createdAt: '2026-03-21T00:02:00.000Z',
+    });
+    seedRunAndEvent(dbPath, {
+      runId: 'run-b',
+      issueId: 'issue-b',
+      campaignId: 'campaign-b',
+      eventId: 'event-b',
+      kind: 'orchestration_status',
+      payload: { phase: 'other-campaign' },
+      createdAt: '2026-03-21T00:03:00.000Z',
+    });
+
+    const summary = inspectOrchestration({
+      dbPath,
+      projectId: 'project-1',
+      campaignId: 'campaign-a',
+      issueId: 'issue-a',
+      eventLimit: 1,
+    });
+
+    assert.equal(summary.scope.campaignId, 'campaign-a');
+    assert.equal(summary.scope.issueId, 'issue-a');
+    assert.deepEqual(summary.issues.items.map((issue) => issue.id), ['issue-a']);
+    assert.deepEqual(summary.leases.active.map((lease) => lease.id), ['lease-a']);
+    assert.deepEqual(
+      summary.artifacts.byKind.flatMap((group) =>
+        group.artifacts.map((artifact) => artifact.id),
+      ),
+      ['artifact-a'],
+    );
+    assert.equal(summary.events.recentCount, 1);
+    assert.equal(summary.events.recent[0]?.id, 'event-a-2');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('orchestration inspector flags duplicate active worktree artifact paths', () => {
   const tempDir = createLocalTempDir('duplicate-worktree');
   const dbPath = join(tempDir, 'harness.sqlite');
@@ -164,6 +265,41 @@ test('orchestration inspector flags duplicate active worktree artifact paths', (
   }
 });
 
+test('orchestration inspector ignores released worktree artifacts for active duplicate health', () => {
+  const tempDir = createLocalTempDir('released-worktree');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, { issueId: 'issue-released', status: 'in_progress' });
+    seedArtifact(dbPath, {
+      artifactId: 'artifact-wt-active',
+      issueId: 'issue-released',
+      kind: 'worktree',
+      path: 'worktrees/shared',
+      metadata: { status: 'active' },
+    });
+    seedArtifact(dbPath, {
+      artifactId: 'artifact-wt-released',
+      issueId: 'issue-released',
+      kind: 'worktree',
+      path: 'worktrees/shared',
+      metadata: { status: 'released' },
+    });
+
+    const summary = inspectOrchestration({ dbPath, projectId: 'project-1' });
+
+    assert.equal(
+      summary.health.flags.some(
+        (flag) => flag.kind === 'duplicate_active_worktree_artifact_path',
+      ),
+      false,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('orchestration inspector flags done issues missing evidence', () => {
   const tempDir = createLocalTempDir('missing-evidence');
   const dbPath = join(tempDir, 'harness.sqlite');
@@ -179,6 +315,53 @@ test('orchestration inspector flags done issues missing evidence', () => {
 
     assert.ok(missingEvidenceFlag);
     assert.equal(missingEvidenceFlag.issueId, 'issue-done');
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestration inspector treats checkpoint artifact ids as evidence only when artifacts exist', () => {
+  const tempDir = createLocalTempDir('checkpoint-evidence');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, { issueId: 'issue-real-evidence', status: 'done' });
+    seedIssue(dbPath, { issueId: 'issue-dangling-evidence', status: 'done' });
+    seedArtifact(dbPath, {
+      artifactId: 'artifact-test-report',
+      issueId: 'issue-real-evidence',
+      kind: 'test_report',
+      path: 'evidence/test-report.json',
+      metadata: { status: 'released' },
+    });
+    seedRun(dbPath, {
+      runId: 'run-real-evidence',
+      issueId: 'issue-real-evidence',
+    });
+    seedRun(dbPath, {
+      runId: 'run-dangling-evidence',
+      issueId: 'issue-dangling-evidence',
+    });
+    seedCheckpoint(dbPath, {
+      checkpointId: 'checkpoint-real-evidence',
+      runId: 'run-real-evidence',
+      issueId: 'issue-real-evidence',
+      artifactIds: ['artifact-test-report'],
+    });
+    seedCheckpoint(dbPath, {
+      checkpointId: 'checkpoint-dangling-evidence',
+      runId: 'run-dangling-evidence',
+      issueId: 'issue-dangling-evidence',
+      artifactIds: ['missing-artifact'],
+    });
+
+    const summary = inspectOrchestration({ dbPath, projectId: 'project-1' });
+    const missingEvidenceIssueIds = summary.health.flags
+      .filter((flag) => flag.kind === 'done_issue_missing_evidence')
+      .map((flag) => flag.issueId);
+
+    assert.deepEqual(missingEvidenceIssueIds, ['issue-dangling-evidence']);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -256,9 +439,37 @@ function seedBaseProject(dbPath: string): void {
   }
 }
 
+function seedCampaign(dbPath: string, campaignId: string): void {
+  const database = openHarnessDatabase({ dbPath });
+
+  try {
+    runStatement(
+      database.connection,
+      `INSERT INTO campaigns (
+         id, project_id, name, objective, status, scope_json, policy_json,
+         created_at, updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        campaignId,
+        'project-1',
+        `Campaign ${campaignId}`,
+        'Inspect a campaign-scoped orchestration slice.',
+        'active',
+        '{}',
+        '{}',
+        '2026-03-21T00:00:00.000Z',
+        '2026-03-21T00:00:00.000Z',
+      ],
+    );
+  } finally {
+    database.close();
+  }
+}
+
 function seedIssue(
   dbPath: string,
-  input: { issueId: string; status: string },
+  input: { issueId: string; status: string; campaignId?: string },
 ): void {
   const database = openHarnessDatabase({ dbPath });
 
@@ -274,7 +485,7 @@ function seedIssue(
       [
         input.issueId,
         'project-1',
-        null,
+        input.campaignId ?? null,
         null,
         `Task ${input.issueId}`,
         'medium',
@@ -300,6 +511,7 @@ function seedLease(
     issueId: string;
     agentId: string;
     expiresAt: string;
+    campaignId?: string;
   },
 ): void {
   const database = openHarnessDatabase({ dbPath });
@@ -316,7 +528,7 @@ function seedLease(
         input.leaseId,
         'workspace-1',
         'project-1',
-        null,
+        input.campaignId ?? null,
         input.issueId,
         input.agentId,
         'active',
@@ -336,6 +548,7 @@ function seedArtifact(
   input: {
     artifactId: string;
     issueId: string;
+    campaignId?: string;
     kind: string;
     path: string;
     metadata: Record<string, unknown>;
@@ -355,7 +568,7 @@ function seedArtifact(
         input.artifactId,
         'workspace-1',
         'project-1',
-        null,
+        input.campaignId ?? null,
         input.issueId,
         input.kind,
         input.path,
@@ -373,9 +586,11 @@ function seedRunAndEvent(
   input: {
     runId: string;
     issueId: string;
+    campaignId?: string;
     eventId: string;
     kind: string;
     payload: Record<string, unknown>;
+    createdAt?: string;
   },
 ): void {
   const database = openHarnessDatabase({ dbPath });
@@ -392,7 +607,7 @@ function seedRunAndEvent(
         input.runId,
         'workspace-1',
         'project-1',
-        null,
+        input.campaignId ?? null,
         'incremental',
         'host-1',
         'running',
@@ -411,6 +626,74 @@ function seedRunAndEvent(
         input.issueId,
         input.kind,
         JSON.stringify(input.payload),
+        input.createdAt ?? '2026-03-21T00:05:00.000Z',
+      ],
+    );
+  } finally {
+    database.close();
+  }
+}
+
+function seedRun(
+  dbPath: string,
+  input: { runId: string; issueId: string; campaignId?: string },
+): void {
+  const database = openHarnessDatabase({ dbPath });
+
+  try {
+    runStatement(
+      database.connection,
+      `INSERT INTO runs (
+         id, workspace_id, project_id, campaign_id, session_type, host, status,
+         started_at, finished_at, notes
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.runId,
+        'workspace-1',
+        'project-1',
+        input.campaignId ?? null,
+        'incremental',
+        'host-1',
+        'finished',
+        '2026-03-21T00:00:00.000Z',
+        '2026-03-21T00:06:00.000Z',
+        null,
+      ],
+    );
+  } finally {
+    database.close();
+  }
+}
+
+function seedCheckpoint(
+  dbPath: string,
+  input: {
+    checkpointId: string;
+    runId: string;
+    issueId: string;
+    artifactIds: readonly string[];
+  },
+): void {
+  const database = openHarnessDatabase({ dbPath });
+
+  try {
+    runStatement(
+      database.connection,
+      `INSERT INTO checkpoints (
+         id, run_id, issue_id, title, summary, task_status, next_step,
+         artifact_ids_json, created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.checkpointId,
+        input.runId,
+        input.issueId,
+        'close',
+        'Closed with automated evidence references.',
+        'done',
+        'Continue to the next issue.',
+        JSON.stringify(input.artifactIds),
         '2026-03-21T00:05:00.000Z',
       ],
     );

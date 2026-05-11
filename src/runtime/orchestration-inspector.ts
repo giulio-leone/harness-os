@@ -474,6 +474,9 @@ function collectEvidenceIssueIds(
   checkpointRows: CheckpointEvidenceRow[],
 ): Set<string> {
   const issueIds = new Set<string>();
+  const artifactIssueIdsById = new Map(
+    artifacts.map((artifact) => [artifact.id, artifact.issueId]),
+  );
 
   for (const artifact of artifacts) {
     if (
@@ -486,9 +489,18 @@ function collectEvidenceIssueIds(
   }
 
   for (const checkpoint of checkpointRows) {
+    const referencedArtifactIds = parseStringArray(checkpoint.artifact_ids_json);
+
     if (
       checkpoint.issue_id !== null &&
-      parseStringArray(checkpoint.artifact_ids_json).length > 0
+      referencedArtifactIds.some((artifactId) => {
+        const artifactIssueId = artifactIssueIdsById.get(artifactId);
+
+        return (
+          artifactIssueId === checkpoint.issue_id ||
+          artifactIssueId === null
+        );
+      })
     ) {
       issueIds.add(checkpoint.issue_id);
     }

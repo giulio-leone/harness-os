@@ -121,6 +121,31 @@ test('buildWorktreeAllocation never emits unsafe git branch refs from safeable i
   assert.equal(worktree.branch, 'team/feat/release.candidate');
 });
 
+test('buildWorktreeAllocation rejects unsafe branch prefixes before shell cleanup data exists', () => {
+  assert.throws(
+    () =>
+      buildWorktreeAllocation({
+        issueId: 'M2-I1',
+        repoRoot,
+        worktreeRoot,
+        baseRef: 'main',
+        branchPrefix: '../feat',
+      }),
+    /branchPrefix must not contain traversal segments/,
+  );
+  assert.throws(
+    () =>
+      buildWorktreeAllocation({
+        issueId: 'M2-I1',
+        repoRoot,
+        worktreeRoot,
+        baseRef: 'main',
+        branchPrefix: '...',
+      }),
+    /git ref segment must contain at least one safe character|branchPrefix must contain at least one safe segment/,
+  );
+});
+
 test('validateWorktreeCandidate detects duplicate path and branch conflicts', () => {
   const first = buildWorktreeAllocation({
     issueId: 'M2-I1',
@@ -183,6 +208,27 @@ test('validateWorktreeCandidate rejects candidates outside root containment', ()
     assert.match(
       result.issues.map((issue) => issue.message).join('\n'),
       /path must be contained by root/,
+    );
+  }
+});
+
+test('validateWorktreeCandidate rejects roots outside their expected parent path', () => {
+  const worktree = buildWorktreeAllocation({
+    issueId: 'M2-I1',
+    repoRoot,
+    worktreeRoot,
+    baseRef: 'main',
+  });
+  const result = validateWorktreeCandidate({
+    ...worktree,
+    root: '/workspace/other-worktrees',
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(
+      result.issues.map((issue) => issue.message).join('\n'),
+      /root must be contained by expectedParentPath/,
     );
   }
 });
