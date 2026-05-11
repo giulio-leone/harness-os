@@ -503,6 +503,72 @@ select {
   gap: 14px;
 }
 
+.filter-panel {
+  margin-bottom: 16px;
+}
+
+.filter-form {
+  display: grid;
+  gap: 14px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.secondary-button:hover,
+.secondary-button:focus-visible {
+  border-color: rgba(167, 139, 250, 0.56);
+  color: var(--text);
+  outline: none;
+}
+
+.results-summary {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.empty-board {
+  display: grid;
+  gap: 10px;
+  place-items: center;
+  min-height: 180px;
+  margin-bottom: 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 18px;
+  padding: 18px;
+  color: var(--subtle);
+  text-align: center;
+}
+
+.empty-board p {
+  margin: 0;
+}
+
 .field-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -785,6 +851,7 @@ select {
   .detail-grid,
   .proof-card-grid,
   .proof-meta-grid,
+  .filter-grid,
   .field-row,
   .board {
     grid-template-columns: 1fr;

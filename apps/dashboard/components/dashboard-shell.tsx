@@ -6,14 +6,22 @@ import type {
   OrchestrationDashboardHealthFlag,
   OrchestrationDashboardIssueCard,
   OrchestrationDashboardIssueLane,
+  OrchestrationDashboardLaneId,
   OrchestrationDashboardViewModel,
 } from 'harness-os/orchestration';
 import type { DashboardPageState } from '../lib/dashboard-data';
+import {
+  emptyDashboardIssueFilters,
+  hasDashboardIssueFilters,
+  type DashboardIssueFilters,
+} from '../lib/dashboard-issue-filters';
 
 interface DashboardShellProps {
   viewModel: OrchestrationDashboardViewModel;
   dataSource?: 'live' | 'demo';
   createIssueAction?: React.ComponentProps<'form'>['action'];
+  filters?: DashboardIssueFilters;
+  unfilteredIssueCount?: number;
 }
 
 const HEALTH_FLAG_LABELS: Record<OrchestrationDashboardHealthFlag['kind'], string> = {
@@ -25,8 +33,13 @@ const HEALTH_FLAG_LABELS: Record<OrchestrationDashboardHealthFlag['kind'], strin
 export function DashboardShell({
   createIssueAction,
   dataSource = 'live',
+  filters = emptyDashboardIssueFilters,
+  unfilteredIssueCount,
   viewModel,
 }: DashboardShellProps) {
+  const filtersActive = hasDashboardIssueFilters(filters);
+  const totalIssueCount = unfilteredIssueCount ?? viewModel.overview.totalIssues;
+
   return (
     <main className="dashboard-root" data-testid="orchestration-dashboard">
       <div className="dashboard-frame">
@@ -51,7 +64,16 @@ export function DashboardShell({
 
         <section className="content-grid">
           <div>
-            <LaneBoard lanes={viewModel.issueLanes} />
+            <IssueFilterPanel
+              filters={filters}
+              totalIssueCount={totalIssueCount}
+              visibleIssueCount={viewModel.overview.totalIssues}
+            />
+            <LaneBoard
+              filtersActive={filtersActive}
+              lanes={viewModel.issueLanes}
+              visibleIssueCount={viewModel.overview.totalIssues}
+            />
           </div>
           <aside aria-label="Evidence and health summaries">
             <CreateTicketPanel action={createIssueAction} dataSource={dataSource} />
@@ -63,6 +85,112 @@ export function DashboardShell({
         </section>
       </div>
     </main>
+  );
+}
+
+function IssueFilterPanel({
+  filters,
+  totalIssueCount,
+  visibleIssueCount,
+}: {
+  filters: DashboardIssueFilters;
+  totalIssueCount: number;
+  visibleIssueCount: number;
+}) {
+  return (
+    <section className="panel filter-panel" aria-labelledby="filters-title">
+      <div className="panel-header">
+        <div>
+          <p className="eyebrow">Dashboard filters</p>
+          <h2 className="panel-title" id="filters-title">
+            Find issues and proof artifacts
+          </h2>
+          <p className="results-summary" id="filter-summary">
+            Showing {visibleIssueCount} of {totalIssueCount} issues.
+          </p>
+        </div>
+      </div>
+      <form action="/" aria-describedby="filter-summary" className="filter-form" method="get">
+        <div className="filter-grid">
+          <label className="field">
+            <span className="label">Search</span>
+            <input
+              defaultValue={filters.q ?? ''}
+              name="q"
+              placeholder="Issue id, task, blocker, artifact"
+              type="search"
+            />
+          </label>
+          <label className="field">
+            <span className="label">Lane</span>
+            <select defaultValue={filters.lane[0] ?? ''} name="lane">
+              <option value="">All lanes</option>
+              {LANE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="label">Priority</span>
+            <select defaultValue={filters.priority[0] ?? ''} name="priority">
+              <option value="">All priorities</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label className="field">
+            <span className="label">Status</span>
+            <select defaultValue={filters.status[0] ?? ''} name="status">
+              <option value="">All statuses</option>
+              {STATUS_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="label">Evidence kind</span>
+            <input
+              defaultValue={filters.evidenceKind[0] ?? ''}
+              name="evidenceKind"
+              placeholder="screenshot, test_report, csqr_lite_scorecard"
+            />
+          </label>
+          <label className="field">
+            <span className="label">CSQR scorecard</span>
+            <input
+              defaultValue={filters.hasCsqr ? 'any' : filters.csqr[0] ?? ''}
+              name="csqr"
+              placeholder="any or scorecard id"
+            />
+          </label>
+          <label className="field">
+            <span className="label">Signal</span>
+            <select defaultValue={filters.signal ?? ''} name="signal">
+              <option value="">Any signal</option>
+              <option value="active">Active lease</option>
+              <option value="evidence">Has evidence</option>
+              <option value="csqr">Has CSQR</option>
+              <option value="health">Has health flag</option>
+              <option value="blocked">Has blocker</option>
+            </select>
+          </label>
+        </div>
+        <div className="filter-actions">
+          <button className="primary-button" type="submit">
+            Apply filters
+          </button>
+          <Link className="secondary-button" href="/">
+            Reset filters
+          </Link>
+        </div>
+      </form>
+    </section>
   );
 }
 
@@ -234,7 +362,15 @@ function OverviewPanel({ dataSource = 'live', viewModel }: DashboardShellProps) 
   );
 }
 
-function LaneBoard({ lanes }: { lanes: OrchestrationDashboardIssueLane[] }) {
+function LaneBoard({
+  filtersActive,
+  lanes,
+  visibleIssueCount,
+}: {
+  filtersActive: boolean;
+  lanes: OrchestrationDashboardIssueLane[];
+  visibleIssueCount: number;
+}) {
   return (
     <section className="panel" aria-labelledby="lanes-title">
       <div className="panel-header">
@@ -249,16 +385,30 @@ function LaneBoard({ lanes }: { lanes: OrchestrationDashboardIssueLane[] }) {
           </p>
         </div>
       </div>
+      {filtersActive && visibleIssueCount === 0 ? (
+        <div className="empty-board">
+          <p>No issues match these filters.</p>
+          <Link className="secondary-button" href="/">
+            Reset filters
+          </Link>
+        </div>
+      ) : null}
       <div className="board">
         {lanes.map((lane) => (
-          <LaneColumn lane={lane} key={lane.id} />
+          <LaneColumn filtersActive={filtersActive} lane={lane} key={lane.id} />
         ))}
       </div>
     </section>
   );
 }
 
-function LaneColumn({ lane }: { lane: OrchestrationDashboardIssueLane }) {
+function LaneColumn({
+  filtersActive,
+  lane,
+}: {
+  filtersActive: boolean;
+  lane: OrchestrationDashboardIssueLane;
+}) {
   return (
     <section className="lane" data-testid={`lane-${lane.id}`} aria-labelledby={`${lane.id}-title`}>
       <div className="lane-header">
@@ -272,7 +422,9 @@ function LaneColumn({ lane }: { lane: OrchestrationDashboardIssueLane }) {
       </div>
       <div className="lane-card-stack">
         {lane.cards.length === 0 ? (
-          <div className="empty-lane">No issues in this lane</div>
+          <div className="empty-lane">
+            {filtersActive ? 'No matching issues in this lane' : 'No issues in this lane'}
+          </div>
         ) : (
           lane.cards.map((card) => <IssueCard card={card} key={card.id} />)
         )}
@@ -280,6 +432,21 @@ function LaneColumn({ lane }: { lane: OrchestrationDashboardIssueLane }) {
     </section>
   );
 }
+
+const LANE_OPTIONS: ReadonlyArray<{ value: OrchestrationDashboardLaneId; label: string }> = [
+  { value: 'ready', label: 'Ready' },
+  { value: 'in_progress', label: 'In progress' },
+  { value: 'blocked', label: 'Blocked' },
+  { value: 'needs_recovery', label: 'Needs recovery' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'done', label: 'Done' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'other', label: 'Other' },
+];
+
+const STATUS_OPTIONS: ReadonlyArray<{ value: string; label: string }> = LANE_OPTIONS.filter(
+  (option) => option.value !== 'other',
+);
 
 function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
   const artifactEntries = Object.entries(card.artifactKinds).sort(([left], [right]) =>
