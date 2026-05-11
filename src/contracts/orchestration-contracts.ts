@@ -31,6 +31,7 @@ export const orchestrationEvidenceArtifactKindValues = [
   'ci_status',
   'codebase_ref',
   'coverage_report',
+  'csqr_lite_scorecard',
   'diagnostic_log',
   'diff',
   'e2e_report',

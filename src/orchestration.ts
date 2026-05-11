@@ -1,4 +1,6 @@
+export * from './contracts/csqr-lite-contracts.js';
 export * from './contracts/orchestration-contracts.js';
+export * from './runtime/csqr-lite-scorecard.js';
 export * from './runtime/orchestration-conflicts.js';
 export * from './runtime/orchestration-dispatcher.js';
 export * from './runtime/orchestration-reference-evidence.js';

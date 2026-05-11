@@ -117,10 +117,25 @@ The matrix requires run-scoped `typecheck_report` and `state_export` artifacts, 
 
 The copy/paste MCP handoff for this flow lives in [`../examples/orchestration-symphony/`](../examples/orchestration-symphony/). Those examples are intentionally host-facing rather than generated session-lifecycle CLI payloads: they show the stable `harness_inspector` -> `harness_orchestrator` -> `harness_symphony` -> `harness_artifacts` call chain and are validated against the public MCP input schemas in the test suite.
 
+### CSQR-lite scoring model
+
+CSQR-lite is the additive scorecard model for automated completion decisions. M6-I1 defines the in-memory public contract only; it does not add schema-v6 tables, mutate schema-v5 rows, persist scorecards automatically, or enforce thresholds yet.
+
+The model has four required dimensions:
+
+| Dimension | Meaning | Default weight |
+| --- | --- | --- |
+| `correctness` | Planned behavior works, compatibility is preserved, and no known functional regression remains. | `2.0` |
+| `security` | No secrets, unsafe input handling, authorization regressions, or known vulnerable dependency patterns are introduced. | `1.5` |
+| `quality` | Code remains maintainable, type-safe, cohesive, performant enough for its path, and free of unnecessary technical debt. | `1.0` |
+| `runtime_evidence` | Deterministic test, build, E2E, screenshot, state-export, or CI artifacts prove the run. | `1.5` |
+
+Every CSQR-lite scorecard must include 4-15 criteria, at least one criterion per dimension, exactly one 1-10 score for every criterion, and evidence artifact ids for every score. `weightedAverage` is normalized as `sum(score * weight) / sum(weight)` and rounded to four decimal places, so future M6-I3 thresholds can compare scorecards deterministically. `targetScore` defaults to `8.0` but remains informational in M6-I1; persistence as `csqr_lite_scorecard` evidence artifacts is reserved for M6-I2, and gate threshold enforcement is reserved for M6-I3.
+
 ## Current v1 limits
 
 - The dispatcher assigns work and claims sessions; it is not yet a long-running daemon.
 - Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
 - Evidence packet validation and deterministic reference E2E assertions exist; the full E2E/CI gate runner remains host-owned until later hardening milestones.
 - Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.
-- Dashboard and CSQR-lite scorecards build on this evidence substrate rather than changing the schema.
+- Dashboard and CSQR-lite scorecard persistence build on this evidence substrate rather than changing the schema.

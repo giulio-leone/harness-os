@@ -3,8 +3,11 @@ import test from 'node:test';
 
 import {
   OrchestrationConflictError,
+  buildCsqrLiteScorecard,
   buildWorktreeAllocation,
   createDefaultGpt5HighSubagents,
+  csqrLiteDefaultCriteria,
+  csqrLiteScorecardSchema,
   dispatchReadyOrchestrationIssues,
   assertReferenceOrchestrationEvidencePacket,
   referenceOrchestrationE2eEvidenceMatrix,
@@ -24,6 +27,9 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof planOrchestrationMilestones, 'function');
   assert.equal(typeof orchestrationPlanSchema.safeParse, 'function');
   assert.equal(typeof OrchestrationConflictError, 'function');
+  assert.equal(typeof buildCsqrLiteScorecard, 'function');
+  assert.equal(typeof csqrLiteScorecardSchema.safeParse, 'function');
+  assert.equal(csqrLiteDefaultCriteria.length, 4);
 });
 
 test('orchestration subpath re-exports the same stable runtime values', () => {
@@ -51,4 +57,7 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
   );
   assert.equal(orchestration.orchestrationPlanSchema, orchestrationPlanSchema);
   assert.equal(orchestration.OrchestrationConflictError, OrchestrationConflictError);
+  assert.equal(orchestration.buildCsqrLiteScorecard, buildCsqrLiteScorecard);
+  assert.equal(orchestration.csqrLiteScorecardSchema, csqrLiteScorecardSchema);
+  assert.equal(orchestration.csqrLiteDefaultCriteria, csqrLiteDefaultCriteria);
 });
