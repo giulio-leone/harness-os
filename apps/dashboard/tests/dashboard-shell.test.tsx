@@ -5,15 +5,13 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  applyOrchestrationDashboardIssueFilters as applyDashboardIssueFilters,
   orchestrationDashboardLaneOrder,
+  parseOrchestrationDashboardIssueFilters as parseDashboardIssueFilters,
   type OrchestrationDashboardViewModel,
 } from 'harness-os/orchestration';
 
 import { DashboardSetup, DashboardShell } from '../components/dashboard-shell';
-import {
-  applyDashboardIssueFilters,
-  parseDashboardIssueFilters,
-} from '../lib/dashboard-issue-filters';
 import { demoDashboardViewModel } from '../lib/demo-view-model';
 
 test('dashboard shell renders the stable lane order and orchestration evidence summaries', () => {

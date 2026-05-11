@@ -230,7 +230,7 @@ Every payload must declare `"contractVersion": "6.0.0"`.
 | --- | --- | --- |
 | `harness_inspector` | Use first in a new session, when queue state is unclear, or when the agent needs a machine-readable guide to the runtime plus auditable next_action reasons, exportable operational state, and health snapshots. | `capabilities`, `get_context`, `next_action`, `export`, `audit`, `health_snapshot` |
 | `harness_orchestrator` | Use to create scope, inject planned work, promote dependencies, and reset stuck issues. | `init_workspace`, `create_campaign`, `plan_issues`, `promote_queue`, `rollback_issue` |
-| `harness_symphony` | Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, and inspect evidence-backed orchestration state. | `compile_plan`, `dispatch_ready`, `inspect_state` |
+| `harness_symphony` | Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, inspect evidence-backed orchestration state, and retrieve filtered dashboard views for agent navigation. | `compile_plan`, `dispatch_ready`, `inspect_state`, `dashboard_view` |
 | `harness_session` | Use for claim/resume, checkpointing, close/advance, and lease heartbeat during execution. | `begin`, `begin_recovery`, `checkpoint`, `close`, `advance`, `heartbeat` |
 | `harness_artifacts` | Use to persist references to screenshots, browser state, generated files, or other task evidence. | `save`, `list` |
 | `harness_admin` | Use for recovery-oriented maintenance, retention cleanup, and project-level memory snapshots or rollups. | `reconcile`, `drain`, `archive`, `cleanup`, `mem0_snapshot`, `mem0_rollup` |

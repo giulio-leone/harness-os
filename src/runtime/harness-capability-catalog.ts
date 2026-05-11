@@ -65,6 +65,12 @@ export interface HarnessOrchestrationCapability {
     compilePlan: 'compile_plan';
     dispatchReady: 'dispatch_ready';
     inspectState: 'inspect_state';
+    dashboardView: 'dashboard_view';
+  };
+  dashboard: {
+    contractVersion: '1.0.0';
+    filteredViewAction: 'dashboard_view';
+    supportedFilters: string[];
   };
   requiredDispatchFields: string[];
   hostResponsibilities: string[];
@@ -110,6 +116,21 @@ const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
     compilePlan: 'compile_plan',
     dispatchReady: 'dispatch_ready',
     inspectState: 'inspect_state',
+    dashboardView: 'dashboard_view',
+  },
+  dashboard: {
+    contractVersion: '1.0.0',
+    filteredViewAction: 'dashboard_view',
+    supportedFilters: [
+      'q',
+      'lane',
+      'status',
+      'priority',
+      'evidenceKind',
+      'csqr',
+      'hasCsqr',
+      'signal',
+    ],
   },
   requiredDispatchFields: [
     'projectId or projectName',
@@ -179,6 +200,13 @@ const BOOTSTRAP_STEPS: HarnessBootstrapStep[] = [
   },
   {
     step: 5,
+    tool: 'harness_symphony',
+    action: 'dashboard_view',
+    reason: 'Load the stable filtered dashboard view model for agent navigation, operator UI rendering, and evidence review.',
+    requiredFields: ['projectId or projectName'],
+  },
+  {
+    step: 6,
     tool: 'harness_symphony',
     action: 'dispatch_ready',
     reason: 'Fan out ready issues only after the host knows the repository root, worktree root, base ref, and host routing capabilities.',

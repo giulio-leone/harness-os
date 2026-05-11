@@ -19,6 +19,7 @@ import {
   harnessPlanIssuesInputSchema,
   harnessRollbackIssueInputSchema,
 } from './harness-planning-tools.js';
+import { orchestrationDashboardIssueFiltersInputSchema } from './orchestration-dashboard-filters.js';
 import {
   incrementalSessionInputSchema,
   inspectAuditInputSchema,
@@ -73,6 +74,7 @@ export const symphonyActionValues = [
   'compile_plan',
   'dispatch_ready',
   'inspect_state',
+  'dashboard_view',
 ] as const;
 export const sessionActionValues = [
   'begin',
@@ -289,10 +291,21 @@ const harnessSymphonyInspectInputSchema = z
   })
   .strict();
 
+const harnessSymphonyDashboardViewInputSchema = z
+  .object({
+    action: z.literal('dashboard_view'),
+    ...orchestrationScopeFields,
+    issueId: optionalString,
+    eventLimit: boundedInt100.optional(),
+    filters: orchestrationDashboardIssueFiltersInputSchema.optional(),
+  })
+  .strict();
+
 export const harnessSymphonyInputSchema = z.discriminatedUnion('action', [
   harnessSymphonyCompilePlanInputSchema,
   harnessSymphonyDispatchInputSchema,
   harnessSymphonyInspectInputSchema,
+  harnessSymphonyDashboardViewInputSchema,
 ]);
 
 const sessionTokenSchema = z.string().min(1);
@@ -699,10 +712,10 @@ export const HARNESS_TOOL_CONTRACTS: HarnessToolContract[] = [
   {
     name: 'harness_symphony',
     description:
-      'Fully agentic Symphony-style orchestration. Actions: compile_plan (turn orchestration milestones/slices into canonical plan_issues payloads), dispatch_ready (fan out ready issues across isolated worktrees and compatible subagents), inspect_state (read orchestration assignments, leases, artifacts, events, and evidence health).',
-    role: 'Agentic fan-out planning, dispatch, and orchestration-state inspection',
+      'Fully agentic Symphony-style orchestration. Actions: compile_plan (turn orchestration milestones/slices into canonical plan_issues payloads), dispatch_ready (fan out ready issues across isolated worktrees and compatible subagents), inspect_state (read raw orchestration assignments, leases, artifacts, events, and evidence health), dashboard_view (read a filtered Linear-like dashboard view model).',
+    role: 'Agentic fan-out planning, dispatch, orchestration-state inspection, and dashboard read-model access',
     summary:
-      'Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, and inspect evidence-backed orchestration state.',
+      'Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, inspect evidence-backed orchestration state, and retrieve filtered dashboard views for agent navigation.',
     inputSchema: harnessSymphonyInputSchema,
     actions: [
       {
@@ -791,6 +804,28 @@ export const HARNESS_TOOL_CONTRACTS: HarnessToolContract[] = [
           action: 'inspect_state',
           projectName: 'Agent Harness Core',
           eventLimit: 25,
+        },
+      },
+      {
+        action: 'dashboard_view',
+        purpose:
+          'Read the stable orchestration dashboard view model with optional issue/evidence filters for agent navigation, UI rendering, or proof review without mutating runtime state.',
+        recommendedWhen: [
+          'filtered dashboard data',
+          'agent navigation',
+          'evidence review',
+          'operator UI rendering',
+        ],
+        requiredFields: ['projectId or projectName'],
+        example: {
+          action: 'dashboard_view',
+          projectName: 'Agent Harness Core',
+          eventLimit: 25,
+          filters: {
+            status: ['ready'],
+            priority: ['high'],
+            signal: 'evidence',
+          },
         },
       },
     ],

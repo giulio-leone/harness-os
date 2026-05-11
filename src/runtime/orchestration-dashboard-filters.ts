@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import {
   orchestrationDashboardLaneOrder,
   type OrchestrationDashboardIssueCard,
@@ -5,42 +7,68 @@ import {
   type OrchestrationDashboardLaneId,
   type OrchestrationDashboardOverview,
   type OrchestrationDashboardViewModel,
-} from 'harness-os/orchestration';
+} from '../contracts/orchestration-dashboard-contracts.js';
 
-export interface DashboardIssueFilters {
+export const orchestrationDashboardIssueFilterSignalValues = [
+  'active',
+  'evidence',
+  'csqr',
+  'health',
+  'blocked',
+] as const;
+
+export type OrchestrationDashboardIssueFilterSignal =
+  (typeof orchestrationDashboardIssueFilterSignalValues)[number];
+
+export interface OrchestrationDashboardIssueFilters {
   q?: string;
   lane: string[];
   status: string[];
   priority: string[];
   evidenceKind: string[];
   csqr: string[];
-  signal?: DashboardIssueFilterSignal;
+  signal?: OrchestrationDashboardIssueFilterSignal;
   hasCsqr: boolean;
 }
 
-export type DashboardIssueFilterSignal =
-  | 'active'
-  | 'evidence'
-  | 'csqr'
-  | 'health'
-  | 'blocked';
-
-export type DashboardSearchParams = Record<
+export type OrchestrationDashboardSearchParams = Record<
   string,
   string | string[] | undefined
 >;
 
-const allowedLaneIds = new Set<string>(orchestrationDashboardLaneOrder);
-const allowedPriorities = new Set(['critical', 'high', 'medium', 'low']);
-const allowedSignals = new Set<DashboardIssueFilterSignal>([
-  'active',
-  'evidence',
-  'csqr',
-  'health',
-  'blocked',
+const filterValueSchema = z.union([
+  z.string().min(1),
+  z.array(z.string().min(1)).max(100),
 ]);
 
-export const emptyDashboardIssueFilters: DashboardIssueFilters = {
+export const orchestrationDashboardIssueFilterSignalSchema = z.enum(
+  orchestrationDashboardIssueFilterSignalValues,
+);
+
+export const orchestrationDashboardIssueFiltersInputSchema = z
+  .object({
+    q: z.string().optional(),
+    lane: filterValueSchema.optional(),
+    status: filterValueSchema.optional(),
+    priority: filterValueSchema.optional(),
+    evidenceKind: filterValueSchema.optional(),
+    csqr: filterValueSchema.optional(),
+    signal: orchestrationDashboardIssueFilterSignalSchema.optional(),
+    hasCsqr: z.boolean().optional(),
+  })
+  .strict();
+
+export type OrchestrationDashboardIssueFiltersInput = z.input<
+  typeof orchestrationDashboardIssueFiltersInputSchema
+>;
+
+const allowedLaneIds = new Set<string>(orchestrationDashboardLaneOrder);
+const allowedPriorities = new Set(['critical', 'high', 'medium', 'low']);
+const allowedSignals = new Set<OrchestrationDashboardIssueFilterSignal>(
+  orchestrationDashboardIssueFilterSignalValues,
+);
+
+export const emptyOrchestrationDashboardIssueFilters: OrchestrationDashboardIssueFilters = {
   lane: [],
   status: [],
   priority: [],
@@ -49,36 +77,47 @@ export const emptyDashboardIssueFilters: DashboardIssueFilters = {
   hasCsqr: false,
 };
 
-export function parseDashboardIssueFilters(
-  searchParams: DashboardSearchParams,
-): DashboardIssueFilters {
-  const q = firstNonEmptyValue(searchParams.q);
-  const csqrValues = normalizeList(searchParams.csqr);
-  const signal = parseSignal(firstNonEmptyValue(searchParams.signal));
+export function parseOrchestrationDashboardIssueFilters(
+  searchParams: OrchestrationDashboardSearchParams,
+): OrchestrationDashboardIssueFilters {
+  return normalizeOrchestrationDashboardIssueFilters(searchParams);
+}
+
+export function normalizeOrchestrationDashboardIssueFilters(
+  input:
+    | OrchestrationDashboardIssueFiltersInput
+    | OrchestrationDashboardSearchParams
+    | undefined,
+): OrchestrationDashboardIssueFilters {
+  const source = input ?? {};
+  const q = firstNonEmptyValue(source.q);
+  const csqrValues = normalizeList(source.csqr);
+  const signal = parseSignal(firstNonEmptyValue(source.signal));
   const hasCsqr =
+    readBooleanFlag(source.hasCsqr) ||
     signal === 'csqr' ||
     csqrValues.some((value) => value === 'any' || value === 'true');
 
   return {
     ...(q === undefined ? {} : { q }),
-    lane: filterAllowed(normalizeList(searchParams.lane), allowedLaneIds),
-    status: normalizeList(searchParams.status),
+    lane: filterAllowed(normalizeList(source.lane), allowedLaneIds),
+    status: normalizeList(source.status),
     priority: filterAllowed(
-      normalizeList(searchParams.priority).map((value) => value.toLowerCase()),
+      normalizeList(source.priority).map((value) => value.toLowerCase()),
       allowedPriorities,
     ),
-    evidenceKind: normalizeList(searchParams.evidenceKind),
+    evidenceKind: normalizeList(source.evidenceKind),
     csqr: csqrValues.filter((value) => value !== 'any' && value !== 'true'),
     ...(signal === undefined ? {} : { signal }),
     hasCsqr,
   };
 }
 
-export function applyDashboardIssueFilters(
+export function applyOrchestrationDashboardIssueFilters(
   viewModel: OrchestrationDashboardViewModel,
-  filters: DashboardIssueFilters,
+  filters: OrchestrationDashboardIssueFilters,
 ): OrchestrationDashboardViewModel {
-  if (!hasDashboardIssueFilters(filters)) {
+  if (!hasOrchestrationDashboardIssueFilters(filters)) {
     return viewModel;
   }
 
@@ -100,7 +139,9 @@ export function applyDashboardIssueFilters(
   };
 }
 
-export function hasDashboardIssueFilters(filters: DashboardIssueFilters): boolean {
+export function hasOrchestrationDashboardIssueFilters(
+  filters: OrchestrationDashboardIssueFilters,
+): boolean {
   return Boolean(
     filters.q ||
       filters.lane.length > 0 ||
@@ -115,7 +156,7 @@ export function hasDashboardIssueFilters(filters: DashboardIssueFilters): boolea
 
 function matchesFilters(
   card: OrchestrationDashboardIssueCard,
-  filters: DashboardIssueFilters,
+  filters: OrchestrationDashboardIssueFilters,
 ): boolean {
   if (filters.q !== undefined && !matchesTextSearch(card, filters.q)) {
     return false;
@@ -189,7 +230,7 @@ function matchesTextSearch(
 
 function matchesSignal(
   card: OrchestrationDashboardIssueCard,
-  signal: DashboardIssueFilterSignal,
+  signal: OrchestrationDashboardIssueFilterSignal,
 ): boolean {
   switch (signal) {
     case 'active':
@@ -251,7 +292,7 @@ function buildFilteredOverview(
   };
 }
 
-function normalizeList(value: string | string[] | undefined): string[] {
+function normalizeList(value: string | string[] | boolean | undefined): string[] {
   const values = Array.isArray(value) ? value : [value];
 
   return [
@@ -269,14 +310,29 @@ function filterAllowed(values: string[], allowed: ReadonlySet<string>): string[]
   return values.filter((value) => allowed.has(value));
 }
 
-function firstNonEmptyValue(value: string | string[] | undefined): string | undefined {
+function firstNonEmptyValue(
+  value: string | string[] | boolean | undefined,
+): string | undefined {
   return normalizeList(value)[0];
 }
 
-function parseSignal(value: string | undefined): DashboardIssueFilterSignal | undefined {
-  if (value === undefined || !allowedSignals.has(value as DashboardIssueFilterSignal)) {
+function parseSignal(
+  value: string | undefined,
+): OrchestrationDashboardIssueFilterSignal | undefined {
+  if (
+    value === undefined ||
+    !allowedSignals.has(value as OrchestrationDashboardIssueFilterSignal)
+  ) {
     return undefined;
   }
 
-  return value as DashboardIssueFilterSignal;
+  return value as OrchestrationDashboardIssueFilterSignal;
+}
+
+function readBooleanFlag(value: string | string[] | boolean | undefined): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  return normalizeList(value).some((entry) => entry === 'true' || entry === '1');
 }

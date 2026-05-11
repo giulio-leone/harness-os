@@ -201,6 +201,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
     await t.test('installed package exposes orchestration root and subpath exports', () => {
       const result = runInstalledPackageScript(installRoot, baseEnv, `
         import {
+          applyOrchestrationDashboardIssueFilters as applyFiltersFromRoot,
           buildCsqrLiteScorecard,
           buildOrchestrationDashboardViewModel,
           buildWorktreeAllocation as buildFromRoot,
@@ -216,6 +217,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           SessionOrchestrator,
         } from 'harness-os/dashboard-server';
         import {
+          applyOrchestrationDashboardIssueFilters as applyFiltersFromSubpath,
           buildWorktreeAllocation as buildFromSubpath,
           assertReferenceOrchestrationEvidencePacket,
           csqrLiteScorecardSchema,
@@ -238,6 +240,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           assertionType: typeof assertReferenceOrchestrationEvidencePacket,
           scorecardBuilderType: typeof buildCsqrLiteScorecard,
           dashboardBuilderType: typeof buildOrchestrationDashboardViewModel,
+          dashboardFilterType: typeof applyFiltersFromRoot,
           csqrCriteriaCount: csqrLiteDefaultCriteria.length,
           csqrSchemaType: typeof csqrLiteScorecardSchema.safeParse,
           dashboardSchemaType: typeof orchestrationDashboardViewModelSchema.safeParse,
@@ -247,6 +250,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           dashboardServerSelectOneType: typeof selectOne,
           dashboardServerOrchestratorType: typeof SessionOrchestrator,
           matrixSameReference: matrixFromRoot === matrixFromSubpath,
+          filterSameReference: applyFiltersFromRoot === applyFiltersFromSubpath,
           inspectorType: typeof inspectOrchestration,
           schemaType: typeof orchestrationPlanSchema.safeParse,
           worktreeBranch: worktree.branch,
@@ -260,6 +264,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         assertionType: string;
         scorecardBuilderType: string;
         dashboardBuilderType: string;
+        dashboardFilterType: string;
         csqrCriteriaCount: number;
         csqrSchemaType: string;
         dashboardSchemaType: string;
@@ -269,6 +274,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         dashboardServerSelectOneType: string;
         dashboardServerOrchestratorType: string;
         matrixSameReference: boolean;
+        filterSameReference: boolean;
         inspectorType: string;
         schemaType: string;
         worktreeBranch: string;
@@ -280,6 +286,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         assertionType: 'function',
         scorecardBuilderType: 'function',
         dashboardBuilderType: 'function',
+        dashboardFilterType: 'function',
         csqrCriteriaCount: 4,
         csqrSchemaType: 'function',
         dashboardSchemaType: 'function',
@@ -289,6 +296,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         dashboardServerSelectOneType: 'function',
         dashboardServerOrchestratorType: 'function',
         matrixSameReference: true,
+        filterSameReference: true,
         inspectorType: 'function',
         schemaType: 'function',
         worktreeBranch: 'feat/m4-i1-public-exports',

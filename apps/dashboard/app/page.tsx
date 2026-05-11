@@ -1,13 +1,13 @@
 import 'server-only';
 
+import {
+  applyOrchestrationDashboardIssueFilters,
+  parseOrchestrationDashboardIssueFilters,
+  type OrchestrationDashboardSearchParams,
+} from 'harness-os/orchestration';
 import { createDashboardIssueAction } from './actions';
 import { DashboardSetup, DashboardShell } from '../components/dashboard-shell';
 import { getDashboardPageState } from '../lib/dashboard-data.server';
-import {
-  applyDashboardIssueFilters,
-  parseDashboardIssueFilters,
-  type DashboardSearchParams,
-} from '../lib/dashboard-issue-filters';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,9 +15,9 @@ export const dynamic = 'force-dynamic';
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<DashboardSearchParams>;
+  searchParams: Promise<OrchestrationDashboardSearchParams>;
 }) {
-  const filters = parseDashboardIssueFilters(await searchParams);
+  const filters = parseOrchestrationDashboardIssueFilters(await searchParams);
   const state = getDashboardPageState();
 
   if (state.kind === 'not_configured') {
@@ -30,7 +30,7 @@ export default async function DashboardPage({
       dataSource={state.mode}
       filters={filters}
       unfilteredIssueCount={state.viewModel.overview.totalIssues}
-      viewModel={applyDashboardIssueFilters(state.viewModel, filters)}
+      viewModel={applyOrchestrationDashboardIssueFilters(state.viewModel, filters)}
     />
   );
 }
