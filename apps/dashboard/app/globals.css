@@ -1,0 +1,482 @@
+:root {
+  color-scheme: dark;
+  --background: #07080d;
+  --surface: rgba(18, 20, 31, 0.86);
+  --surface-strong: rgba(28, 31, 45, 0.94);
+  --surface-soft: rgba(255, 255, 255, 0.055);
+  --border: rgba(255, 255, 255, 0.11);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --text: #f6f7fb;
+  --muted: #a7adbd;
+  --subtle: #737b91;
+  --accent: #8b5cf6;
+  --accent-strong: #a78bfa;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --info: #38bdf8;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(139, 92, 246, 0.26), transparent 34rem),
+    radial-gradient(circle at 80% 12%, rgba(56, 189, 248, 0.18), transparent 32rem),
+    var(--background);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--text);
+  background: transparent;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.dashboard-root {
+  min-height: 100vh;
+  padding: 32px;
+}
+
+.dashboard-frame {
+  width: min(1720px, 100%);
+  margin: 0 auto;
+}
+
+.dashboard-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(360px, 0.6fr);
+  gap: 20px;
+  align-items: stretch;
+  margin-bottom: 20px;
+}
+
+.hero-panel,
+.panel,
+.lane,
+.issue-card {
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--surface-strong), var(--surface));
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(24px);
+}
+
+.hero-panel,
+.panel {
+  border-radius: 28px;
+}
+
+.hero-panel {
+  position: relative;
+  overflow: hidden;
+  padding: 30px;
+}
+
+.hero-panel::after {
+  position: absolute;
+  inset: auto -18% -42% 28%;
+  height: 220px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.24), rgba(56, 189, 248, 0.16));
+  content: "";
+  filter: blur(6px);
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.hero-title {
+  position: relative;
+  z-index: 1;
+  max-width: 760px;
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 5.4rem);
+  line-height: 0.93;
+  letter-spacing: -0.08em;
+}
+
+.hero-copy {
+  position: relative;
+  z-index: 1;
+  max-width: 820px;
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.scope-grid,
+.metric-grid,
+.content-grid,
+.evidence-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.scope-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 28px;
+}
+
+.scope-pill,
+.metric-card,
+.evidence-card,
+.health-flag,
+.agent-card,
+.timeline-item {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-soft);
+}
+
+.scope-pill {
+  min-width: 0;
+  padding: 13px 14px;
+}
+
+.label {
+  display: block;
+  color: var(--subtle);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.value {
+  display: block;
+  overflow: hidden;
+  margin-top: 6px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.metric-card {
+  padding: 18px;
+}
+
+.metric-value {
+  display: block;
+  margin-top: 8px;
+  font-size: 2.15rem;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+}
+
+.metric-caption {
+  margin: 8px 0 0;
+  color: var(--subtle);
+  font-size: 0.86rem;
+}
+
+.content-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.36fr);
+  align-items: start;
+}
+
+.panel {
+  padding: 22px;
+}
+
+.panel + .panel {
+  margin-top: 16px;
+}
+
+.panel-header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.panel-copy {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(250px, 1fr));
+  gap: 14px;
+}
+
+.lane {
+  min-height: 260px;
+  border-radius: 24px;
+  padding: 14px;
+}
+
+.lane-header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.lane-title {
+  margin: 0;
+  font-size: 0.96rem;
+}
+
+.lane-description {
+  margin: 5px 0 0;
+  color: var(--subtle);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.count-pill,
+.status-pill,
+.small-pill,
+.priority-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+  font-size: 0.73rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.count-pill {
+  padding: 7px 9px;
+}
+
+.status-pill,
+.small-pill,
+.priority-pill {
+  padding: 6px 8px;
+}
+
+.status-pill.warning {
+  border-color: rgba(251, 191, 36, 0.4);
+  color: var(--warning);
+}
+
+.status-pill.healthy {
+  border-color: rgba(52, 211, 153, 0.4);
+  color: var(--success);
+}
+
+.priority-pill.critical {
+  border-color: rgba(251, 113, 133, 0.42);
+  color: var(--danger);
+}
+
+.priority-pill.high {
+  border-color: rgba(251, 191, 36, 0.4);
+  color: var(--warning);
+}
+
+.priority-pill.medium {
+  border-color: rgba(56, 189, 248, 0.38);
+  color: var(--info);
+}
+
+.priority-pill.low {
+  border-color: rgba(52, 211, 153, 0.36);
+  color: var(--success);
+}
+
+.lane-card-stack,
+.stack {
+  display: grid;
+  gap: 10px;
+}
+
+.health-stack {
+  margin-top: 12px;
+}
+
+.empty-lane {
+  display: grid;
+  min-height: 156px;
+  place-items: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: 18px;
+  color: var(--subtle);
+  font-size: 0.86rem;
+}
+
+.issue-card {
+  border-radius: 20px;
+  padding: 14px;
+}
+
+.issue-card-header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.issue-id {
+  margin: 0 0 7px;
+  color: var(--subtle);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.issue-title {
+  margin: 0;
+  font-size: 0.98rem;
+  line-height: 1.35;
+}
+
+.issue-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.issue-action,
+.issue-blocker,
+.issue-health {
+  margin: 12px 0 0;
+  border-radius: 14px;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.issue-action {
+  background: rgba(139, 92, 246, 0.1);
+}
+
+.issue-blocker,
+.issue-health {
+  background: rgba(251, 113, 133, 0.1);
+}
+
+.artifact-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.evidence-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.evidence-card {
+  padding: 14px;
+}
+
+.health-flag,
+.agent-card,
+.timeline-item {
+  padding: 13px;
+}
+
+.agent-card.expired {
+  border-color: rgba(251, 113, 133, 0.48);
+}
+
+.agent-title,
+.timeline-title,
+.flag-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  font-weight: 800;
+}
+
+.agent-meta,
+.timeline-meta,
+.flag-copy {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.timeline-payload {
+  overflow: auto;
+  margin: 10px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+@media (max-width: 1280px) {
+  .dashboard-hero,
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .board {
+    grid-template-columns: repeat(2, minmax(250px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .dashboard-root {
+    padding: 18px;
+  }
+
+  .hero-panel,
+  .panel {
+    border-radius: 22px;
+    padding: 18px;
+  }
+
+  .scope-grid,
+  .metric-grid,
+  .evidence-grid,
+  .board {
+    grid-template-columns: 1fr;
+  }
+}

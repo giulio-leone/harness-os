@@ -117,6 +117,13 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.
 - Completion remains no-human-checkpoint: hosts create/run/cleanup git worktrees, then attach typecheck, test, E2E, screenshot, state export, and codebase evidence before closing work.
 - Copy/paste MCP payloads live in [`examples/orchestration-symphony/`](examples/orchestration-symphony/), and the runtime contract is documented in [docs/orchestration-no-schema-v1.md](docs/orchestration-no-schema-v1.md).
 
+### Linear-Like Orchestration Dashboard
+- A full Next.js dashboard lives in [`apps/dashboard`](apps/dashboard) and consumes the stable `harness-os/orchestration` dashboard view model.
+- The app renders campaign metrics, ordered issue lanes, active leases, evidence summaries, CSQR-lite scorecards, recent events, and health flags without adding React/Next.js to the core package runtime dependencies.
+- Run `npm run dashboard:install && npm run dashboard:dev` for the demo campaign, or set `HARNESS_DASHBOARD_DB_PATH` and `HARNESS_DASHBOARD_PROJECT_ID` to read a live HarnessOS SQLite database.
+- Use `npm run dashboard:verify` after dashboard changes; it rebuilds the core package, installs app dependencies from lockfile, runs typecheck/tests, and executes `next build`.
+- The operator runbook is documented in [docs/orchestration-dashboard.md](docs/orchestration-dashboard.md).
+
 ---
 
 ## 💻 Getting Started

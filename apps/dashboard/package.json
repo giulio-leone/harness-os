@@ -1,0 +1,33 @@
+{
+  "name": "@harness-os/orchestration-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Next.js dashboard for HarnessOS Symphony-style orchestration campaigns.",
+  "license": "BUSL-1.1",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "start": "next start",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test tests/dashboard-data.test.ts tests/dashboard-shell.test.tsx tests/package-boundary.test.ts",
+    "verify": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "harness-os": "file:../..",
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
