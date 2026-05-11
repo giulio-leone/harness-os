@@ -133,7 +133,51 @@ test('harness_symphony schema exposes the dedicated orchestration action enum', 
     'compile_plan',
     'dispatch_ready',
     'inspect_state',
+    'dashboard_view',
   ]);
+});
+
+test('harness_symphony dashboard_view accepts strict dashboard filters', () => {
+  const contract = getHarnessToolContracts().find(
+    (tool) => tool.name === 'harness_symphony',
+  );
+  assert.ok(contract);
+
+  const parsed = contract.inputSchema.parse({
+    action: 'dashboard_view',
+    projectName: 'HarnessOS',
+    eventLimit: 25,
+    filters: {
+      q: 'evidence',
+      lane: ['ready'],
+      status: ['ready'],
+      priority: ['high'],
+      evidenceKind: ['screenshot'],
+      csqr: 'any',
+      signal: 'evidence',
+      hasCsqr: true,
+    },
+  });
+  assert.ok(isRecord(parsed));
+
+  assert.deepEqual(parsed.filters, {
+    q: 'evidence',
+    lane: ['ready'],
+    status: ['ready'],
+    priority: ['high'],
+    evidenceKind: ['screenshot'],
+    csqr: 'any',
+    signal: 'evidence',
+    hasCsqr: true,
+  });
+  assert.equal(
+    contract.inputSchema.safeParse({
+      action: 'dashboard_view',
+      projectName: 'HarnessOS',
+      filters: { signal: 'unknown' },
+    }).success,
+    false,
+  );
 });
 
 function extractGeneratedBlock(

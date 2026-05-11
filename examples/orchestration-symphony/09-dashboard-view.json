@@ -1,0 +1,15 @@
+{
+  "tool": "harness_symphony",
+  "input": {
+    "action": "dashboard_view",
+    "projectName": "HarnessOS",
+    "campaignName": "Symphony Reference Campaign",
+    "eventLimit": 25,
+    "filters": {
+      "status": ["ready"],
+      "priority": ["high"],
+      "evidenceKind": ["screenshot"],
+      "signal": "evidence"
+    }
+  }
+}

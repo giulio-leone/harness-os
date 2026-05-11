@@ -5,22 +5,22 @@ import type {
   OrchestrationDashboardActiveAgent,
   OrchestrationDashboardHealthFlag,
   OrchestrationDashboardIssueCard,
+  OrchestrationDashboardIssueFilters,
   OrchestrationDashboardIssueLane,
   OrchestrationDashboardLaneId,
   OrchestrationDashboardViewModel,
 } from 'harness-os/orchestration';
-import type { DashboardPageState } from '../lib/dashboard-data';
 import {
-  emptyDashboardIssueFilters,
-  hasDashboardIssueFilters,
-  type DashboardIssueFilters,
-} from '../lib/dashboard-issue-filters';
+  emptyOrchestrationDashboardIssueFilters,
+  hasOrchestrationDashboardIssueFilters,
+} from 'harness-os/orchestration';
+import type { DashboardPageState } from '../lib/dashboard-data';
 
 interface DashboardShellProps {
   viewModel: OrchestrationDashboardViewModel;
   dataSource?: 'live' | 'demo';
   createIssueAction?: React.ComponentProps<'form'>['action'];
-  filters?: DashboardIssueFilters;
+  filters?: OrchestrationDashboardIssueFilters;
   unfilteredIssueCount?: number;
 }
 
@@ -33,11 +33,11 @@ const HEALTH_FLAG_LABELS: Record<OrchestrationDashboardHealthFlag['kind'], strin
 export function DashboardShell({
   createIssueAction,
   dataSource = 'live',
-  filters = emptyDashboardIssueFilters,
+  filters = emptyOrchestrationDashboardIssueFilters,
   unfilteredIssueCount,
   viewModel,
 }: DashboardShellProps) {
-  const filtersActive = hasDashboardIssueFilters(filters);
+  const filtersActive = hasOrchestrationDashboardIssueFilters(filters);
   const totalIssueCount = unfilteredIssueCount ?? viewModel.overview.totalIssues;
 
   return (
@@ -93,7 +93,7 @@ function IssueFilterPanel({
   totalIssueCount,
   visibleIssueCount,
 }: {
-  filters: DashboardIssueFilters;
+  filters: OrchestrationDashboardIssueFilters;
   totalIssueCount: number;
   visibleIssueCount: number;
 }) {

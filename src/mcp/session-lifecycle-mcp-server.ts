@@ -47,6 +47,12 @@ import {
 import { dispatchReadyOrchestrationIssues } from '../runtime/orchestration-dispatcher.js';
 import { inspectOrchestration } from '../runtime/orchestration-inspector.js';
 import { toHarnessPlanIssuesPayload } from '../runtime/orchestration-planner.js';
+import { loadOrchestrationDashboardViewModel } from '../runtime/orchestration-dashboard.js';
+import {
+  applyOrchestrationDashboardIssueFilters,
+  hasOrchestrationDashboardIssueFilters,
+  normalizeOrchestrationDashboardIssueFilters,
+} from '../runtime/orchestration-dashboard-filters.js';
 import type { SessionContext } from '../contracts/session-contracts.js';
 import {
   incrementalSessionInputSchema,
@@ -112,7 +118,7 @@ This server exposes 6 tools, each covering a specific domain. Use the "action" p
 TOOLS:
 1. harness_inspector  — Read-only observation. Actions: capabilities, get_context, next_action, export, audit, health_snapshot.
 2. harness_orchestrator — Setup & queue management. Actions: init_workspace, create_campaign, plan_issues, promote_queue, rollback_issue.
-3. harness_symphony — Fully agentic fan-out orchestration. Actions: compile_plan, dispatch_ready, inspect_state.
+3. harness_symphony — Fully agentic fan-out orchestration. Actions: compile_plan, dispatch_ready, inspect_state, dashboard_view.
 4. harness_session — Execution lifecycle. Actions: begin, begin_recovery, checkpoint, close, advance, heartbeat.
 5. harness_artifacts — Persistent state registry. Actions: save, list.
 6. harness_admin — Maintenance & administration. Actions: reconcile, drain, archive, cleanup, mem0_snapshot, mem0_rollup.
@@ -131,7 +137,8 @@ SETUP (one-time, when no workspace/project exists):
 FULLY AGENTIC FAN-OUT:
 - harness_symphony(action: "compile_plan") → compile milestones/slices into a plan_issues payload
 - harness_symphony(action: "dispatch_ready") → assign ready issues to isolated worktrees and compatible subagents
-- harness_symphony(action: "inspect_state") → inspect leases, worktree artifacts, evidence references, and orchestration health
+- harness_symphony(action: "inspect_state") → inspect raw leases, worktree artifacts, evidence references, and orchestration health
+- harness_symphony(action: "dashboard_view") → read a filtered Linear-like dashboard view for agent navigation and proof review
 
 EXECUTION LOOP (repeated):
 4. harness_orchestrator(action: "promote_queue")
@@ -627,6 +634,65 @@ export class SessionLifecycleMcpServer {
                   ...buildMeta(
                     readyCount > 0 ? ['harness_symphony'] : ['harness_inspector'],
                     hint,
+                  ),
+                };
+              } finally {
+                db.close();
+              }
+            }
+
+            case 'dashboard_view': {
+              const dbPath = this.resolvePinnedMcpDbPath(parsed.dbPath);
+              const db = openHarnessDatabase({ dbPath });
+              try {
+                const projectId = resolveProjectId(db.connection, {
+                  projectId: parsed.projectId,
+                  projectName: parsed.projectName,
+                  workspaceId: parsed.workspaceId,
+                });
+                const campaignId = parsed.campaignId
+                  ? parsed.campaignId
+                  : parsed.campaignName
+                    ? resolveCampaignId(db.connection, projectId, {
+                        campaignName: parsed.campaignName,
+                      })
+                    : undefined;
+                const unfilteredViewModel = loadOrchestrationDashboardViewModel({
+                  dbPath,
+                  projectId,
+                  ...(campaignId !== undefined ? { campaignId } : {}),
+                  issueId: parsed.issueId,
+                  eventLimit: parsed.eventLimit,
+                });
+                const filters = normalizeOrchestrationDashboardIssueFilters(
+                  parsed.filters,
+                );
+                const filteredViewModel = applyOrchestrationDashboardIssueFilters(
+                  unfilteredViewModel,
+                  filters,
+                );
+                const filtersActive =
+                  hasOrchestrationDashboardIssueFilters(filters);
+                const readyCount = filteredViewModel.overview.readyCount;
+                const hint = filtersActive
+                  ? `Dashboard view loaded with ${filteredViewModel.overview.totalIssues} of ${unfilteredViewModel.overview.totalIssues} issue(s) visible.`
+                  : `Dashboard view loaded with ${filteredViewModel.overview.totalIssues} issue(s).`;
+
+                return {
+                  viewModel: filteredViewModel,
+                  filters: {
+                    applied: filters,
+                    active: filtersActive,
+                    unfilteredIssueCount: unfilteredViewModel.overview.totalIssues,
+                    filteredIssueCount: filteredViewModel.overview.totalIssues,
+                  },
+                  ...buildMeta(
+                    readyCount > 0
+                      ? ['harness_symphony', 'harness_session']
+                      : ['harness_symphony', 'harness_inspector'],
+                    readyCount > 0
+                      ? `${hint} ${readyCount} ready issue(s) are visible; call harness_symphony(action: "dispatch_ready") for fan-out when host routing and worktree fields are available.`
+                      : `${hint} Call harness_symphony(action: "inspect_state") when raw orchestration state is needed.`,
                   ),
                 };
               } finally {

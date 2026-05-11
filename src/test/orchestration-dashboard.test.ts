@@ -6,6 +6,11 @@ import {
   loadOrchestrationDashboardViewModel,
 } from '../runtime/orchestration-dashboard.js';
 import {
+  applyOrchestrationDashboardIssueFilters,
+  normalizeOrchestrationDashboardIssueFilters,
+  parseOrchestrationDashboardIssueFilters,
+} from '../runtime/orchestration-dashboard-filters.js';
+import {
   orchestrationDashboardLaneOrder,
   orchestrationDashboardViewModelSchema,
 } from '../contracts/orchestration-dashboard-contracts.js';
@@ -165,6 +170,100 @@ test('dashboard builder rejects unsupported inspector summary versions', () => {
   );
 });
 
+test('dashboard filters preserve lane order and recompute overview semantics', () => {
+  const viewModel = buildOrchestrationDashboardViewModel(createPopulatedSummary());
+  const filtered = applyOrchestrationDashboardIssueFilters(
+    viewModel,
+    normalizeOrchestrationDashboardIssueFilters({
+      evidenceKind: ['evidence_packet'],
+      signal: 'active',
+    }),
+  );
+
+  assert.deepEqual(
+    filtered.issueLanes.map((lane) => lane.id),
+    orchestrationDashboardLaneOrder,
+  );
+  assert.deepEqual(cardIds(filtered), ['issue-progress']);
+  assert.equal(filtered.overview.totalIssues, 1);
+  assert.equal(filtered.overview.readyCount, 0);
+  assert.equal(filtered.overview.activeIssueCount, 1);
+  assert.equal(filtered.overview.laneCounts.in_progress, 1);
+  assert.equal(filtered.overview.activeLeaseCount, 2);
+  assert.equal(filtered.overview.expiredLeaseCount, 1);
+  assert.equal(filtered.overview.evidenceArtifactCount, 2);
+  assert.deepEqual(orchestrationDashboardViewModelSchema.parse(filtered), filtered);
+});
+
+test('dashboard filters match text, issue state, CSQR, and health signals', () => {
+  const viewModel = buildOrchestrationDashboardViewModel(createPopulatedSummary());
+
+  assert.deepEqual(
+    cardIds(
+      applyOrchestrationDashboardIssueFilters(
+        viewModel,
+        normalizeOrchestrationDashboardIssueFilters({ q: 'scorecard' }),
+      ),
+    ),
+    ['issue-done'],
+  );
+  assert.deepEqual(
+    cardIds(
+      applyOrchestrationDashboardIssueFilters(
+        viewModel,
+        normalizeOrchestrationDashboardIssueFilters({
+          lane: 'ready',
+          status: ['ready'],
+          priority: ['critical'],
+        }),
+      ),
+    ),
+    ['issue-ready-critical'],
+  );
+  assert.deepEqual(
+    cardIds(
+      applyOrchestrationDashboardIssueFilters(
+        viewModel,
+        normalizeOrchestrationDashboardIssueFilters({ csqr: 'any' }),
+      ),
+    ),
+    ['issue-done'],
+  );
+  assert.deepEqual(
+    cardIds(
+      applyOrchestrationDashboardIssueFilters(
+        viewModel,
+        normalizeOrchestrationDashboardIssueFilters({ signal: 'health' }),
+      ),
+    ),
+    ['issue-progress', 'issue-done'],
+  );
+});
+
+test('dashboard filter parser normalizes URL-like inputs without widening contracts', () => {
+  assert.deepEqual(
+    parseOrchestrationDashboardIssueFilters({
+      q: '  dashboard  ',
+      lane: ['ready', 'unsupported'],
+      status: 'ready,done',
+      priority: ['HIGH', 'invalid'],
+      evidenceKind: 'screenshot,csqr_lite_scorecard',
+      csqr: 'any',
+      signal: 'csqr',
+    }),
+    {
+      q: 'dashboard',
+      lane: ['ready'],
+      status: ['ready', 'done'],
+      priority: ['high'],
+      evidenceKind: ['screenshot', 'csqr_lite_scorecard'],
+      csqr: [],
+      signal: 'csqr',
+      hasCsqr: true,
+    },
+  );
+});
+
 function createEmptySummary(): OrchestrationInspectorSummary {
   return {
     summaryVersion: 1,
@@ -203,6 +302,10 @@ function createEmptySummary(): OrchestrationInspectorSummary {
       flags: [],
     },
   };
+}
+
+function cardIds(viewModel: ReturnType<typeof buildOrchestrationDashboardViewModel>): string[] {
+  return viewModel.issueLanes.flatMap((lane) => lane.cards.map((card) => card.id));
 }
 
 function createPopulatedSummary(): OrchestrationInspectorSummary {

@@ -371,6 +371,7 @@ test('harness_inspector: capabilities returns tool catalog, bundled skills, and 
   const tools = result.tools as Array<Record<string, unknown>>;
   const skills = result.skills as Array<Record<string, unknown>>;
   const orchestration = result.orchestration as Record<string, unknown>;
+  const orchestrationDashboard = orchestration.dashboard as Record<string, unknown>;
   const mem0 = result.mem0 as Record<string, unknown>;
 
   assert.ok(tools.some((entry) => entry.name === 'harness_inspector'));
@@ -405,7 +406,19 @@ test('harness_inspector: capabilities returns tool catalog, bundled skills, and 
     compilePlan: 'compile_plan',
     dispatchReady: 'dispatch_ready',
     inspectState: 'inspect_state',
+    dashboardView: 'dashboard_view',
   });
+  assert.equal(orchestrationDashboard.filteredViewAction, 'dashboard_view');
+  assert.deepEqual(orchestrationDashboard.supportedFilters, [
+    'q',
+    'lane',
+    'status',
+    'priority',
+    'evidenceKind',
+    'csqr',
+    'hasCsqr',
+    'signal',
+  ]);
   assert.equal(mem0.configured, true);
   assert.equal(mem0.available, true);
   assert.equal(mem0.adapterId, 'stub-test');
@@ -1252,6 +1265,166 @@ test('harness_symphony: inspect_state rejects unknown campaignName as a structur
           campaignName: 'Missing Campaign',
         }),
       /No campaign found with name "Missing Campaign"/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_symphony: dashboard_view returns a filtered stable dashboard model', async () => {
+  const tempDir = createTempDir('symphony-dashboard-view-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-ready-proof', 'ready', [], {
+      priority: 'high',
+      createdAt: '2026-01-01T00:01:00Z',
+    });
+    seedIssue(dbPath, 'issue-progress', 'in_progress', [], {
+      priority: 'medium',
+      createdAt: '2026-01-01T00:02:00Z',
+    });
+    seedIssue(dbPath, 'issue-done', 'done', [], {
+      priority: 'low',
+      createdAt: '2026-01-01T00:03:00Z',
+    });
+
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      runStatement(
+        db.connection,
+        `INSERT INTO leases (
+           id, workspace_id, project_id, campaign_id, issue_id, agent_id, status,
+           acquired_at, expires_at, last_heartbeat_at, released_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          'lease-progress',
+          'ws-1',
+          'proj-1',
+          null,
+          'issue-progress',
+          'agent-progress',
+          'active',
+          '2026-01-01T00:02:00Z',
+          '2026-01-01T01:02:00Z',
+          '2026-01-01T00:05:00Z',
+          null,
+        ],
+      );
+      runStatement(
+        db.connection,
+        `INSERT INTO artifacts (
+           id, workspace_id, project_id, campaign_id, issue_id, kind, path, metadata_json, created_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          'artifact-ready-screenshot',
+          'ws-1',
+          'proj-1',
+          null,
+          'issue-ready-proof',
+          'screenshot',
+          'artifacts/issue-ready-proof/dashboard.png',
+          JSON.stringify({ evidencePacketId: 'packet-ready' }),
+          '2026-01-01T00:04:00Z',
+        ],
+      );
+      runStatement(
+        db.connection,
+        `INSERT INTO artifacts (
+           id, workspace_id, project_id, campaign_id, issue_id, kind, path, metadata_json, created_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          'artifact-done-csqr',
+          'ws-1',
+          'proj-1',
+          null,
+          'issue-done',
+          'csqr_lite_scorecard',
+          'artifacts/issue-done/csqr.json',
+          JSON.stringify({ csqrLiteScorecardId: 'scorecard-done' }),
+          '2026-01-01T00:05:00Z',
+        ],
+      );
+    } finally {
+      db.close();
+    }
+
+    const { internals } = createServer();
+    const symphony = internals.tools.get('harness_symphony')!;
+    const filtered = (await symphony.handler({
+      action: 'dashboard_view',
+      dbPath,
+      projectId: 'proj-1',
+      filters: {
+        status: ['ready'],
+        priority: ['high'],
+        evidenceKind: ['screenshot'],
+        signal: 'evidence',
+      },
+    })) as {
+      viewModel: {
+        overview: {
+          totalIssues: number;
+          readyCount: number;
+          activeIssueCount: number;
+          evidenceArtifactCount: number;
+        };
+        issueLanes: Array<{ id: string; count: number; cards: Array<{ id: string }> }>;
+      };
+      filters: {
+        active: boolean;
+        unfilteredIssueCount: number;
+        filteredIssueCount: number;
+        applied: Record<string, unknown>;
+      };
+      summary?: unknown;
+      _meta: Record<string, unknown>;
+    };
+
+    assert.equal('summary' in filtered, false);
+    assert.equal(filtered.filters.active, true);
+    assert.equal(filtered.filters.unfilteredIssueCount, 3);
+    assert.equal(filtered.filters.filteredIssueCount, 1);
+    assert.deepEqual(filtered.filters.applied.status, ['ready']);
+    assert.deepEqual(
+      filtered.viewModel.issueLanes.map((lane) => lane.id),
+      ['ready', 'in_progress', 'blocked', 'needs_recovery', 'pending', 'done', 'failed', 'other'],
+    );
+    assert.deepEqual(
+      filtered.viewModel.issueLanes.flatMap((lane) => lane.cards.map((card) => card.id)),
+      ['issue-ready-proof'],
+    );
+    assert.equal(filtered.viewModel.overview.totalIssues, 1);
+    assert.equal(filtered.viewModel.overview.readyCount, 1);
+    assert.equal(filtered.viewModel.overview.activeIssueCount, 0);
+    assert.equal(filtered.viewModel.overview.evidenceArtifactCount, 1);
+
+    const csqrFiltered = (await symphony.handler({
+      action: 'dashboard_view',
+      dbPath,
+      projectId: 'proj-1',
+      filters: {
+        csqr: 'any',
+      },
+    })) as {
+      viewModel: { issueLanes: Array<{ cards: Array<{ id: string }> }> };
+      filters: { applied: Record<string, unknown> };
+    };
+
+    assert.deepEqual(csqrFiltered.filters.applied, {
+      lane: [],
+      status: [],
+      priority: [],
+      evidenceKind: [],
+      csqr: [],
+      hasCsqr: true,
+    });
+    assert.deepEqual(
+      csqrFiltered.viewModel.issueLanes.flatMap((lane) => lane.cards.map((card) => card.id)),
+      ['issue-done'],
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
