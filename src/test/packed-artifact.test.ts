@@ -203,11 +203,14 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         import {
           buildWorktreeAllocation as buildFromRoot,
           createDefaultGpt5HighSubagents,
+          referenceOrchestrationE2eEvidenceMatrix as matrixFromRoot,
         } from 'harness-os';
         import {
           buildWorktreeAllocation as buildFromSubpath,
+          assertReferenceOrchestrationEvidencePacket,
           inspectOrchestration,
           orchestrationPlanSchema,
+          referenceOrchestrationE2eEvidenceMatrix as matrixFromSubpath,
         } from 'harness-os/orchestration';
 
         const worktree = buildFromSubpath({
@@ -220,6 +223,8 @@ test('packed npm artifact executes installable bins and host smoke paths', async
 
         console.log(JSON.stringify({
           rootBuilderType: typeof buildFromRoot,
+          assertionType: typeof assertReferenceOrchestrationEvidencePacket,
+          matrixSameReference: matrixFromRoot === matrixFromSubpath,
           inspectorType: typeof inspectOrchestration,
           schemaType: typeof orchestrationPlanSchema.safeParse,
           worktreeBranch: worktree.branch,
@@ -230,6 +235,8 @@ test('packed npm artifact executes installable bins and host smoke paths', async
 
       const parsed = JSON.parse(result.stdout) as {
         rootBuilderType: string;
+        assertionType: string;
+        matrixSameReference: boolean;
         inspectorType: string;
         schemaType: string;
         worktreeBranch: string;
@@ -238,6 +245,8 @@ test('packed npm artifact executes installable bins and host smoke paths', async
 
       assert.deepEqual(parsed, {
         rootBuilderType: 'function',
+        assertionType: 'function',
+        matrixSameReference: true,
         inspectorType: 'function',
         schemaType: 'function',
         worktreeBranch: 'feat/m4-i1-public-exports',
