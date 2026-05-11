@@ -614,6 +614,120 @@ select {
   min-width: 0;
 }
 
+.proof-summary,
+.evidence-group-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0;
+}
+
+.proof-section {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.section-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+  letter-spacing: -0.02em;
+}
+
+.proof-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.evidence-group,
+.scorecard-card,
+.criterion-card,
+.proof-detail-summary {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.evidence-group,
+.scorecard-card {
+  padding: 14px;
+}
+
+.criterion-card {
+  padding: 12px;
+}
+
+.proof-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.proof-meta-grid div {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 9px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.proof-meta-grid dt {
+  color: var(--subtle);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.proof-meta-grid dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.provenance-list,
+.criterion-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.scorecard-outcome {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.scorecard-outcome.passed {
+  color: var(--success);
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.scorecard-outcome.failed {
+  color: var(--danger);
+  background: rgba(251, 113, 133, 0.1);
+}
+
+.proof-detail-summary {
+  margin-top: 12px;
+  padding: 10px;
+}
+
+.proof-detail-summary summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
 .setup-root {
   display: grid;
   place-items: center;
@@ -669,6 +783,8 @@ select {
   .metric-grid,
   .evidence-grid,
   .detail-grid,
+  .proof-card-grid,
+  .proof-meta-grid,
   .field-row,
   .board {
     grid-template-columns: 1fr;

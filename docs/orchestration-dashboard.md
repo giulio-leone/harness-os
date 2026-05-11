@@ -45,7 +45,8 @@ Issue cards link to `/issues/<issue-id>`. The detail page uses the same dashboar
 - current issue state and next action;
 - active and released lease/agent history;
 - checkpoint notes explaining what the agent wrote while working;
-- evidence artifacts with metadata, paths, timeline events, worktree references, and scorecard identifiers;
+- a proof-layer drilldown that groups evidence artifacts by kind, shows raw metadata safely, and links each artifact back to checkpoint provenance;
+- CSQR-lite scorecard cards with pass/fail status, weighted average, target score, criterion-level scores, notes, and evidence artifact references;
 - a live claim action for `ready` issues.
 
 Claim controls use the canonical HarnessOS session lifecycle through `SessionOrchestrator`; they do not write leases directly. `pending` issues must be promoted by the queue before the dashboard enables claim, preserving dependency gates and avoiding `pending -> in_progress` state-machine bypasses. Optional claim host routing variables:
