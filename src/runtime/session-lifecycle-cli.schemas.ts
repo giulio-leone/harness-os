@@ -7,6 +7,7 @@ import {
 } from '../contracts/memory-contracts.js';
 import { taskStatusSchema } from '../contracts/task-domain.js';
 import { harnessHostCapabilitiesSchema } from '../contracts/policy-contracts.js';
+import { csqrLiteScorecardSchema } from '../contracts/csqr-lite-contracts.js';
 
 export const SESSION_LIFECYCLE_CLI_CONTRACT_VERSION = '6.0.0' as const;
 
@@ -15,6 +16,13 @@ export const sessionArtifactReferenceSchema = z
     id: z.string().min(1).optional(),
     kind: z.string().min(1),
     path: z.string().min(1),
+  })
+  .strict();
+
+export const sessionCsqrLiteScorecardArtifactSchema = z
+  .object({
+    path: z.string().min(1),
+    scorecard: csqrLiteScorecardSchema,
   })
   .strict();
 
@@ -101,6 +109,10 @@ const sessionCheckpointInputBaseSchema = z
     nextStep: z.string().min(1),
     blockedReason: z.string().min(1).optional(),
     artifactIds: z.array(z.string().min(1)).optional(),
+    csqrLiteScorecards: z
+      .array(sessionCsqrLiteScorecardArtifactSchema)
+      .min(1)
+      .optional(),
     persistToMem0: z.boolean().optional(),
     memoryKind: memoryKindSchema.optional(),
     memoryContent: z.string().min(1).optional(),

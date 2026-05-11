@@ -174,8 +174,8 @@ Use this tool for the live execution lifecycle.
 | --- | --- |
 | `begin` | claim or resume the next ready issue |
 | `begin_recovery` | explicitly take over a `needs_recovery` issue |
-| `checkpoint` | save progress, status, artifacts, or mem0 summaries |
-| `close` | mark the issue done/failed and release the lease |
+| `checkpoint` | save progress, status, artifact ids, CSQR-lite scorecards, or mem0 summaries |
+| `close` | mark the issue done/failed, persist final CSQR-lite scorecards, and release the lease |
 | `advance` | close the current issue and atomically claim the next ready one |
 | `heartbeat` | extend lease freshness during long-running work |
 
@@ -185,6 +185,94 @@ Example:
 {
   "action": "begin",
   "projectName": "HarnessOS"
+}
+```
+
+CSQR-lite scorecards are first-class checkpoint evidence. Pass them through `input.csqrLiteScorecards` for `checkpoint`, or `closeInput.csqrLiteScorecards` for `close`/`advance`; HarnessOS stores each scorecard as a `csqr_lite_scorecard` artifact, appends the generated artifact id to the checkpoint payload, and emits `csqr_lite_scorecards_registered`.
+
+Close example with a run-scoped scorecard:
+
+```json
+{
+  "action": "close",
+  "sessionToken": "ST-abc123",
+  "closeInput": {
+    "title": "done",
+    "summary": "All gates passed with durable CSQR-lite evidence.",
+    "taskStatus": "done",
+    "nextStep": "Claim the next ready issue.",
+    "csqrLiteScorecards": [
+      {
+        "path": ".harness/evidence/csqr/run-scorecard.json",
+        "scorecard": {
+          "contractVersion": "1.0.0",
+          "id": "run-scorecard",
+          "scope": "run",
+          "runId": "RUN-123",
+          "summary": "Automated quality score for the completed run.",
+          "criteria": [
+            {
+              "id": "correctness",
+              "dimension": "correctness",
+              "name": "Correctness",
+              "description": "Required behavior works and compatibility is preserved.",
+              "weight": 2
+            },
+            {
+              "id": "security",
+              "dimension": "security",
+              "name": "Security",
+              "description": "No unsafe input handling, secrets, or authorization regressions.",
+              "weight": 1.5
+            },
+            {
+              "id": "quality",
+              "dimension": "quality",
+              "name": "Quality",
+              "description": "The implementation remains maintainable and type-safe.",
+              "weight": 1
+            },
+            {
+              "id": "runtime-evidence",
+              "dimension": "runtime_evidence",
+              "name": "Runtime evidence",
+              "description": "Deterministic test and E2E artifacts prove the run.",
+              "weight": 1.5
+            }
+          ],
+          "scores": [
+            {
+              "criterionId": "correctness",
+              "score": 9,
+              "notes": "Behavior was verified by deterministic tests.",
+              "evidenceArtifactIds": ["test-report"]
+            },
+            {
+              "criterionId": "security",
+              "score": 8,
+              "notes": "Security-sensitive paths were reviewed.",
+              "evidenceArtifactIds": ["review-log"]
+            },
+            {
+              "criterionId": "quality",
+              "score": 8,
+              "notes": "Typecheck and maintainability gates passed.",
+              "evidenceArtifactIds": ["typecheck-report"]
+            },
+            {
+              "criterionId": "runtime-evidence",
+              "score": 10,
+              "notes": "E2E report and screenshots are attached.",
+              "evidenceArtifactIds": ["e2e-report", "screenshot-main-flow"]
+            }
+          ],
+          "weightedAverage": 8.8333,
+          "targetScore": 8,
+          "createdAt": "2026-05-10T20:00:00.000Z"
+        }
+      }
+    ]
+  }
 }
 ```
 

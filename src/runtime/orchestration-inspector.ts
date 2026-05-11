@@ -39,6 +39,7 @@ export interface OrchestrationArtifactReferences {
   worktreePath?: string;
   subagentId?: string;
   evidencePacketId?: string;
+  csqrLiteScorecardId?: string;
 }
 
 export interface OrchestrationArtifactSummary {
@@ -115,6 +116,7 @@ export interface OrchestrationInspectorSummary {
       worktreePaths: string[];
       subagentIds: string[];
       evidencePacketIds: string[];
+      csqrLiteScorecardIds: string[];
     };
   };
   events: {
@@ -388,12 +390,17 @@ function collectArtifactReferences(
   const worktreePaths = new Set<string>();
   const subagentIds = new Set<string>();
   const evidencePacketIds = new Set<string>();
+  const csqrLiteScorecardIds = new Set<string>();
 
   for (const artifact of artifacts) {
     addIfPresent(worktreeIds, artifact.references.worktreeId);
     addIfPresent(worktreePaths, artifact.references.worktreePath);
     addIfPresent(subagentIds, artifact.references.subagentId);
     addIfPresent(evidencePacketIds, artifact.references.evidencePacketId);
+    addIfPresent(
+      csqrLiteScorecardIds,
+      artifact.references.csqrLiteScorecardId,
+    );
   }
 
   return {
@@ -401,6 +408,7 @@ function collectArtifactReferences(
     worktreePaths: sortedSet(worktreePaths),
     subagentIds: sortedSet(subagentIds),
     evidencePacketIds: sortedSet(evidencePacketIds),
+    csqrLiteScorecardIds: sortedSet(csqrLiteScorecardIds),
   };
 }
 
@@ -537,7 +545,10 @@ function isWorktreePathArtifactKind(kind: string): boolean {
 }
 
 function isEvidenceArtifact(artifact: OrchestrationArtifactSummary): boolean {
-  return artifact.kind.toLowerCase().includes('evidence');
+  return (
+    artifact.kind === 'csqr_lite_scorecard' ||
+    artifact.kind.toLowerCase().includes('evidence')
+  );
 }
 
 function extractArtifactReferences(
@@ -567,6 +578,12 @@ function extractArtifactReferences(
       'evidence_id',
       'packetId',
       'packet_id',
+    ]),
+    csqrLiteScorecardId: readMetadataString(metadata, [
+      'csqrLiteScorecardId',
+      'csqr_lite_scorecard_id',
+      'scorecardId',
+      'scorecard_id',
     ]),
   };
 }

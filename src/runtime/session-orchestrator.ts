@@ -11,6 +11,10 @@ import type {
   SessionMemoryContext,
 } from '../contracts/session-contracts.js';
 import { isTerminalTaskStatus } from '../contracts/session-contracts.js';
+import {
+  csqrLiteScorecardSchema,
+  type CsqrLiteScorecard,
+} from '../contracts/csqr-lite-contracts.js';
 import type {
   Mem0Adapter,
   MemoryKind,
@@ -54,6 +58,7 @@ export interface SessionCheckpointResult {
   memoryId?: string;
   mem0WriteSkippedReason?: string;
   promotedIssueIds?: string[];
+  csqrLiteScorecardArtifactIds?: string[];
 }
 
 export interface SessionAdvanceResult {
@@ -92,7 +97,24 @@ interface CanonicalCheckpointState {
   context: SessionContext;
   checkpoint: CheckpointRecord;
   promotedIssueIds: string[];
+  csqrLiteScorecardArtifacts: PersistedCsqrLiteScorecardArtifact[];
 }
+
+interface PersistedCsqrLiteScorecardArtifact {
+  id: string;
+  kind: 'csqr_lite_scorecard';
+  path: string;
+  scorecardId: string;
+  scope: CsqrLiteScorecard['scope'];
+  runId?: string;
+  assignmentId?: string;
+  weightedAverage: number;
+  targetScore: number;
+}
+
+const CSQR_LITE_SCORECARD_ARTIFACT_KIND = 'csqr_lite_scorecard' as const;
+const CSQR_LITE_SCORECARD_METADATA_SOURCE = 'csqr_lite_scorecard' as const;
+const MAX_CSQR_LITE_SCORECARD_JSON_BYTES = 64 * 1024;
 
 export class SessionOrchestrator {
   private readonly mem0Bridge: Mem0SessionBridge;
@@ -622,6 +644,17 @@ export class SessionOrchestrator {
     );
     updateRunStatus(connection, context.runId, input.taskStatus, undefined);
 
+    const csqrLiteScorecardArtifacts = persistCsqrLiteScorecardArtifacts(
+      connection,
+      context,
+      input.csqrLiteScorecards ?? [],
+      createdAt,
+    );
+    const artifactIds = [
+      ...(input.artifactIds ?? []),
+      ...csqrLiteScorecardArtifacts.map((artifact) => artifact.id),
+    ];
+
     const checkpoint = writeCheckpoint(connection, {
       runId: context.runId,
       issueId: context.issueId,
@@ -629,9 +662,19 @@ export class SessionOrchestrator {
       summary: input.summary,
       taskStatus: input.taskStatus,
       nextStep: input.nextStep,
-      artifactIds: input.artifactIds ?? [],
+      artifactIds,
       createdAt,
     });
+
+    if (csqrLiteScorecardArtifacts.length > 0) {
+      appendCsqrLiteScorecardsRegisteredEvent(connection, {
+        runId: context.runId,
+        issueId: context.issueId,
+        checkpointId: checkpoint.id,
+        artifacts: csqrLiteScorecardArtifacts,
+        createdAt,
+      });
+    }
 
     return {
       context: {
@@ -641,6 +684,7 @@ export class SessionOrchestrator {
       },
       checkpoint,
       promotedIssueIds: [],
+      csqrLiteScorecardArtifacts,
     };
   }
 
@@ -734,6 +778,12 @@ export class SessionOrchestrator {
       ...(canonical.promotedIssueIds.length > 0
         ? { promotedIssueIds: canonical.promotedIssueIds }
         : {}),
+      ...(canonical.csqrLiteScorecardArtifacts.length > 0
+        ? {
+            csqrLiteScorecardArtifactIds:
+              canonical.csqrLiteScorecardArtifacts.map((artifact) => artifact.id),
+          }
+        : {}),
     };
 
     if (!shouldPersistMemory) {
@@ -746,7 +796,7 @@ export class SessionOrchestrator {
       checkpointId: canonical.checkpoint.id,
       kind: input.memoryKind ?? defaultMemoryKindForStatus(input.taskStatus),
       content: input.memoryContent ?? input.summary,
-      artifactIds: input.artifactIds ?? [],
+      artifactIds: canonical.checkpoint.artifactIds,
       metadata: input.metadata ?? {},
       note: input.nextStep,
     });
@@ -1058,6 +1108,182 @@ function persistSessionArtifacts(
       path,
     };
   });
+}
+
+function persistCsqrLiteScorecardArtifacts(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  context: SessionContext,
+  scorecardArtifacts: NonNullable<SessionCheckpointInput['csqrLiteScorecards']>,
+  createdAt: string,
+): PersistedCsqrLiteScorecardArtifact[] {
+  const persistedArtifacts: PersistedCsqrLiteScorecardArtifact[] = [];
+  const seenScorecardIds = new Set<string>();
+  const seenPaths = new Set<string>();
+
+  for (const [index, input] of scorecardArtifacts.entries()) {
+    const scorecard = csqrLiteScorecardSchema.parse(input.scorecard);
+    const path = normalizeNonEmptyArtifactField(
+      `csqrLiteScorecards[${index}].path`,
+      input.path,
+    );
+
+    if (seenScorecardIds.has(scorecard.id)) {
+      throw new Error(
+        `Duplicate CSQR-lite scorecard id "${scorecard.id}" in checkpoint input.`,
+      );
+    }
+    if (seenPaths.has(path)) {
+      throw new Error(
+        `Duplicate CSQR-lite scorecard path "${path}" in checkpoint input.`,
+      );
+    }
+    seenScorecardIds.add(scorecard.id);
+    seenPaths.add(path);
+
+    if (scorecard.scope === 'run' && scorecard.runId !== context.runId) {
+      throw new Error(
+        `csqrLiteScorecards[${index}].scorecard.runId must match the active session runId "${context.runId}".`,
+      );
+    }
+
+    const scorecardJson = serializeCsqrLiteScorecard(scorecard, index);
+    const artifactId = buildCsqrLiteScorecardArtifactId(scorecard.id, index);
+    const persistedArtifact: PersistedCsqrLiteScorecardArtifact = {
+      id: artifactId,
+      kind: CSQR_LITE_SCORECARD_ARTIFACT_KIND,
+      path,
+      scorecardId: scorecard.id,
+      scope: scorecard.scope,
+      ...(scorecard.runId !== undefined ? { runId: scorecard.runId } : {}),
+      ...(scorecard.assignmentId !== undefined
+        ? { assignmentId: scorecard.assignmentId }
+        : {}),
+      weightedAverage: scorecard.weightedAverage,
+      targetScore: scorecard.targetScore,
+    };
+
+    runStatement(
+      connection,
+      `INSERT INTO artifacts (
+         id, workspace_id, project_id, campaign_id, issue_id, kind, path,
+         metadata_json, created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        artifactId,
+        context.workspaceId,
+        context.projectId,
+        context.campaignId ?? null,
+        context.issueId,
+        CSQR_LITE_SCORECARD_ARTIFACT_KIND,
+        path,
+        JSON.stringify(
+          buildCsqrLiteScorecardArtifactMetadata({
+            context,
+            scorecard,
+            scorecardJson,
+          }),
+        ),
+        createdAt,
+      ],
+    );
+
+    persistedArtifacts.push(persistedArtifact);
+  }
+
+  return persistedArtifacts;
+}
+
+function appendCsqrLiteScorecardsRegisteredEvent(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    runId: string;
+    issueId: string;
+    checkpointId: string;
+    artifacts: readonly PersistedCsqrLiteScorecardArtifact[];
+    createdAt: string;
+  },
+): void {
+  appendRunEvent(connection, {
+    runId: input.runId,
+    issueId: input.issueId,
+    kind: 'csqr_lite_scorecards_registered',
+    payload: {
+      source: CSQR_LITE_SCORECARD_METADATA_SOURCE,
+      checkpointId: input.checkpointId,
+      artifactIds: input.artifacts.map((artifact) => artifact.id),
+      scorecards: input.artifacts.map((artifact) => ({
+        artifactId: artifact.id,
+        path: artifact.path,
+        scorecardId: artifact.scorecardId,
+        scope: artifact.scope,
+        ...(artifact.runId !== undefined ? { runId: artifact.runId } : {}),
+        ...(artifact.assignmentId !== undefined
+          ? { assignmentId: artifact.assignmentId }
+          : {}),
+        weightedAverage: artifact.weightedAverage,
+        targetScore: artifact.targetScore,
+      })),
+    },
+    createdAt: input.createdAt,
+  });
+}
+
+function buildCsqrLiteScorecardArtifactMetadata(input: {
+  context: SessionContext;
+  scorecard: CsqrLiteScorecard;
+  scorecardJson: string;
+}): Record<string, string> {
+  return {
+    source: CSQR_LITE_SCORECARD_METADATA_SOURCE,
+    scorecardId: input.scorecard.id,
+    csqrLiteScorecardId: input.scorecard.id,
+    contractVersion: input.scorecard.contractVersion,
+    scope: input.scorecard.scope,
+    scorecardScope: input.scorecard.scope,
+    sessionRunId: input.context.runId,
+    issueId: input.context.issueId,
+    weightedAverage: String(input.scorecard.weightedAverage),
+    targetScore: String(input.scorecard.targetScore),
+    criteriaCount: String(input.scorecard.criteria.length),
+    scoreCount: String(input.scorecard.scores.length),
+    ...(input.scorecard.runId !== undefined
+      ? {
+          runId: input.scorecard.runId,
+          scorecardRunId: input.scorecard.runId,
+        }
+      : {}),
+    ...(input.scorecard.assignmentId !== undefined
+      ? { assignmentId: input.scorecard.assignmentId }
+      : {}),
+    scorecardJson: input.scorecardJson,
+  };
+}
+
+function serializeCsqrLiteScorecard(
+  scorecard: CsqrLiteScorecard,
+  index: number,
+): string {
+  const scorecardJson = JSON.stringify(scorecard);
+  const byteLength = Buffer.byteLength(scorecardJson, 'utf8');
+
+  if (byteLength > MAX_CSQR_LITE_SCORECARD_JSON_BYTES) {
+    throw new Error(
+      `csqrLiteScorecards[${index}].scorecard is ${byteLength} bytes; maximum supported metadata payload is ${MAX_CSQR_LITE_SCORECARD_JSON_BYTES} bytes.`,
+    );
+  }
+
+  return scorecardJson;
+}
+
+function buildCsqrLiteScorecardArtifactId(
+  scorecardId: string,
+  index: number,
+): string {
+  return normalizeNonEmptyArtifactField(
+    'id',
+    `csqr-lite-scorecard-${sanitizeArtifactIdSegment(scorecardId)}-${String(index + 1).padStart(3, '0')}-${randomUUID()}`,
+  );
 }
 
 function supersedePriorSessionArtifacts(

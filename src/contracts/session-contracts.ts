@@ -4,6 +4,7 @@ import type {
   MemorySearchResult,
 } from './memory-contracts.js';
 import type { HarnessHostCapabilities } from './policy-contracts.js';
+import type { CsqrLiteScorecard } from './csqr-lite-contracts.js';
 import type { TaskStatus } from './task-domain.js';
 export type { TaskStatus } from './task-domain.js';
 
@@ -25,6 +26,11 @@ export interface SessionArtifactReference {
   id?: string;
   kind: string;
   path: string;
+}
+
+export interface SessionCsqrLiteScorecardArtifact {
+  path: string;
+  scorecard: CsqrLiteScorecard;
 }
 
 export interface SessionOrchestrationConflictGuard {
@@ -116,6 +122,7 @@ export interface SessionCheckpointInput {
   nextStep: string;
   blockedReason?: string;
   artifactIds?: string[];
+  csqrLiteScorecards?: SessionCsqrLiteScorecardArtifact[];
   persistToMem0?: boolean;
   memoryKind?: MemoryKind;
   memoryContent?: string;

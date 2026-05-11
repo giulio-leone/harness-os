@@ -32,8 +32,8 @@ The orchestration layer deliberately reuses schema-v5 tables:
 | `leases` | Atomic ownership, per-agent capacity accounting, stale-lease recovery, and active-run exclusion. |
 | `runs` | Session attempt identity, host attribution, status, and legacy artifact notes compatibility. |
 | `checkpoints` | Claim/resume/recovery and close evidence anchors through `artifact_ids_json`. |
-| `events` | Immutable lifecycle facts such as `session_artifacts_registered` and `session_artifacts_released`. |
-| `artifacts` | Durable references to worktrees, branches, candidate file sets, assignments, screenshots, logs, reports, and future scorecards. |
+| `events` | Immutable lifecycle facts such as `session_artifacts_registered`, `csqr_lite_scorecards_registered`, and `session_artifacts_released`. |
+| `artifacts` | Durable references to worktrees, branches, candidate file sets, assignments, screenshots, logs, reports, and CSQR-lite scorecards. |
 | `active_sessions` | Public MCP/CLI session token continuity, including retry-safe begin calls for the same run id. |
 
 No orchestration-specific table is required for v1 because the existing store already has the three invariants orchestration needs: transactional ownership (`leases`), durable evidence (`artifacts` + `checkpoints`), and auditable history (`events`).
@@ -90,9 +90,13 @@ When a later resume or retry registers the same logical artifact (`kind` + `path
 
 On `close()`, session-managed artifacts for the run are released even when `releaseLease` is `false`, because artifact liveness tracks session ownership rather than lease-release policy. The close checkpoint remains the final task-state evidence anchor.
 
+`checkpoint()` and `close()` also accept `csqrLiteScorecards`, each with a scorecard JSON payload and a durable path for the corresponding artifact file. The runtime validates the CSQR-lite contract, persists each entry as an immutable `artifacts.kind = "csqr_lite_scorecard"` row, stores a stringified scorecard in `metadata_json.scorecardJson`, links the generated artifact ids from `checkpoints.artifact_ids_json`, and emits `csqr_lite_scorecards_registered`. Run-scoped scorecards must match the active session `runId`; assignment-scoped scorecards are allowed by `assignmentId` because assignment ownership is created by the orchestration dispatcher rather than the session context.
+
+CSQR-lite scorecard artifacts are not session-owned worktree/handoff artifacts, so close-time `session_artifacts_released` events do not release or mutate them. If the same scorecard path is reported in later checkpoints, HarnessOS keeps a new immutable evidence row instead of overwriting the previous one; M6-I3 threshold checks should select the latest applicable checkpoint artifact when evaluating completion.
+
 ### 6. Inspector boundary
 
-`inspectOrchestration()` is read-only and never initializes or mutates a database. It summarizes issue state, active leases, artifacts grouped by kind, recent events, extracted worktree/subagent/evidence references, and health flags. Branch marker artifacts are not treated as worktree path artifacts; only actual worktree path artifacts participate in duplicate active worktree health checks.
+`inspectOrchestration()` is read-only and never initializes or mutates a database. It summarizes issue state, active leases, artifacts grouped by kind, recent events, extracted worktree/subagent/evidence/CSQR-lite references, and health flags. Branch marker artifacts are not treated as worktree path artifacts; only actual worktree path artifacts participate in duplicate active worktree health checks.
 
 ### 7. Public API boundary
 
@@ -130,7 +134,9 @@ The model has four required dimensions:
 | `quality` | Code remains maintainable, type-safe, cohesive, performant enough for its path, and free of unnecessary technical debt. | `1.0` |
 | `runtime_evidence` | Deterministic test, build, E2E, screenshot, state-export, or CI artifacts prove the run. | `1.5` |
 
-Every CSQR-lite scorecard must include 4-15 criteria, at least one criterion per dimension, exactly one 1-10 score for every criterion, and evidence artifact ids for every score. `weightedAverage` is normalized as `sum(score * weight) / sum(weight)` and rounded to four decimal places, so future M6-I3 thresholds can compare scorecards deterministically. `targetScore` defaults to `8.0` but remains informational in M6-I1; persistence as `csqr_lite_scorecard` evidence artifacts is reserved for M6-I2, and gate threshold enforcement is reserved for M6-I3.
+Every CSQR-lite scorecard must include 4-15 criteria, at least one criterion per dimension, exactly one 1-10 score for every criterion, and evidence artifact ids for every score. `weightedAverage` is normalized as `sum(score * weight) / sum(weight)` and rounded to four decimal places. `targetScore` defaults to `8.0` and remains informational until M6-I3.
+
+M6-I2 adds persistence without threshold enforcement: scorecards passed to `harness_session(action: "checkpoint" | "close")` are durable `csqr_lite_scorecard` artifacts, checkpoint artifact references, Mem0 provenance artifact ids when memory is written, and `csqr_lite_scorecards_registered` events. M6-I3 will consume these persisted scorecards to enforce automated completion thresholds.
 
 ## Current v1 limits
 
@@ -138,4 +144,4 @@ Every CSQR-lite scorecard must include 4-15 criteria, at least one criterion per
 - Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
 - Evidence packet validation and deterministic reference E2E assertions exist; the full E2E/CI gate runner remains host-owned until later hardening milestones.
 - Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.
-- Dashboard and CSQR-lite scorecard persistence build on this evidence substrate rather than changing the schema.
+- Dashboard APIs and CSQR-lite threshold enforcement build on this evidence substrate rather than changing the schema.
