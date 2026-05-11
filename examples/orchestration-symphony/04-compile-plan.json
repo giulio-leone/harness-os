@@ -1,0 +1,99 @@
+{
+  "tool": "harness_symphony",
+  "input": {
+    "action": "compile_plan",
+    "milestones": [
+      {
+        "id": "m-symphony-reference",
+        "key": "symphony-reference",
+        "description": "Reference fully agentic Symphony orchestration flow"
+      }
+    ],
+    "slices": [
+      {
+        "id": "slice-contracts",
+        "milestoneId": "m-symphony-reference",
+        "task": "Stabilize orchestration contracts and public exports",
+        "priority": "critical",
+        "size": "M",
+        "evidenceRequirements": [
+          {
+            "id": "contracts-typecheck",
+            "kind": "typecheck_report",
+            "value": "evidence://symphony/contracts/typecheck",
+            "label": "Contracts typecheck report"
+          },
+          {
+            "id": "contracts-state-export",
+            "kind": "state_export",
+            "value": "evidence://symphony/contracts/state-export",
+            "label": "Contracts state export"
+          }
+        ]
+      },
+      {
+        "id": "slice-dispatch",
+        "milestoneId": "m-symphony-reference",
+        "task": "Dispatch ready issues into conflict-free worktrees",
+        "priority": "critical",
+        "size": "M",
+        "evidenceRequirements": [
+          {
+            "id": "dispatch-e2e-report",
+            "kind": "e2e_report",
+            "value": "evidence://symphony/dispatch/e2e-report",
+            "label": "Dispatch E2E report"
+          },
+          {
+            "id": "dispatch-screenshot",
+            "kind": "screenshot",
+            "value": "evidence://symphony/dispatch/screenshot",
+            "label": "Dispatch state screenshot"
+          }
+        ]
+      },
+      {
+        "id": "slice-evidence",
+        "milestoneId": "m-symphony-reference",
+        "task": "Persist deterministic E2E evidence packets",
+        "priority": "high",
+        "size": "M",
+        "evidenceRequirements": [
+          {
+            "id": "evidence-test-report",
+            "kind": "test_report",
+            "value": "evidence://symphony/evidence/test-report",
+            "label": "Evidence packet test report"
+          },
+          {
+            "id": "evidence-screenshot",
+            "kind": "screenshot",
+            "value": "evidence://symphony/evidence/screenshot",
+            "label": "Evidence inspector screenshot"
+          }
+        ]
+      },
+      {
+        "id": "slice-docs",
+        "milestoneId": "m-symphony-reference",
+        "task": "Update operator docs and host handoff examples",
+        "priority": "high",
+        "size": "S",
+        "evidenceRequirements": [
+          {
+            "id": "docs-review-feedback",
+            "kind": "review_feedback",
+            "value": "evidence://symphony/docs/review-feedback",
+            "label": "Docs review feedback"
+          },
+          {
+            "id": "docs-state-export",
+            "kind": "state_export",
+            "value": "evidence://symphony/docs/state-export",
+            "label": "Docs state export"
+          }
+        ]
+      }
+    ]
+  }
+}

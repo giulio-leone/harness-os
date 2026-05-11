@@ -144,6 +144,33 @@ If you need a concise “which tool do I call next?” guide instead of raw exam
 2. [cli-reference.md](cli-reference.md) for installable commands
 3. [workload-profiles.md](workload-profiles.md) for workload-specific setup
 
+## 6. Fully Agentic Symphony Flow
+
+Use the Symphony flow when a project already has a campaign scope and you want ready issues to run without human runtime checkpoints. The runtime assigns work; the host executes it.
+
+The stabilized MCP sequence is:
+
+1. Discover support with `harness_inspector(action: "capabilities")` and read `orchestration.requiredDispatchFields`.
+2. Create or reuse a workspace/campaign with `harness_orchestrator(action: "init_workspace")` and `harness_orchestrator(action: "create_campaign")`.
+3. Convert tracker-style milestones and slices with `harness_symphony(action: "compile_plan")`.
+4. Send the returned `planIssuesPayload.milestones` to `harness_orchestrator(action: "plan_issues")`.
+5. Fan out ready work with `harness_symphony(action: "dispatch_ready")`, using `repoRoot`, `worktreeRoot`, `baseRef`, `host`, `hostCapabilities`, and up to four compatible `gpt-5-high` subagents.
+6. In the host runtime, create the physical git worktrees, launch the assigned subagents, run the deterministic gates, capture screenshots/E2E reports, and save evidence with `harness_artifacts(action: "save")`.
+7. Inspect health with `harness_symphony(action: "inspect_state")` before closing the worker sessions.
+
+Reference payloads for that sequence live under [`../examples/orchestration-symphony/`](../examples/orchestration-symphony/). Each JSON file uses this shape:
+
+```json
+{
+  "tool": "harness_symphony",
+  "input": {
+    "action": "dispatch_ready"
+  }
+}
+```
+
+Pass the `input` object to the named MCP `tool`. Replace placeholder workspace and campaign ids with the values returned by `init_workspace` and `create_campaign`, then replace placeholder issue ids in the dispatch/evidence examples with the ids returned by `plan_issues` or by `harness_inspector(action: "export")`.
+
 <!-- GENERATED:GETTING-STARTED-EXAMPLES:START -->
 Generated from the canonical public contract model:
 
@@ -163,7 +190,7 @@ Every session-lifecycle payload must declare `"contractVersion": "6.0.0"`.
 Run any example with `npm run session:lifecycle < examples/session-lifecycle/<file>`.
 <!-- GENERATED:GETTING-STARTED-EXAMPLES:END -->
 
-## 6. Run the Scheduler Injector
+## 7. Run the Scheduler Injector
 
 Once tasks are queued and promoted to `ready`, run the scheduler injector:
 

@@ -1,0 +1,6 @@
+{
+  "tool": "harness_inspector",
+  "input": {
+    "action": "capabilities"
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "tool": "harness_symphony",
+  "input": {
+    "action": "dispatch_ready",
+    "projectName": "HarnessOS",
+    "campaignName": "Symphony Reference Campaign",
+    "repoRoot": "/workspace/harness-os",
+    "worktreeRoot": "/workspace/harness-os-worktrees",
+    "baseRef": "main",
+    "host": "copilot",
+    "hostCapabilities": {
+      "workloadClasses": ["default", "typescript"],
+      "capabilities": ["node", "sqlite", "git", "e2e", "screenshots"]
+    },
+    "dispatchId": "dispatch-symphony-reference",
+    "branchPrefix": "feat/symphony",
+    "cleanupPolicy": "delete_on_completion",
+    "maxConcurrentAgents": 4,
+    "maxAssignments": 4,
+    "mem0Enabled": false,
+    "issueRequirements": [
+      {
+        "issueId": "ISSUE-CONTRACTS",
+        "requiredCapabilityIds": ["contracts"],
+        "candidateFilePaths": [
+          "src/contracts/orchestration-contracts.ts",
+          "src/orchestration.ts"
+        ]
+      },
+      {
+        "issueId": "ISSUE-DISPATCH",
+        "requiredCapabilityIds": ["dispatch"],
+        "candidateFilePaths": [
+          "src/runtime/orchestration-dispatcher.ts",
+          "src/runtime/orchestration-conflicts.ts"
+        ]
+      },
+      {
+        "issueId": "ISSUE-EVIDENCE",
+        "requiredCapabilityIds": ["evidence"],
+        "candidateFilePaths": [
+          "src/runtime/orchestration-reference-evidence.ts",
+          "src/test/orchestration-e2e-evidence.test.ts"
+        ]
+      },
+      {
+        "issueId": "ISSUE-DOCS",
+        "requiredCapabilityIds": ["docs"],
+        "candidateFilePaths": [
+          "README.md",
+          "docs/mcp-tools.md",
+          "docs/orchestration-no-schema-v1.md"
+        ]
+      }
+    ],
+    "subagents": [
+      {
+        "id": "agent-contracts",
+        "role": "contracts",
+        "host": "copilot",
+        "modelProfile": "gpt-5-high",
+        "capabilities": ["contracts", "typescript", "node"],
+        "maxConcurrency": 1
+      },
+      {
+        "id": "agent-dispatch",
+        "role": "dispatch",
+        "host": "copilot",
+        "modelProfile": "gpt-5-high",
+        "capabilities": ["dispatch", "typescript", "sqlite"],
+        "maxConcurrency": 1
+      },
+      {
+        "id": "agent-evidence",
+        "role": "evidence",
+        "host": "copilot",
+        "modelProfile": "gpt-5-high",
+        "capabilities": ["evidence", "typescript", "e2e", "screenshots"],
+        "maxConcurrency": 1
+      },
+      {
+        "id": "agent-docs",
+        "role": "docs",
+        "host": "copilot",
+        "modelProfile": "gpt-5-high",
+        "capabilities": ["docs", "markdown", "examples"],
+        "maxConcurrency": 1
+      }
+    ]
+  }
+}

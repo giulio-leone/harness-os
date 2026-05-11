@@ -115,6 +115,8 @@ HarnessOS now ships a deterministic reference matrix for automated orchestration
 
 The matrix requires run-scoped `typecheck_report` and `state_export` artifacts, plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every planned assignment. Reference packet assertions verify that those assignment artifacts are produced by the planned subagent, belong to the planned worktree, are covered by passed gates, and have codebase reference coverage. This keeps the no-human-review path auditable while leaving actual shell commands, screenshots, and CI execution host-owned.
 
+The copy/paste MCP handoff for this flow lives in [`../examples/orchestration-symphony/`](../examples/orchestration-symphony/). Those examples are intentionally host-facing rather than generated session-lifecycle CLI payloads: they show the stable `harness_inspector` -> `harness_orchestrator` -> `harness_symphony` -> `harness_artifacts` call chain and are validated against the public MCP input schemas in the test suite.
+
 ## Current v1 limits
 
 - The dispatcher assigns work and claims sessions; it is not yet a long-running daemon.

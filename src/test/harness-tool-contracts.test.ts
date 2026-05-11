@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -60,6 +60,33 @@ test('getting started generated example section stays in sync with canonical mod
     ),
     renderGettingStartedExamplesSection(),
   );
+});
+
+test('orchestration MCP examples stay compatible with public tool schemas', () => {
+  const contractByName = new Map(
+    getHarnessToolContracts().map((contract) => [contract.name, contract]),
+  );
+  const examplesDir = join(repoRoot, 'examples', 'orchestration-symphony');
+  const files = readdirSync(examplesDir)
+    .filter((fileName) => fileName.endsWith('.json'))
+    .sort();
+
+  assert.ok(files.length > 0, 'orchestration examples should not be empty');
+
+  for (const fileName of files) {
+    const examplePath = join(examplesDir, fileName);
+    const parsed = JSON.parse(readFileSync(examplePath, 'utf8')) as unknown;
+
+    assert.ok(isRecord(parsed), `${fileName} should contain a JSON object`);
+    const toolName = parsed.tool;
+    if (typeof toolName !== 'string') {
+      assert.fail(`${fileName} should declare tool`);
+    }
+
+    const contract = contractByName.get(toolName);
+    assert.ok(contract, `${fileName} should use a known Harness MCP tool`);
+    contract.inputSchema.parse(parsed.input);
+  }
 });
 
 test('tool input JSON schemas stay compatible with object-root function calling clients', () => {

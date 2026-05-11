@@ -1,0 +1,20 @@
+{
+  "tool": "harness_orchestrator",
+  "input": {
+    "action": "create_campaign",
+    "workspaceId": "W-REPLACE-WITH-INIT-WORKSPACE-OUTPUT",
+    "projectName": "HarnessOS",
+    "campaignName": "Symphony Reference Campaign",
+    "objective": "Run fully agentic orchestration with isolated worktrees and deterministic evidence gates.",
+    "policy": {
+      "owner": "platform-automation",
+      "serviceLevel": {
+        "resolveWithinMinutes": 240
+      },
+      "dispatch": {
+        "workloadClass": "typescript",
+        "requiredHostCapabilities": ["node", "sqlite", "git"]
+      }
+    }
+  }
+}

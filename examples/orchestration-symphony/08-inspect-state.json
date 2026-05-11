@@ -1,0 +1,9 @@
+{
+  "tool": "harness_symphony",
+  "input": {
+    "action": "inspect_state",
+    "projectName": "HarnessOS",
+    "campaignName": "Symphony Reference Campaign",
+    "eventLimit": 25
+  }
+}
