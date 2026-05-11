@@ -125,7 +125,7 @@ Use this tool for fully agentic Symphony-style orchestration after the project/c
 
 Discovery prerequisite: call `harness_inspector(action: "capabilities")` and read the returned `orchestration.requiredDispatchFields` before invoking `dispatch_ready`. The MCP server records deterministic worktree assignments and runtime metadata artifacts; the host remains responsible for creating the physical git worktrees, launching compatible subagents, running quality gates, attaching accepted evidence artifacts, and cleaning up worktrees.
 
-Dashboard boundary: package consumers can call `loadOrchestrationDashboardViewModel()` for a Linear-like read model over the same inspected state, or `buildOrchestrationDashboardViewModel()` when they already have an `inspect_state.summary`. The view model is UI-oriented and stable: it includes ordered issue lanes, active-agent lease cards, evidence counters, recent timeline entries, and card/global health flags without requiring the UI to recompute orchestration relationships.
+Dashboard boundary: package consumers can call `loadOrchestrationDashboardViewModel()` for a Linear-like read model over the same inspected state, or `buildOrchestrationDashboardViewModel()` when they already have an `inspect_state.summary`. The view model is UI-oriented and stable: it includes ordered issue lanes, active-agent lease cards, evidence counters, recent timeline entries, and card/global health flags without requiring the UI to recompute orchestration relationships. The full Next.js implementation lives in [`../apps/dashboard`](../apps/dashboard) and is documented in [`orchestration-dashboard.md`](orchestration-dashboard.md).
 
 Reference evidence matrix: fully agentic hosts should attach at least run-scoped `typecheck_report`, `state_export`, and `csqr_lite_scorecard` artifacts plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every dispatched assignment. HarnessOS includes deterministic reference packet assertions for this matrix, while command execution and screenshot capture stay host-owned.
 
@@ -306,4 +306,5 @@ Use this tool for maintenance, not for normal task execution.
 
 - Use [cli-reference.md](cli-reference.md) if you need the installable CLI commands instead of the MCP surface.
 - Use [workload-profiles.md](workload-profiles.md) if you need to pick the right host profile before calling tools.
+- Use [orchestration-dashboard.md](orchestration-dashboard.md) if you need to run or verify the Linear-like dashboard.
 - Use [../.github/skills/README.md](../.github/skills/README.md) if you need the bundled prompt/skill layer that sits on top of the MCP runtime.

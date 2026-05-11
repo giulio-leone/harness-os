@@ -1,6 +1,11 @@
 node_modules/
 dist/
+.next/
+apps/dashboard/.next/
+apps/dashboard/out/
+apps/dashboard/.vercel/
 .env
 .DS_Store
 __pycache__/
 *.pyc
+*.tsbuildinfo
