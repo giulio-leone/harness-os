@@ -202,6 +202,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
       const result = runInstalledPackageScript(installRoot, baseEnv, `
         import {
           buildCsqrLiteScorecard,
+          buildOrchestrationDashboardViewModel,
           buildWorktreeAllocation as buildFromRoot,
           createDefaultGpt5HighSubagents,
           csqrLiteDefaultCriteria,
@@ -212,6 +213,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           assertReferenceOrchestrationEvidencePacket,
           csqrLiteScorecardSchema,
           inspectOrchestration,
+          orchestrationDashboardViewModelSchema,
           orchestrationPlanSchema,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromSubpath,
         } from 'harness-os/orchestration';
@@ -228,8 +230,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           rootBuilderType: typeof buildFromRoot,
           assertionType: typeof assertReferenceOrchestrationEvidencePacket,
           scorecardBuilderType: typeof buildCsqrLiteScorecard,
+          dashboardBuilderType: typeof buildOrchestrationDashboardViewModel,
           csqrCriteriaCount: csqrLiteDefaultCriteria.length,
           csqrSchemaType: typeof csqrLiteScorecardSchema.safeParse,
+          dashboardSchemaType: typeof orchestrationDashboardViewModelSchema.safeParse,
           matrixSameReference: matrixFromRoot === matrixFromSubpath,
           inspectorType: typeof inspectOrchestration,
           schemaType: typeof orchestrationPlanSchema.safeParse,
@@ -243,8 +247,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         rootBuilderType: string;
         assertionType: string;
         scorecardBuilderType: string;
+        dashboardBuilderType: string;
         csqrCriteriaCount: number;
         csqrSchemaType: string;
+        dashboardSchemaType: string;
         matrixSameReference: boolean;
         inspectorType: string;
         schemaType: string;
@@ -256,8 +262,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         rootBuilderType: 'function',
         assertionType: 'function',
         scorecardBuilderType: 'function',
+        dashboardBuilderType: 'function',
         csqrCriteriaCount: 4,
         csqrSchemaType: 'function',
+        dashboardSchemaType: 'function',
         matrixSameReference: true,
         inspectorType: 'function',
         schemaType: 'function',
