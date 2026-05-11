@@ -21,6 +21,7 @@ import {
   SessionLifecycleInspector,
   SessionLifecycleMcpServer,
   SessionOrchestrator,
+  buildCsqrLiteScorecard,
   openHarnessDatabase,
   promoteEligiblePendingIssues,
   runStatement,
@@ -88,6 +89,10 @@ class InMemoryMem0Adapter implements Mem0Adapter {
       .filter((candidate) => matchesScope(candidate.scope as any, input.scope as any))
       .slice(0, input.limit)
       .map((memory) => ({ memory, score: 1 }));
+  }
+
+  listStoredMemories(): readonly PublicMemoryRecord[] {
+    return this.memories;
   }
 
   async updateMemory(): Promise<PublicMemoryRecord> { throw new Error('stub'); }
@@ -160,6 +165,48 @@ function withHostRoutingContext<
     typeof TEST_HOST_ROUTING_CONTEXT & {
       artifacts: Array<{ kind: string; path: string }>;
     };
+}
+
+function buildLifecycleCsqrLiteScorecard(input: {
+  id: string;
+  runId: string;
+  evidenceArtifactId: string;
+}) {
+  return buildCsqrLiteScorecard({
+    id: input.id,
+    scope: 'run',
+    runId: input.runId,
+    createdAt: '2026-05-10T20:00:00.000Z',
+    metadata: {
+      source: 'session-lifecycle-test',
+    },
+    scores: [
+      {
+        criterionId: 'correctness',
+        score: 9,
+        notes: 'Lifecycle state and checkpoint references were persisted.',
+        evidenceArtifactIds: [input.evidenceArtifactId],
+      },
+      {
+        criterionId: 'security',
+        score: 8,
+        notes: 'No sensitive fields or unsafe fallback paths were introduced.',
+        evidenceArtifactIds: [input.evidenceArtifactId],
+      },
+      {
+        criterionId: 'quality',
+        score: 8,
+        notes: 'The persistence path remains additive and schema-v5 compatible.',
+        evidenceArtifactIds: [input.evidenceArtifactId],
+      },
+      {
+        criterionId: 'runtime-evidence',
+        score: 10,
+        notes: 'Database artifact, checkpoint, event, and inspector evidence exists.',
+        evidenceArtifactIds: [input.evidenceArtifactId],
+      },
+    ],
+  });
 }
 
 test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', async () => {
@@ -397,6 +444,325 @@ test('orchestrator persists session artifacts through artifacts checkpoints and 
       );
     } finally {
       closed.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestrator persists CSQR-lite scorecards as checkpoint evidence', async () => {
+  const tempDir = createTempDir('orchestrator-csqr-scorecards-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-csqr-evidence',
+      task: 'Persist CSQR-lite scorecards as automated evidence',
+      status: 'ready',
+      nextBestAction: 'Close with a persisted scorecard.',
+    });
+
+    const mem0Adapter = new InMemoryMem0Adapter();
+    const orchestrator = new SessionOrchestrator({
+      mem0Adapter,
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const session = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-csqr-evidence',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: true,
+      agentId: 'agent-csqr',
+      preferredIssueId: 'issue-csqr-evidence',
+    }));
+    const scorecard = buildLifecycleCsqrLiteScorecard({
+      id: 'scorecard-run-csqr-evidence',
+      runId: session.runId,
+      evidenceArtifactId: session.artifacts[0]?.id ?? 'session-artifact',
+    });
+    const closed = await orchestrator.close(session, {
+      title: 'done',
+      summary: 'Closed with a durable CSQR-lite scorecard.',
+      taskStatus: 'done',
+      nextStep: 'Evaluate the next ready issue.',
+      csqrLiteScorecards: [
+        {
+          path: '/evidence/csqr/run-csqr-evidence.json',
+          scorecard,
+        },
+      ],
+    });
+    const scorecardArtifactId = closed.csqrLiteScorecardArtifactIds?.[0];
+
+    assert.ok(scorecardArtifactId);
+    assert.deepEqual(closed.checkpoint.artifactIds, [scorecardArtifactId]);
+    assert.deepEqual(
+      mem0Adapter.listStoredMemories().at(-1)?.provenance.artifactIds,
+      [scorecardArtifactId],
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const artifact = selectOne<{
+        id: string;
+        kind: string;
+        path: string;
+        metadata_json: string;
+      }>(
+        inspected.connection,
+        `SELECT id, kind, path, metadata_json
+         FROM artifacts
+         WHERE id = ?`,
+        [scorecardArtifactId],
+      );
+      const checkpoint = selectOne<{ artifact_ids_json: string }>(
+        inspected.connection,
+        `SELECT artifact_ids_json
+         FROM checkpoints
+         WHERE id = ?`,
+        [closed.checkpoint.id],
+      );
+      const payloadEvent = selectOne<{ payload: string }>(
+        inspected.connection,
+        `SELECT payload
+         FROM events
+         WHERE run_id = ? AND kind = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        ['run-csqr-evidence', 'checkpoint_payload'],
+      );
+      const registeredEvent = selectOne<{ payload: string }>(
+        inspected.connection,
+        `SELECT payload
+         FROM events
+         WHERE run_id = ? AND kind = ?
+         LIMIT 1`,
+        ['run-csqr-evidence', 'csqr_lite_scorecards_registered'],
+      );
+      const releaseEvent = selectOne<{ payload: string }>(
+        inspected.connection,
+        `SELECT payload
+         FROM events
+         WHERE run_id = ? AND kind = ?
+         LIMIT 1`,
+        ['run-csqr-evidence', 'session_artifacts_released'],
+      );
+      const metadata = parseJsonObject(artifact?.metadata_json);
+      const scorecardJson = typeof metadata['scorecardJson'] === 'string'
+        ? metadata['scorecardJson']
+        : '{}';
+      const summary = inspectOrchestration({ dbPath, projectId: 'project-1' });
+
+      assert.equal(artifact?.kind, 'csqr_lite_scorecard');
+      assert.equal(artifact?.path, '/evidence/csqr/run-csqr-evidence.json');
+      assert.equal(metadata['source'], 'csqr_lite_scorecard');
+      assert.equal(metadata['csqrLiteScorecardId'], scorecard.id);
+      assert.equal(metadata['runId'], session.runId);
+      assert.equal(metadata['weightedAverage'], String(scorecard.weightedAverage));
+      assert.deepEqual(JSON.parse(scorecardJson), scorecard);
+      assert.deepEqual(parseJsonArray(checkpoint?.artifact_ids_json), [
+        scorecardArtifactId,
+      ]);
+      assert.deepEqual(
+        parseJsonArray(parseJsonObject(payloadEvent?.payload)['artifactIds']),
+        [scorecardArtifactId],
+      );
+      assert.deepEqual(
+        parseJsonArray(parseJsonObject(registeredEvent?.payload)['artifactIds']),
+        [scorecardArtifactId],
+      );
+      assert.equal(
+        parseJsonArray(parseJsonObject(releaseEvent?.payload)['artifactIds'])
+          .includes(scorecardArtifactId),
+        false,
+      );
+      assert.deepEqual(
+        summary.artifacts.references.csqrLiteScorecardIds,
+        [scorecard.id],
+      );
+      assert.equal(
+        summary.health.flags.some(
+          (flag) =>
+            flag.kind === 'done_issue_missing_evidence' &&
+            flag.issueId === 'issue-csqr-evidence',
+        ),
+        false,
+      );
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestrator rejects run-scoped CSQR-lite scorecards for other runs', async () => {
+  const tempDir = createTempDir('orchestrator-csqr-run-mismatch-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-csqr-mismatch',
+      task: 'Reject mismatched scorecard run identity',
+      status: 'ready',
+      nextBestAction: 'Attempt an invalid checkpoint.',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const session = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-csqr-mismatch',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: 'agent-csqr-mismatch',
+      preferredIssueId: 'issue-csqr-mismatch',
+    }));
+    const scorecard = buildLifecycleCsqrLiteScorecard({
+      id: 'scorecard-other-run',
+      runId: 'run-other',
+      evidenceArtifactId: 'evidence-other',
+    });
+
+    await assert.rejects(
+      () => orchestrator.checkpoint(session, {
+        title: 'invalid',
+        summary: 'This scorecard belongs to a different run.',
+        taskStatus: 'in_progress',
+        nextStep: 'Retry with a matching scorecard.',
+        csqrLiteScorecards: [
+          {
+            path: '/evidence/csqr/run-other.json',
+            scorecard,
+          },
+        ],
+      }),
+      /scorecard\.runId must match the active session runId/,
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const artifacts = selectAll<{ id: string }>(
+        inspected.connection,
+        `SELECT id
+         FROM artifacts
+         WHERE issue_id = ? AND kind = ?`,
+        ['issue-csqr-mismatch', 'csqr_lite_scorecard'],
+      );
+      const invalidCheckpoint = selectOne<{ id: string }>(
+        inspected.connection,
+        `SELECT id
+         FROM checkpoints
+         WHERE run_id = ? AND title = ?`,
+        ['run-csqr-mismatch', 'invalid'],
+      );
+
+      assert.deepEqual(artifacts, []);
+      assert.equal(invalidCheckpoint, null);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_session MCP checkpoint persists CSQR-lite scorecards', async () => {
+  const tempDir = createTempDir('mcp-csqr-scorecards-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-mcp-csqr',
+      task: 'Persist scorecards through the MCP harness_session boundary',
+      status: 'ready',
+      nextBestAction: 'Checkpoint through MCP.',
+    });
+
+    const server = new SessionLifecycleMcpServer(
+      new SessionLifecycleAdapter(
+        new SessionOrchestrator({
+          defaultCheckpointFreshnessSeconds: 3600,
+        }),
+      ),
+    );
+    const tools = (server as unknown as {
+      tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
+    }).tools;
+    const sessionTool = tools.get('harness_session');
+
+    assert.ok(sessionTool);
+
+    const started = (await sessionTool.handler({
+      action: 'begin',
+      sessionId: 'run-mcp-csqr',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: 'agent-mcp-csqr',
+      preferredIssueId: 'issue-mcp-csqr',
+      ...TEST_HOST_ROUTING_CONTEXT,
+    })) as {
+      sessionToken: string;
+      context: { runId: string; artifacts: Array<{ id?: string }> };
+    };
+    const scorecard = buildLifecycleCsqrLiteScorecard({
+      id: 'scorecard-mcp-csqr',
+      runId: started.context.runId,
+      evidenceArtifactId: started.context.artifacts[0]?.id ?? 'mcp-artifact',
+    });
+    const checkpointed = (await sessionTool.handler({
+      action: 'checkpoint',
+      dbPath,
+      sessionToken: started.sessionToken,
+      input: {
+        title: 'checkpoint',
+        summary: 'Persisted CSQR-lite scorecard through MCP.',
+        taskStatus: 'in_progress',
+        nextStep: 'Continue.',
+        csqrLiteScorecards: [
+          {
+            path: '/evidence/csqr/run-mcp-csqr.json',
+            scorecard,
+          },
+        ],
+      },
+    })) as {
+      result: {
+        csqrLiteScorecardArtifactIds?: string[];
+      };
+    };
+    const scorecardArtifactId =
+      checkpointed.result.csqrLiteScorecardArtifactIds?.[0];
+
+    assert.ok(scorecardArtifactId);
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const artifact = selectOne<{ id: string; kind: string }>(
+        inspected.connection,
+        `SELECT id, kind
+         FROM artifacts
+         WHERE id = ?`,
+        [scorecardArtifactId],
+      );
+
+      assert.equal(artifact?.kind, 'csqr_lite_scorecard');
+    } finally {
+      inspected.close();
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
