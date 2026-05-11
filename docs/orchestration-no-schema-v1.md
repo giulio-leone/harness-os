@@ -100,6 +100,8 @@ CSQR-lite scorecard artifacts are not session-owned worktree/handoff artifacts, 
 
 `inspectOrchestration()` is read-only and never initializes or mutates a database. It summarizes issue state, active leases, artifacts grouped by kind, recent events, extracted worktree/subagent/evidence/CSQR-lite references, and health flags. Branch marker artifacts are not treated as worktree path artifacts; only actual worktree path artifacts participate in duplicate active worktree health checks.
 
+`loadOrchestrationDashboardViewModel()` and `buildOrchestrationDashboardViewModel()` are the dashboard API boundary for the future Linear-like UI. The loader delegates to `inspectOrchestration()`; the builder is pure and converts the inspector summary into a stable v1 view model with ordered issue lanes, enriched issue cards, active-agent lease cards, evidence rollups, recent timeline entries, and routed health flags. Unknown or future issue statuses are preserved in the `other` lane so no issue card disappears when orchestration status vocabulary evolves.
+
 ### 7. Public API boundary
 
 The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, and the MCP surface exposes a dedicated `harness_symphony` tool for compile/dispatch/inspect orchestration workflows.
