@@ -3,15 +3,27 @@ import test from 'node:test';
 
 import type { InspectOrchestrationInput } from 'harness-os/orchestration';
 
-import { getDashboardViewModel } from '../lib/dashboard-data';
+import { getDashboardPageState, getDashboardViewModel } from '../lib/dashboard-data';
 import { demoDashboardViewModel } from '../lib/demo-view-model';
 
-test('dashboard data loader returns the validated demo model when no database path is configured', () => {
-  const viewModel = getDashboardViewModel({});
+test('dashboard data loader requires live configuration unless demo mode is explicit', () => {
+  const state = getDashboardPageState({});
 
-  assert.equal(viewModel.scope.projectId, 'harness-os');
-  assert.equal(viewModel.overview.totalIssues, 7);
-  assert.deepEqual(viewModel, demoDashboardViewModel);
+  assert.equal(state.kind, 'not_configured');
+  assert.match(state.message, /HARNESS_DASHBOARD_DB_PATH/);
+  assert.throws(() => getDashboardViewModel({}), /HARNESS_DASHBOARD_DB_PATH/);
+});
+
+test('dashboard data loader returns the demo model only when demo mode is explicit', () => {
+  const state = getDashboardPageState({ HARNESS_DASHBOARD_DEMO: '1' });
+
+  assert.equal(state.kind, 'ready');
+  assert.equal(state.kind === 'ready' ? state.mode : null, 'demo');
+  assert.equal(state.kind === 'ready' ? state.viewModel.scope.projectId : null, 'harness-os');
+  assert.deepEqual(
+    getDashboardViewModel({ HARNESS_DASHBOARD_DEMO: 'true' }),
+    demoDashboardViewModel,
+  );
 });
 
 test('dashboard data loader forwards environment scope to the orchestration view-model loader', () => {
@@ -65,5 +77,10 @@ test('dashboard data loader rejects incomplete or invalid live database configur
         HARNESS_DASHBOARD_EVENT_LIMIT: 'twenty',
       }),
     /HARNESS_DASHBOARD_EVENT_LIMIT must be a positive integer/,
+  );
+
+  assert.throws(
+    () => getDashboardViewModel({ HARNESS_DASHBOARD_DEMO: 'maybe' }),
+    /HARNESS_DASHBOARD_DEMO must be one of/,
   );
 });

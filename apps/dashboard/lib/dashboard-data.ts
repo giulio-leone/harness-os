@@ -13,22 +13,66 @@ export interface DashboardEnvironment {
   HARNESS_DASHBOARD_CAMPAIGN_ID?: string;
   HARNESS_DASHBOARD_ISSUE_ID?: string;
   HARNESS_DASHBOARD_EVENT_LIMIT?: string;
+  HARNESS_DASHBOARD_DEMO?: string;
 }
 
 export type DashboardViewModelLoader = (
   input: InspectOrchestrationInput,
 ) => OrchestrationDashboardViewModel;
 
+export type DashboardPageState =
+  | {
+      kind: 'ready';
+      mode: 'live' | 'demo';
+      viewModel: OrchestrationDashboardViewModel;
+    }
+  | {
+      kind: 'not_configured';
+      message: string;
+      requiredEnvironment: string[];
+    };
+
 const DEFAULT_EVENT_LIMIT = 40;
+const REQUIRED_LIVE_ENVIRONMENT = [
+  'HARNESS_DASHBOARD_DB_PATH',
+  'HARNESS_DASHBOARD_PROJECT_ID',
+] as const;
 
 export function getDashboardViewModel(
   env: DashboardEnvironment = readDashboardEnvironment(),
   loader: DashboardViewModelLoader = loadOrchestrationDashboardViewModel,
 ): OrchestrationDashboardViewModel {
+  const state = getDashboardPageState(env, loader);
+
+  if (state.kind !== 'ready') {
+    throw new Error(state.message);
+  }
+
+  return state.viewModel;
+}
+
+export function getDashboardPageState(
+  env: DashboardEnvironment = readDashboardEnvironment(),
+  loader: DashboardViewModelLoader = loadOrchestrationDashboardViewModel,
+): DashboardPageState {
   const dbPath = normalizeOptional(env.HARNESS_DASHBOARD_DB_PATH);
+  const demoEnabled = parseDemoFlag(env.HARNESS_DASHBOARD_DEMO);
 
   if (dbPath === undefined) {
-    return orchestrationDashboardViewModelSchema.parse(demoDashboardViewModel);
+    if (demoEnabled) {
+      return {
+        kind: 'ready',
+        mode: 'demo',
+        viewModel: orchestrationDashboardViewModelSchema.parse(demoDashboardViewModel),
+      };
+    }
+
+    return {
+      kind: 'not_configured',
+      message:
+        'Set HARNESS_DASHBOARD_DB_PATH and HARNESS_DASHBOARD_PROJECT_ID to render live HarnessOS orchestration data, or set HARNESS_DASHBOARD_DEMO=1 for sample data.',
+      requiredEnvironment: [...REQUIRED_LIVE_ENVIRONMENT],
+    };
   }
 
   const input: InspectOrchestrationInput = {
@@ -42,7 +86,11 @@ export function getDashboardViewModel(
     eventLimit: parseEventLimit(env.HARNESS_DASHBOARD_EVENT_LIMIT),
   };
 
-  return orchestrationDashboardViewModelSchema.parse(loader(input));
+  return {
+    kind: 'ready',
+    mode: 'live',
+    viewModel: orchestrationDashboardViewModelSchema.parse(loader(input)),
+  };
 }
 
 function readDashboardEnvironment(): DashboardEnvironment {
@@ -52,6 +100,7 @@ function readDashboardEnvironment(): DashboardEnvironment {
     HARNESS_DASHBOARD_CAMPAIGN_ID: process.env.HARNESS_DASHBOARD_CAMPAIGN_ID,
     HARNESS_DASHBOARD_ISSUE_ID: process.env.HARNESS_DASHBOARD_ISSUE_ID,
     HARNESS_DASHBOARD_EVENT_LIMIT: process.env.HARNESS_DASHBOARD_EVENT_LIMIT,
+    HARNESS_DASHBOARD_DEMO: process.env.HARNESS_DASHBOARD_DEMO,
   };
 }
 
@@ -88,4 +137,22 @@ function parseEventLimit(value: string | undefined): number {
   }
 
   return parsed;
+}
+
+function parseDemoFlag(value: string | undefined): boolean {
+  const normalized = normalizeOptional(value)?.toLowerCase();
+
+  if (normalized === undefined) {
+    return false;
+  }
+
+  if (['1', 'true', 'yes'].includes(normalized)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no'].includes(normalized)) {
+    return false;
+  }
+
+  throw new Error('HARNESS_DASHBOARD_DEMO must be one of: 1, true, yes, 0, false, no.');
 }

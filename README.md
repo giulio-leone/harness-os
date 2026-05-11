@@ -120,7 +120,7 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.
 ### Linear-Like Orchestration Dashboard
 - A full Next.js dashboard lives in [`apps/dashboard`](apps/dashboard) and consumes the stable `harness-os/orchestration` dashboard view model.
 - The app renders campaign metrics, ordered issue lanes, active leases, evidence summaries, CSQR-lite scorecards, recent events, and health flags without adding React/Next.js to the core package runtime dependencies.
-- Run `npm run dashboard:install && npm run dashboard:dev` for the demo campaign, or set `HARNESS_DASHBOARD_DB_PATH` and `HARNESS_DASHBOARD_PROJECT_ID` to read a live HarnessOS SQLite database.
+- Run `npm run dashboard:install`, then start it with `HARNESS_DASHBOARD_DB_PATH` and `HARNESS_DASHBOARD_PROJECT_ID` to read a live HarnessOS SQLite database. Demo data is opt-in only via `HARNESS_DASHBOARD_DEMO=1`.
 - Use `npm run dashboard:verify` after dashboard changes; it rebuilds the core package, installs app dependencies from lockfile, runs typecheck/tests, and executes `next build`.
 - The operator runbook is documented in [docs/orchestration-dashboard.md](docs/orchestration-dashboard.md).
 
