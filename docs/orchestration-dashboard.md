@@ -12,6 +12,7 @@ HarnessOS ships a full Next.js dashboard under `apps/dashboard` for the Symphony
 - recent orchestration events and health flags;
 - a live create-ticket form that inserts real `ready` issues into the configured project/campaign scope.
 - clickable issue cards that open a detail view with current status, active/historical agents, checkpoints, timeline events, and full evidence artifact metadata.
+- URL-driven issue and evidence filters for text, lane, status, priority, artifact kind, CSQR scorecard, and operational signals.
 
 The UI consumes `loadOrchestrationDashboardViewModel()` and `buildOrchestrationDashboardViewModel()` from `harness-os/orchestration`; it does not recompute orchestration relationships from raw SQLite rows. Write actions use the server-only `harness-os/dashboard-server` package subpath so the Next.js app can create scoped tickets without importing the MCP server bundle.
 
@@ -39,6 +40,8 @@ HARNESS_DASHBOARD_DEMO=1 npm run dashboard:dev
 ```
 
 In live mode, the create-ticket form writes directly to the configured SQLite database. New dashboard-created tickets are standalone `ready` issues with no milestone dependency, scoped to `HARNESS_DASHBOARD_PROJECT_ID` and the optional `HARNESS_DASHBOARD_CAMPAIGN_ID`. Demo mode renders mutation forms disabled so sample data cannot be mistaken for mutable state.
+
+The board filters are server-rendered through query parameters so filtered views are shareable and require no client-side JavaScript. Supported parameters are `q`, `lane`, `status`, `priority`, `evidenceKind`, `csqr`, and `signal`. `csqr=any` or `signal=csqr` shows issues with any CSQR-lite scorecard; `signal` also accepts `active`, `evidence`, `health`, and `blocked`. Filtering keeps every stable lane visible, recomputes overview totals for the visible issue set, and preserves the contract meaning of `activeIssueCount` as the filtered `in_progress` lane count.
 
 Issue cards link to `/issues/<issue-id>`. The detail page uses the same dashboard scope plus the route issue id to show:
 
