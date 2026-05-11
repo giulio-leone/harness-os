@@ -1,6 +1,6 @@
 export * from './contracts/plan.schema.js';
 export * from './contracts/memory-contracts.js';
-export * from './contracts/orchestration-contracts.js';
+export * from './orchestration.js';
 export * from './contracts/policy-contracts.js';
 export * from './contracts/session-contracts.js';
 export * from './contracts/task-domain.js';
