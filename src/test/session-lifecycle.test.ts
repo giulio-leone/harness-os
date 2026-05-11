@@ -171,11 +171,14 @@ function buildLifecycleCsqrLiteScorecard(input: {
   id: string;
   runId: string;
   evidenceArtifactId: string;
+  score?: number;
 }) {
+  const score = input.score ?? 8;
   return buildCsqrLiteScorecard({
     id: input.id,
     scope: 'run',
     runId: input.runId,
+    targetScore: 8,
     createdAt: '2026-05-10T20:00:00.000Z',
     metadata: {
       source: 'session-lifecycle-test',
@@ -183,30 +186,45 @@ function buildLifecycleCsqrLiteScorecard(input: {
     scores: [
       {
         criterionId: 'correctness',
-        score: 9,
+        score,
         notes: 'Lifecycle state and checkpoint references were persisted.',
         evidenceArtifactIds: [input.evidenceArtifactId],
       },
       {
         criterionId: 'security',
-        score: 8,
+        score,
         notes: 'No sensitive fields or unsafe fallback paths were introduced.',
         evidenceArtifactIds: [input.evidenceArtifactId],
       },
       {
         criterionId: 'quality',
-        score: 8,
+        score,
         notes: 'The persistence path remains additive and schema-v5 compatible.',
         evidenceArtifactIds: [input.evidenceArtifactId],
       },
       {
         criterionId: 'runtime-evidence',
-        score: 10,
+        score,
         notes: 'Database artifact, checkpoint, event, and inspector evidence exists.',
         evidenceArtifactIds: [input.evidenceArtifactId],
       },
     ],
   });
+}
+
+function buildLifecycleCsqrLiteScorecardEvidence(input: {
+  id: string;
+  runId: string;
+  evidenceArtifactId: string;
+  path?: string;
+  score?: number;
+}) {
+  return [
+    {
+      path: input.path ?? `/evidence/csqr/${input.runId}.json`,
+      scorecard: buildLifecycleCsqrLiteScorecard(input),
+    },
+  ];
 }
 
 test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', async () => {
@@ -262,6 +280,11 @@ test('orchestrator supports claim, resume, checkpoint, mem0 recall, and close', 
       taskStatus: 'done',
       nextStep: 'Select the next ready issue.',
       artifactIds: ['artifact-2'],
+      csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+        id: 'scorecard-run-2',
+        runId: resumedSession.runId,
+        evidenceArtifactId: 'artifact-2',
+      }),
     });
 
     const inspected = openHarnessDatabase({ dbPath });
@@ -405,6 +428,11 @@ test('orchestrator persists session artifacts through artifacts checkpoints and 
       taskStatus: 'done',
       nextStep: 'Continue with the next ready issue.',
       artifactIds: artifactIds.filter((id): id is string => id !== undefined),
+      csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+        id: 'scorecard-run-artifact-flow',
+        runId: session.runId,
+        evidenceArtifactId: artifactIds[0] ?? 'artifact-flow',
+      }),
     });
 
     const closed = openHarnessDatabase({ dbPath });
@@ -414,8 +442,9 @@ test('orchestrator persists session artifacts through artifacts checkpoints and 
         `SELECT id, metadata_json
          FROM artifacts
          WHERE issue_id = ?
+           AND kind != ?
          ORDER BY id ASC`,
-        ['issue-artifact-flow'],
+        ['issue-artifact-flow', 'csqr_lite_scorecard'],
       );
       const releaseEvent = selectOne<{ payload: string }>(
         closed.connection,
@@ -543,6 +572,14 @@ test('orchestrator persists CSQR-lite scorecards as checkpoint evidence', async 
          LIMIT 1`,
         ['run-csqr-evidence', 'csqr_lite_scorecards_registered'],
       );
+      const completionGateEvent = selectOne<{ payload: string }>(
+        inspected.connection,
+        `SELECT payload
+         FROM events
+         WHERE run_id = ? AND kind = ?
+         LIMIT 1`,
+        ['run-csqr-evidence', 'csqr_lite_completion_gate_evaluated'],
+      );
       const releaseEvent = selectOne<{ payload: string }>(
         inspected.connection,
         `SELECT payload
@@ -573,6 +610,12 @@ test('orchestrator persists CSQR-lite scorecards as checkpoint evidence', async 
       );
       assert.deepEqual(
         parseJsonArray(parseJsonObject(registeredEvent?.payload)['artifactIds']),
+        [scorecardArtifactId],
+      );
+      const completionGatePayload = parseJsonObject(completionGateEvent?.payload);
+      assert.equal(completionGatePayload['outcome'], 'passed');
+      assert.deepEqual(
+        parseJsonArray(completionGatePayload['artifactIds']),
         [scorecardArtifactId],
       );
       assert.equal(
@@ -668,6 +711,172 @@ test('orchestrator rejects run-scoped CSQR-lite scorecards for other runs', asyn
 
       assert.deepEqual(artifacts, []);
       assert.equal(invalidCheckpoint, null);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestrator rejects done close without a run-scoped CSQR-lite scorecard before mutation', async () => {
+  const tempDir = createTempDir('orchestrator-csqr-gate-missing-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-csqr-gate-missing',
+      task: 'Require a CSQR-lite gate before completion',
+      status: 'ready',
+      nextBestAction: 'Attempt completion without scorecard evidence.',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const session = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-csqr-gate-missing',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: 'agent-csqr-gate-missing',
+      preferredIssueId: 'issue-csqr-gate-missing',
+    }));
+
+    await assert.rejects(
+      () => orchestrator.close(session, {
+        title: 'done',
+        summary: 'This completion lacks CSQR-lite evidence.',
+        taskStatus: 'done',
+        nextStep: 'Stop.',
+        artifactIds: ['artifact-csqr-gate-missing'],
+      }),
+      /requires at least one run-scoped scorecard/,
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const issue = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-csqr-gate-missing'],
+      );
+      const lease = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM leases WHERE id = ?',
+        [session.leaseId],
+      );
+      const rejectedCheckpoint = selectOne<{ id: string }>(
+        inspected.connection,
+        'SELECT id FROM checkpoints WHERE run_id = ? AND title = ?',
+        ['run-csqr-gate-missing', 'done'],
+      );
+      const scorecardArtifacts = selectAll<{ id: string }>(
+        inspected.connection,
+        `SELECT id FROM artifacts WHERE issue_id = ? AND kind = ?`,
+        ['issue-csqr-gate-missing', 'csqr_lite_scorecard'],
+      );
+      const gateEvents = selectAll<{ id: string }>(
+        inspected.connection,
+        `SELECT id FROM events WHERE run_id = ? AND kind = ?`,
+        ['run-csqr-gate-missing', 'csqr_lite_completion_gate_evaluated'],
+      );
+
+      assert.equal(issue?.status, 'in_progress');
+      assert.equal(lease?.status, 'active');
+      assert.equal(rejectedCheckpoint, null);
+      assert.deepEqual(scorecardArtifacts, []);
+      assert.deepEqual(gateEvents, []);
+    } finally {
+      inspected.close();
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('orchestrator rejects below-threshold CSQR-lite scorecards before mutation', async () => {
+  const tempDir = createTempDir('orchestrator-csqr-gate-failing-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    insertIssue({
+      dbPath,
+      issueId: 'issue-csqr-gate-failing',
+      task: 'Reject weak CSQR-lite completion evidence',
+      status: 'ready',
+      nextBestAction: 'Attempt completion with a failing scorecard.',
+    });
+
+    const orchestrator = new SessionOrchestrator({
+      defaultCheckpointFreshnessSeconds: 3600,
+    });
+    const session = await orchestrator.beginIncrementalSession(withHostRoutingContext({
+      sessionId: 'run-csqr-gate-failing',
+      dbPath,
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      artifacts: buildTestSessionArtifacts(),
+      mem0Enabled: false,
+      agentId: 'agent-csqr-gate-failing',
+      preferredIssueId: 'issue-csqr-gate-failing',
+    }));
+
+    await assert.rejects(
+      () => orchestrator.close(session, {
+        title: 'done',
+        summary: 'This completion score is below the threshold.',
+        taskStatus: 'done',
+        nextStep: 'Stop.',
+        artifactIds: ['artifact-csqr-gate-failing'],
+        csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+          id: 'scorecard-run-csqr-gate-failing',
+          runId: session.runId,
+          evidenceArtifactId: 'artifact-csqr-gate-failing',
+          score: 6,
+        }),
+      }),
+      /below threshold/,
+    );
+
+    const inspected = openHarnessDatabase({ dbPath });
+    try {
+      const issue = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-csqr-gate-failing'],
+      );
+      const lease = selectOne<{ status: string }>(
+        inspected.connection,
+        'SELECT status FROM leases WHERE id = ?',
+        [session.leaseId],
+      );
+      const rejectedCheckpoint = selectOne<{ id: string }>(
+        inspected.connection,
+        'SELECT id FROM checkpoints WHERE run_id = ? AND title = ?',
+        ['run-csqr-gate-failing', 'done'],
+      );
+      const scorecardArtifacts = selectAll<{ id: string }>(
+        inspected.connection,
+        `SELECT id FROM artifacts WHERE issue_id = ? AND kind = ?`,
+        ['issue-csqr-gate-failing', 'csqr_lite_scorecard'],
+      );
+      const gateEvents = selectAll<{ id: string }>(
+        inspected.connection,
+        `SELECT id FROM events WHERE run_id = ? AND kind = ?`,
+        ['run-csqr-gate-failing', 'csqr_lite_completion_gate_evaluated'],
+      );
+
+      assert.equal(issue?.status, 'in_progress');
+      assert.equal(lease?.status, 'active');
+      assert.equal(rejectedCheckpoint, null);
+      assert.deepEqual(scorecardArtifacts, []);
+      assert.deepEqual(gateEvents, []);
     } finally {
       inspected.close();
     }
@@ -1299,6 +1508,11 @@ test('beginRecoverySession replaces stale leases with a fresh recovery lease', a
       taskStatus: 'done',
       nextStep: 'Pick the next ready issue.',
       artifactIds: ['artifact-recovery'],
+      csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+        id: 'scorecard-run-recovery',
+        runId: recoverySession.runId,
+        evidenceArtifactId: 'artifact-recovery',
+      }),
     });
 
     const inspected = openHarnessDatabase({ dbPath });
@@ -1323,8 +1537,9 @@ test('beginRecoverySession replaces stale leases with a fresh recovery lease', a
         `SELECT id, metadata_json
          FROM artifacts
          WHERE issue_id = ?
+           AND kind != ?
          ORDER BY id ASC`,
-        ['issue-recovery'],
+        ['issue-recovery', 'csqr_lite_scorecard'],
       );
       const recoveryClaimCheckpoint = selectOne<{ artifact_ids_json: string }>(
         inspected.connection,
@@ -1517,6 +1732,11 @@ test('advanceSession releases prior artifacts and hands off fresh artifacts to t
         artifactIds: firstSession.artifacts
           .map((artifact) => artifact.id)
           .filter((artifactId): artifactId is string => artifactId !== undefined),
+        csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+          id: 'scorecard-run-advance-first',
+          runId: firstSession.runId,
+          evidenceArtifactId: firstSession.artifacts[0]?.id ?? 'artifact-advance-first',
+        }),
       },
       withHostRoutingContext({
         sessionId: 'run-advance-next',
@@ -1861,6 +2081,11 @@ test('close promotes dependent pending issues and the next session can claim the
       taskStatus: 'done',
       nextStep: 'Claim the promoted follow-up issue.',
       artifactIds: ['artifact-primary'],
+      csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+        id: 'scorecard-run-primary',
+        runId: session.runId,
+        evidenceArtifactId: 'artifact-primary',
+      }),
     });
 
     const inspectedAfterClose = openHarnessDatabase({ dbPath });
@@ -1962,6 +2187,11 @@ test('advance_session closes cleanly when no next ready issue exists', async () 
         taskStatus: 'done',
         nextStep: 'Stop.',
         artifactIds: ['artifact-only'],
+        csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+          id: 'scorecard-run-mcp-1',
+          runId: 'run-mcp-1',
+          evidenceArtifactId: 'artifact-only',
+        }),
       },
     })) as {
       advanced: boolean;
@@ -2071,6 +2301,11 @@ test('harness_session resolves persisted session tokens after restart', async ()
         summary: 'Closed after restart.',
         taskStatus: 'done',
         nextStep: 'Stop.',
+        csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+          id: 'scorecard-run-token',
+          runId: 'run-token',
+          evidenceArtifactId: 'artifact-token-close',
+        }),
       },
     })) as {
       result: {
@@ -2158,6 +2393,11 @@ test('CLI supports lifecycle commands and read-only inspection commands', async 
         taskStatus: 'done',
         nextStep: 'Proceed to the ready task.',
         artifactIds: ['artifact-cli-recovery'],
+        csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+          id: 'scorecard-cli-run-recovery',
+          runId: 'cli-run-recovery',
+          evidenceArtifactId: 'artifact-cli-recovery',
+        }),
       },
     });
 
@@ -2197,6 +2437,11 @@ test('CLI supports lifecycle commands and read-only inspection commands', async 
         taskStatus: 'done',
         nextStep: 'Stop.',
         artifactIds: ['artifact-cli-close'],
+        csqrLiteScorecards: buildLifecycleCsqrLiteScorecardEvidence({
+          id: 'scorecard-cli-run-1',
+          runId: 'cli-run-1',
+          evidenceArtifactId: 'artifact-cli-close',
+        }),
       },
     });
 

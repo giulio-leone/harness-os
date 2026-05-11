@@ -15,6 +15,11 @@ import {
   csqrLiteScorecardSchema,
   type CsqrLiteScorecard,
 } from '../contracts/csqr-lite-contracts.js';
+import {
+  evaluateCsqrLiteCompletionGate,
+  type CsqrLiteCompletionGateResult,
+  type CsqrLiteCompletionGateScorecardInput,
+} from '../contracts/csqr-lite-completion-gate.js';
 import type {
   Mem0Adapter,
   MemoryKind,
@@ -636,6 +641,10 @@ export class SessionOrchestrator {
     createdAt: string,
   ): CanonicalCheckpointState {
     assertBlockedReasonCompatibility(input);
+    const csqrLiteCompletionGate =
+      input.taskStatus === 'done'
+        ? assertSessionCsqrLiteCompletionGate(connection, context, input)
+        : undefined;
     updateIssueStatus(
       connection,
       context.issueId,
@@ -672,6 +681,19 @@ export class SessionOrchestrator {
         issueId: context.issueId,
         checkpointId: checkpoint.id,
         artifacts: csqrLiteScorecardArtifacts,
+        createdAt,
+      });
+    }
+    if (csqrLiteCompletionGate !== undefined) {
+      const persistedCompletionGate = assertPersistedSessionCsqrLiteCompletionGate(
+        connection,
+        context,
+      );
+      appendCsqrLiteCompletionGateEvaluatedEvent(connection, {
+        runId: context.runId,
+        issueId: context.issueId,
+        checkpointId: checkpoint.id,
+        result: persistedCompletionGate,
         createdAt,
       });
     }
@@ -1194,6 +1216,89 @@ function persistCsqrLiteScorecardArtifacts(
   return persistedArtifacts;
 }
 
+function assertSessionCsqrLiteCompletionGate(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  context: SessionContext,
+  input: SessionCheckpointInput,
+): CsqrLiteCompletionGateResult {
+  const result = evaluateCsqrLiteCompletionGate({
+    requiredScope: 'run',
+    scorecards: [
+      ...loadPersistedCsqrLiteScorecardInputs(connection, context),
+      ...(input.csqrLiteScorecards ?? []).map((artifact) => ({
+        scorecard: artifact.scorecard,
+        path: artifact.path,
+        source: 'checkpoint_input',
+      })),
+    ],
+  });
+
+  if (result.status !== 'passed') {
+    throw new Error(result.message);
+  }
+
+  return result;
+}
+
+function assertPersistedSessionCsqrLiteCompletionGate(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  context: SessionContext,
+): CsqrLiteCompletionGateResult {
+  const result = evaluateCsqrLiteCompletionGate({
+    requiredScope: 'run',
+    scorecards: loadPersistedCsqrLiteScorecardInputs(connection, context),
+  });
+
+  if (result.status !== 'passed') {
+    throw new Error(result.message);
+  }
+
+  return result;
+}
+
+function loadPersistedCsqrLiteScorecardInputs(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  context: SessionContext,
+): CsqrLiteCompletionGateScorecardInput[] {
+  const rows = selectAll<{
+    id: string;
+    path: string;
+    metadata_json: string;
+  }>(
+    connection,
+    `SELECT id, path, metadata_json
+     FROM artifacts
+     WHERE issue_id = ?
+       AND kind = ?
+     ORDER BY created_at ASC, id ASC`,
+    [context.issueId, CSQR_LITE_SCORECARD_ARTIFACT_KIND],
+  );
+
+  return rows
+    .map((row): CsqrLiteCompletionGateScorecardInput | null => {
+      const metadata = parseMetadata(row.metadata_json);
+
+      if (metadata['sessionRunId'] !== context.runId) {
+        return null;
+      }
+
+      const scorecardJson = metadata['scorecardJson'];
+      if (scorecardJson === undefined) {
+        throw new Error(
+          `CSQR-lite scorecard artifact "${row.id}" is missing metadata.scorecardJson.`,
+        );
+      }
+
+      return {
+        artifactId: row.id,
+        path: row.path,
+        scorecard: JSON.parse(scorecardJson) as unknown,
+        source: 'artifact',
+      };
+    })
+    .filter((scorecard): scorecard is CsqrLiteCompletionGateScorecardInput => scorecard !== null);
+}
+
 function appendCsqrLiteScorecardsRegisteredEvent(
   connection: ReturnType<typeof openHarnessDatabase>['connection'],
   input: {
@@ -1223,6 +1328,47 @@ function appendCsqrLiteScorecardsRegisteredEvent(
           : {}),
         weightedAverage: artifact.weightedAverage,
         targetScore: artifact.targetScore,
+      })),
+    },
+    createdAt: input.createdAt,
+  });
+}
+
+function appendCsqrLiteCompletionGateEvaluatedEvent(
+  connection: ReturnType<typeof openHarnessDatabase>['connection'],
+  input: {
+    runId: string;
+    issueId: string;
+    checkpointId: string;
+    result: CsqrLiteCompletionGateResult;
+    createdAt: string;
+  },
+): void {
+  appendRunEvent(connection, {
+    runId: input.runId,
+    issueId: input.issueId,
+    kind: 'csqr_lite_completion_gate_evaluated',
+    payload: {
+      source: 'csqr_lite_completion_gate',
+      outcome: input.result.status,
+      checkpointId: input.checkpointId,
+      requiredScope: input.result.requiredScope,
+      minimumTargetScore: input.result.minimumTargetScore,
+      message: input.result.message,
+      artifactIds: input.result.evaluatedScorecards
+        .map((scorecard) => scorecard.artifactId)
+        .filter((artifactId): artifactId is string => artifactId !== undefined),
+      scorecards: input.result.evaluatedScorecards.map((scorecard) => ({
+        id: scorecard.id,
+        scope: scorecard.scope,
+        weightedAverage: scorecard.weightedAverage,
+        targetScore: scorecard.targetScore,
+        threshold: scorecard.threshold,
+        status: scorecard.status,
+        ...(scorecard.artifactId !== undefined
+          ? { artifactId: scorecard.artifactId }
+          : {}),
+        ...(scorecard.path !== undefined ? { path: scorecard.path } : {}),
       })),
     },
     createdAt: input.createdAt,

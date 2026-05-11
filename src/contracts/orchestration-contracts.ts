@@ -2,6 +2,8 @@ import { isAbsolute, normalize, relative } from 'node:path';
 
 import { z } from 'zod';
 
+import { evaluateCsqrLiteCompletionGate } from './csqr-lite-completion-gate.js';
+import { csqrLiteScorecardSchema } from './csqr-lite-contracts.js';
 import { harnessDispatchPolicySchema } from './policy-contracts.js';
 
 const orchestrationContractVersion = '1.0.0';
@@ -712,6 +714,8 @@ export const orchestrationRunResultSchema = z
           path: ['assignmentResults', index, 'status'],
         });
       });
+
+      validateSucceededRunCsqrLiteCompletionGate(value.runId, value.evidencePacket, ctx);
     }
   });
 
@@ -770,6 +774,118 @@ export type OrchestrationAssignmentResult = z.infer<
 export type OrchestrationRunResult = z.infer<
   typeof orchestrationRunResultSchema
 >;
+
+function validateSucceededRunCsqrLiteCompletionGate(
+  runId: string,
+  packet: OrchestrationEvidencePacket,
+  ctx: z.core.$RefinementCtx,
+): void {
+  const passedGateArtifactIds = new Set(
+    packet.gates
+      .filter((gate) => gate.status === 'passed')
+      .flatMap((gate) => gate.providedEvidenceArtifactIds),
+  );
+  const scorecardInputs: Array<{
+    scorecard: unknown;
+    artifactId: string;
+    path?: string;
+  }> = [];
+
+  packet.artifacts.forEach((artifact, index) => {
+    if (artifact.kind !== 'csqr_lite_scorecard' || artifact.scope !== 'run') {
+      return;
+    }
+
+    if (!passedGateArtifactIds.has(artifact.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `CSQR-lite scorecard artifact "${artifact.id}" must be covered by a passed evidence gate.`,
+        path: ['evidencePacket', 'artifacts', index, 'id'],
+      });
+    }
+
+    const scorecardJson = artifact.metadata?.['scorecardJson'];
+    if (scorecardJson === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `CSQR-lite scorecard artifact "${artifact.id}" requires metadata.scorecardJson.`,
+        path: ['evidencePacket', 'artifacts', index, 'metadata'],
+      });
+      return;
+    }
+
+    try {
+      const parsedScorecardJson = JSON.parse(scorecardJson) as unknown;
+      const parsedScorecard = csqrLiteScorecardSchema.safeParse(parsedScorecardJson);
+
+      if (
+        parsedScorecard.success &&
+        parsedScorecard.data.scope === 'run' &&
+        parsedScorecard.data.runId !== runId
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `CSQR-lite scorecard artifact "${artifact.id}" runId must match orchestration runId "${runId}".`,
+          path: ['evidencePacket', 'artifacts', index, 'metadata'],
+        });
+      }
+
+      scorecardInputs.push({
+        artifactId: artifact.id,
+        ...(artifact.path !== undefined ? { path: artifact.path } : {}),
+        scorecard: parsedScorecardJson,
+      });
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `CSQR-lite scorecard artifact "${artifact.id}" has invalid metadata.scorecardJson.`,
+        path: ['evidencePacket', 'artifacts', index, 'metadata'],
+      });
+    }
+  });
+
+  let result;
+  try {
+    result = evaluateCsqrLiteCompletionGate({
+      requiredScope: 'run',
+      scorecards: scorecardInputs,
+    });
+  } catch (error) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: error instanceof Error ? error.message : String(error),
+      path: ['evidencePacket', 'artifacts'],
+    });
+    return;
+  }
+
+  if (result.status === 'passed') {
+    return;
+  }
+
+  if (result.status === 'missing') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: result.message,
+      path: ['evidencePacket', 'artifacts'],
+    });
+    return;
+  }
+
+  for (const scorecard of result.failingScorecards) {
+    const artifactIndex = packet.artifacts.findIndex(
+      (artifact) => artifact.id === scorecard.artifactId,
+    );
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `CSQR-lite scorecard "${scorecard.id}" scored ${scorecard.weightedAverage}, below threshold ${scorecard.threshold}.`,
+      path:
+        artifactIndex >= 0
+          ? ['evidencePacket', 'artifacts', artifactIndex, 'metadata']
+          : ['evidencePacket', 'artifacts'],
+    });
+  }
+}
 
 function absolutePathSchema(): z.ZodString {
   return nonEmptyString

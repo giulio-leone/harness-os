@@ -92,7 +92,9 @@ On `close()`, session-managed artifacts for the run are released even when `rele
 
 `checkpoint()` and `close()` also accept `csqrLiteScorecards`, each with a scorecard JSON payload and a durable path for the corresponding artifact file. The runtime validates the CSQR-lite contract, persists each entry as an immutable `artifacts.kind = "csqr_lite_scorecard"` row, stores a stringified scorecard in `metadata_json.scorecardJson`, links the generated artifact ids from `checkpoints.artifact_ids_json`, and emits `csqr_lite_scorecards_registered`. Run-scoped scorecards must match the active session `runId`; assignment-scoped scorecards are allowed by `assignmentId` because assignment ownership is created by the orchestration dispatcher rather than the session context.
 
-CSQR-lite scorecard artifacts are not session-owned worktree/handoff artifacts, so close-time `session_artifacts_released` events do not release or mutate them. If the same scorecard path is reported in later checkpoints, HarnessOS keeps a new immutable evidence row instead of overwriting the previous one; M6-I3 threshold checks should select the latest applicable checkpoint artifact when evaluating completion.
+CSQR-lite scorecard artifacts are not session-owned worktree/handoff artifacts, so close-time `session_artifacts_released` events do not release or mutate them. If the same scorecard path is reported in later checkpoints, HarnessOS keeps a new immutable evidence row instead of overwriting the previous one.
+
+`close()` and `advanceSession()` enforce the CSQR-lite completion gate whenever `taskStatus` is `done`: at least one run-scoped scorecard must exist for the active `runId`, and every applicable run scorecard must meet `max(8.0, scorecard.targetScore)`. The gate is evaluated before task-state mutation; success emits `csqr_lite_completion_gate_evaluated`, while missing or below-threshold scorecards abort without mutating issue, run, lease, checkpoint, event, or artifact state.
 
 ### 6. Inspector boundary
 
@@ -107,7 +109,7 @@ The v1 orchestration modules are intentionally additive at the database/schema l
 HarnessOS does not encode a human-review state into the orchestration runtime. Completion is a task-state transition backed by automated evidence:
 
 - codebase references identify the exact repo, branch, commit, worktree, and touched paths;
-- evidence artifacts can represent test reports, typecheck/build logs, E2E reports, screenshots, videos, traces, CI status, review feedback, and future CSQR-lite scorecards;
+- evidence artifacts can represent test reports, typecheck/build logs, E2E reports, screenshots, videos, traces, CI status, review feedback, and CSQR-lite scorecards;
 - evidence gates require declared artifacts before a run result can be considered successful;
 - checkpoints and events make the proof trail replayable from SQLite.
 
@@ -117,13 +119,13 @@ The runtime therefore supports a no-human-checkpoint mode while keeping quality 
 
 HarnessOS now ships a deterministic reference matrix for automated orchestration evidence. It is intentionally a reference fixture and assertion helper, not a new database table, schema version, or long-running executor.
 
-The matrix requires run-scoped `typecheck_report` and `state_export` artifacts, plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every planned assignment. Reference packet assertions verify that those assignment artifacts are produced by the planned subagent, belong to the planned worktree, are covered by passed gates, and have codebase reference coverage. This keeps the no-human-review path auditable while leaving actual shell commands, screenshots, and CI execution host-owned.
+The matrix requires run-scoped `typecheck_report`, `state_export`, and `csqr_lite_scorecard` artifacts, plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every planned assignment. Reference packet assertions verify that those assignment artifacts are produced by the planned subagent, belong to the planned worktree, are covered by passed gates, and have codebase reference coverage. This keeps the no-human-review path auditable while leaving actual shell commands, screenshots, and CI execution host-owned.
 
 The copy/paste MCP handoff for this flow lives in [`../examples/orchestration-symphony/`](../examples/orchestration-symphony/). Those examples are intentionally host-facing rather than generated session-lifecycle CLI payloads: they show the stable `harness_inspector` -> `harness_orchestrator` -> `harness_symphony` -> `harness_artifacts` call chain and are validated against the public MCP input schemas in the test suite.
 
 ### CSQR-lite scoring model
 
-CSQR-lite is the additive scorecard model for automated completion decisions. M6-I1 defines the in-memory public contract only; it does not add schema-v6 tables, mutate schema-v5 rows, persist scorecards automatically, or enforce thresholds yet.
+CSQR-lite is the additive scorecard model for automated completion decisions. It remains additive over schema v5: no schema-v6 tables are required, and scorecards are represented as immutable evidence artifacts.
 
 The model has four required dimensions:
 
@@ -134,9 +136,9 @@ The model has four required dimensions:
 | `quality` | Code remains maintainable, type-safe, cohesive, performant enough for its path, and free of unnecessary technical debt. | `1.0` |
 | `runtime_evidence` | Deterministic test, build, E2E, screenshot, state-export, or CI artifacts prove the run. | `1.5` |
 
-Every CSQR-lite scorecard must include 4-15 criteria, at least one criterion per dimension, exactly one 1-10 score for every criterion, and evidence artifact ids for every score. `weightedAverage` is normalized as `sum(score * weight) / sum(weight)` and rounded to four decimal places. `targetScore` defaults to `8.0` and remains informational until M6-I3.
+Every CSQR-lite scorecard must include 4-15 criteria, at least one criterion per dimension, exactly one 1-10 score for every criterion, and evidence artifact ids for every score. `weightedAverage` is normalized as `sum(score * weight) / sum(weight)` and rounded to four decimal places. `targetScore` defaults to `8.0`.
 
-M6-I2 adds persistence without threshold enforcement: scorecards passed to `harness_session(action: "checkpoint" | "close")` are durable `csqr_lite_scorecard` artifacts, checkpoint artifact references, Mem0 provenance artifact ids when memory is written, and `csqr_lite_scorecards_registered` events. M6-I3 will consume these persisted scorecards to enforce automated completion thresholds.
+Scorecards passed to `harness_session(action: "checkpoint" | "close")` are durable `csqr_lite_scorecard` artifacts, checkpoint artifact references, Mem0 provenance artifact ids when memory is written, and `csqr_lite_scorecards_registered` events. Completed sessions now require passing run-scoped scorecards; a succeeded orchestration run result is also invalid unless a passed evidence gate covers a run-scoped `csqr_lite_scorecard` whose serialized scorecard meets the same threshold.
 
 ## Current v1 limits
 
@@ -144,4 +146,4 @@ M6-I2 adds persistence without threshold enforcement: scorecards passed to `harn
 - Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
 - Evidence packet validation and deterministic reference E2E assertions exist; the full E2E/CI gate runner remains host-owned until later hardening milestones.
 - Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.
-- Dashboard APIs and CSQR-lite threshold enforcement build on this evidence substrate rather than changing the schema.
+- Dashboard APIs build on this evidence substrate rather than changing the schema.

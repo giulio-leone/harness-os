@@ -3,12 +3,14 @@ import test from 'node:test';
 
 import {
   OrchestrationConflictError,
+  assertCsqrLiteCompletionGate,
   buildCsqrLiteScorecard,
   buildWorktreeAllocation,
   createDefaultGpt5HighSubagents,
   csqrLiteDefaultCriteria,
   csqrLiteScorecardSchema,
   dispatchReadyOrchestrationIssues,
+  evaluateCsqrLiteCompletionGate,
   assertReferenceOrchestrationEvidencePacket,
   referenceOrchestrationE2eEvidenceMatrix,
   inspectOrchestration,
@@ -28,6 +30,8 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof orchestrationPlanSchema.safeParse, 'function');
   assert.equal(typeof OrchestrationConflictError, 'function');
   assert.equal(typeof buildCsqrLiteScorecard, 'function');
+  assert.equal(typeof evaluateCsqrLiteCompletionGate, 'function');
+  assert.equal(typeof assertCsqrLiteCompletionGate, 'function');
   assert.equal(typeof csqrLiteScorecardSchema.safeParse, 'function');
   assert.equal(csqrLiteDefaultCriteria.length, 4);
 });
@@ -58,6 +62,14 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
   assert.equal(orchestration.orchestrationPlanSchema, orchestrationPlanSchema);
   assert.equal(orchestration.OrchestrationConflictError, OrchestrationConflictError);
   assert.equal(orchestration.buildCsqrLiteScorecard, buildCsqrLiteScorecard);
+  assert.equal(
+    orchestration.evaluateCsqrLiteCompletionGate,
+    evaluateCsqrLiteCompletionGate,
+  );
+  assert.equal(
+    orchestration.assertCsqrLiteCompletionGate,
+    assertCsqrLiteCompletionGate,
+  );
   assert.equal(orchestration.csqrLiteScorecardSchema, csqrLiteScorecardSchema);
   assert.equal(orchestration.csqrLiteDefaultCriteria, csqrLiteDefaultCriteria);
 });
