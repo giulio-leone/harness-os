@@ -9,6 +9,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./orchestration": {
+      "types": "./dist/orchestration.d.ts",
+      "default": "./dist/orchestration.js"
+    },
     "./db/sqlite.schema.sql": "./dist/db/sqlite.schema.sql",
     "./package.json": "./package.json"
   },

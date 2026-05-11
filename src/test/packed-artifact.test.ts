@@ -198,6 +198,53 @@ test('packed npm artifact executes installable bins and host smoke paths', async
       );
     });
 
+    await t.test('installed package exposes orchestration root and subpath exports', () => {
+      const result = runInstalledPackageScript(installRoot, baseEnv, `
+        import {
+          buildWorktreeAllocation as buildFromRoot,
+          createDefaultGpt5HighSubagents,
+        } from 'harness-os';
+        import {
+          buildWorktreeAllocation as buildFromSubpath,
+          inspectOrchestration,
+          orchestrationPlanSchema,
+        } from 'harness-os/orchestration';
+
+        const worktree = buildFromSubpath({
+          issueId: 'M4-I1 Public Exports',
+          repoRoot: '/workspace/harness-os',
+          worktreeRoot: '/workspace/worktrees',
+          baseRef: 'main',
+          branchPrefix: 'feat',
+        });
+
+        console.log(JSON.stringify({
+          rootBuilderType: typeof buildFromRoot,
+          inspectorType: typeof inspectOrchestration,
+          schemaType: typeof orchestrationPlanSchema.safeParse,
+          worktreeBranch: worktree.branch,
+          subagentCount: createDefaultGpt5HighSubagents().length,
+        }));
+      `);
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+
+      const parsed = JSON.parse(result.stdout) as {
+        rootBuilderType: string;
+        inspectorType: string;
+        schemaType: string;
+        worktreeBranch: string;
+        subagentCount: number;
+      };
+
+      assert.deepEqual(parsed, {
+        rootBuilderType: 'function',
+        inspectorType: 'function',
+        schemaType: 'function',
+        worktreeBranch: 'feat/m4-i1-public-exports',
+        subagentCount: 4,
+      });
+    });
+
     await t.test('installed harness-install-mcp bin updates Codex, Copilot, and antigravity smoke paths', () => {
       const result = runBin(
         join(binDir, 'harness-install-mcp'),
@@ -364,6 +411,23 @@ function runBin(
     encoding: 'utf8',
     env: options.env,
     input: options.input,
+    stdio: 'pipe',
+  });
+}
+
+function runInstalledPackageScript(
+  installRoot: string,
+  env: NodeJS.ProcessEnv,
+  script: string,
+): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} {
+  return spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: installRoot,
+    encoding: 'utf8',
+    env,
     stdio: 'pipe',
   });
 }
