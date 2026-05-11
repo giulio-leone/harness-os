@@ -127,6 +127,8 @@ Discovery prerequisite: call `harness_inspector(action: "capabilities")` and rea
 
 Reference evidence matrix: fully agentic hosts should attach at least run-scoped `typecheck_report` and `state_export` artifacts plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every dispatched assignment. HarnessOS includes deterministic reference packet assertions for this matrix, while command execution and screenshot capture stay host-owned.
 
+Reference example set: [`../examples/orchestration-symphony/`](../examples/orchestration-symphony/) contains parse-tested MCP payloads for capability discovery, workspace/campaign setup, `compile_plan`, compiled `plan_issues`, four-agent `dispatch_ready`, evidence artifact registration, and post-dispatch inspection. Each file wraps the actual MCP input as `{ "tool": "<name>", "input": { ... } }`; send only `input` to the named tool.
+
 Dispatch example:
 
 ```json
@@ -143,6 +145,24 @@ Dispatch example:
   },
   "maxConcurrentAgents": 4,
   "maxAssignments": 4
+}
+```
+
+Evidence save example:
+
+```json
+{
+  "action": "save",
+  "projectName": "HarnessOS",
+  "campaignId": "C-REPLACE-WITH-CREATE-CAMPAIGN-OUTPUT",
+  "kind": "screenshot",
+  "path": ".harness/evidence/symphony-reference/assignment-dispatch/screenshot.png",
+  "metadata": {
+    "evidencePacketId": "reference-orchestration-e2e-packet",
+    "evidenceArtifactId": "assignment-dispatch-screenshot",
+    "assignmentId": "assignment-dispatch",
+    "scope": "assignment"
+  }
 }
 ```
 

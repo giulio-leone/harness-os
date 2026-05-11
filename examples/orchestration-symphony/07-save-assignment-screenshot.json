@@ -1,0 +1,17 @@
+{
+  "tool": "harness_artifacts",
+  "input": {
+    "action": "save",
+    "projectName": "HarnessOS",
+    "campaignId": "C-REPLACE-WITH-CREATE-CAMPAIGN-OUTPUT",
+    "issueId": "ISSUE-DISPATCH",
+    "kind": "screenshot",
+    "path": ".harness/evidence/symphony-reference/assignment-dispatch/screenshot.png",
+    "metadata": {
+      "evidencePacketId": "reference-orchestration-e2e-packet",
+      "evidenceArtifactId": "assignment-dispatch-screenshot",
+      "assignmentId": "assignment-dispatch",
+      "scope": "assignment"
+    }
+  }
+}

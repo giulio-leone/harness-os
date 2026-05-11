@@ -1,0 +1,16 @@
+{
+  "tool": "harness_artifacts",
+  "input": {
+    "action": "save",
+    "projectName": "HarnessOS",
+    "campaignId": "C-REPLACE-WITH-CREATE-CAMPAIGN-OUTPUT",
+    "kind": "evidence_packet",
+    "path": ".harness/evidence/symphony-reference/packet.json",
+    "metadata": {
+      "evidencePacketId": "reference-orchestration-e2e-packet",
+      "matrixContractVersion": "1.0.0",
+      "runScope": "typecheck_report,state_export",
+      "assignmentScope": "test_report,e2e_report,screenshot"
+    }
+  }
+}

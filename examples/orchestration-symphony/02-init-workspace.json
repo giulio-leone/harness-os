@@ -1,0 +1,7 @@
+{
+  "tool": "harness_orchestrator",
+  "input": {
+    "action": "init_workspace",
+    "workspaceName": "Symphony Reference Workspace"
+  }
+}

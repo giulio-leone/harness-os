@@ -68,6 +68,7 @@ Latest release notes and breaking changes are tracked in [CHANGELOG.md](CHANGELO
 - **Skill-Policy Registry** — Dynamic management of agent capabilities and operational rules.
 - **Canonical SQLite Store** — Robust, ACID-compliant state layer for leases, checkpoints, events, and task states.
 - **Session Orchestration** — High-level inspection, queue promotion, and task lifecycle management.
+- **Symphony-style Agentic Orchestration** — Fully agentic fan-out over ready issues, isolated worktree metadata, `gpt-5-high` subagent routing, and deterministic evidence gates instead of human runtime checkpoints.
 
 ---
 
@@ -108,6 +109,13 @@ SQLite acts as the absolute source of truth for:
 
 ### ⏱️ Reusable Scheduler Injector
 A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.ts`), supporting full 5-field cron expressions to safely trigger work without duplications.
+
+### Agentic Symphony-Style Orchestration
+- `harness_symphony(action: "compile_plan")` converts tracker-style milestones and slices into the canonical `plan_issues` batch without mutating state.
+- `harness_symphony(action: "dispatch_ready")` assigns ready issues to one compatible subagent and one isolated worktree per issue, with `gpt-5-high` and four-agent fan-out as the discoverable defaults.
+- `harness_symphony(action: "inspect_state")` reads leases, worktree artifacts, evidence references, recent events, and orchestration health flags.
+- Completion remains no-human-checkpoint: hosts create/run/cleanup git worktrees, then attach typecheck, test, E2E, screenshot, state export, and codebase evidence before closing work.
+- Copy/paste MCP payloads live in [`examples/orchestration-symphony/`](examples/orchestration-symphony/), and the runtime contract is documented in [docs/orchestration-no-schema-v1.md](docs/orchestration-no-schema-v1.md).
 
 ---
 
@@ -164,6 +172,7 @@ See [docs/workload-profiles.md](docs/workload-profiles.md) for profile guidance,
 | Choose the right MCP mega-tool and action | [docs/mcp-tools.md](docs/mcp-tools.md) |
 | Find the right CLI command or flag | [docs/cli-reference.md](docs/cli-reference.md) |
 | Choose a workload profile and template | [docs/workload-profiles.md](docs/workload-profiles.md) |
+| Run fully agentic Symphony-style fan-out | [examples/orchestration-symphony/](examples/orchestration-symphony/) |
 | Find the right bundled skill | [.github/skills/README.md](.github/skills/README.md) |
 
 ### 3️⃣ Environment Variables
@@ -305,10 +314,11 @@ For an in-depth look at how HarnessOS works, refer to the [Architecture Document
 
 The typical execution flow:
 1. `harness_orchestrator(action: "plan_issues")` — Imports a canonical milestone batch into the queue.
-2. `beginIncrementalSession()` — Claims a ready task.
-3. `beginRecoverySession()` — Resolves and overrides a stuck or failed task.
-4. `checkpoint()` — Writes immediate progress to SQLite.
-5. `close()` — Releases the lease and promotes newly eligible work.
+2. `harness_symphony(action: "dispatch_ready")` — Fans ready work out to isolated worktree/subagent assignments.
+3. `beginIncrementalSession()` — Claims a ready task when single-worker execution is preferred.
+4. `beginRecoverySession()` — Resolves and overrides a stuck or failed task.
+5. `checkpoint()` — Writes immediate progress to SQLite.
+6. `close()` — Releases the lease and promotes newly eligible work.
 
 ---
 
