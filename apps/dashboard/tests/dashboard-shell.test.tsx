@@ -17,6 +17,7 @@ test('dashboard shell renders the stable lane order and orchestration evidence s
   assert.match(html, /Linear-like command center/);
   assert.match(html, /data-testid="orchestration-dashboard"/);
   assert.match(html, /data-testid="issue-card-M7-I2"/);
+  assert.match(html, /href="\/issues\/M7-I2"/);
   assert.match(html, /CSQR scorecards/);
   assert.match(html, /demo data/);
   assert.match(html, /Expired lease/);

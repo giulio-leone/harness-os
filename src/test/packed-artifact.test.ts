@@ -210,7 +210,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         } from 'harness-os';
         import {
           openHarnessDatabase,
+          openReadonlyHarnessDatabase,
+          selectAll,
           selectOne,
+          SessionOrchestrator,
         } from 'harness-os/dashboard-server';
         import {
           buildWorktreeAllocation as buildFromSubpath,
@@ -239,7 +242,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           csqrSchemaType: typeof csqrLiteScorecardSchema.safeParse,
           dashboardSchemaType: typeof orchestrationDashboardViewModelSchema.safeParse,
           dashboardServerOpenType: typeof openHarnessDatabase,
+          dashboardServerReadonlyType: typeof openReadonlyHarnessDatabase,
+          dashboardServerSelectAllType: typeof selectAll,
           dashboardServerSelectOneType: typeof selectOne,
+          dashboardServerOrchestratorType: typeof SessionOrchestrator,
           matrixSameReference: matrixFromRoot === matrixFromSubpath,
           inspectorType: typeof inspectOrchestration,
           schemaType: typeof orchestrationPlanSchema.safeParse,
@@ -258,7 +264,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         csqrSchemaType: string;
         dashboardSchemaType: string;
         dashboardServerOpenType: string;
+        dashboardServerReadonlyType: string;
+        dashboardServerSelectAllType: string;
         dashboardServerSelectOneType: string;
+        dashboardServerOrchestratorType: string;
         matrixSameReference: boolean;
         inspectorType: string;
         schemaType: string;
@@ -275,7 +284,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         csqrSchemaType: 'function',
         dashboardSchemaType: 'function',
         dashboardServerOpenType: 'function',
+        dashboardServerReadonlyType: 'function',
+        dashboardServerSelectAllType: 'function',
         dashboardServerSelectOneType: 'function',
+        dashboardServerOrchestratorType: 'function',
         matrixSameReference: true,
         inspectorType: 'function',
         schemaType: 'function',

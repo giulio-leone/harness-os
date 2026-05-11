@@ -1,4 +1,5 @@
 import React from 'react';
+import Link from 'next/link';
 
 import type {
   OrchestrationDashboardActiveAgent,
@@ -286,7 +287,12 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
   );
 
   return (
-    <article className="issue-card" data-testid={`issue-card-${card.id}`}>
+    <Link
+      aria-label={`Open issue ${card.id}: ${card.task}`}
+      className="issue-card issue-card-link"
+      data-testid={`issue-card-${card.id}`}
+      href={`/issues/${encodeURIComponent(card.id)}`}
+    >
       <div className="issue-card-header">
         <div>
           <p className="issue-id">{card.id}</p>
@@ -352,7 +358,7 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
           ))}
         </div>
       ) : null}
-    </article>
+    </Link>
   );
 }
 
