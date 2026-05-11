@@ -30,6 +30,19 @@ called through `harness_inspector`.
 | `harness_artifacts` | register or list durable task evidence | `save`, `list` |
 | `harness_admin` | maintenance, cleanup, drain/archive, memory snapshots | `reconcile`, `drain`, `archive`, `cleanup`, `mem0_snapshot`, `mem0_rollup` |
 
+## Symphony capability discovery
+
+`harness_inspector(action: "capabilities")` returns a top-level `orchestration` block so hosts can detect fully agentic Symphony support without hardcoding tool names or action lists. The block declares:
+
+- `mode: "symphony"` and `tool: "harness_symphony"`
+- `actions.compilePlan`, `actions.dispatchReady`, and `actions.inspectState`
+- `defaultModelProfile: "gpt-5-high"` and `defaultMaxConcurrentAgents: 4`
+- `requiredDispatchFields` for `dispatch_ready`
+- `hostResponsibilities` for creating/running/cleaning isolated worktrees and collecting gate evidence
+- `worktreeIsolation` conflict guards, `evidence.acceptedArtifactKinds`, and `evidence.runtimeMetadataArtifactKinds`
+
+The same response includes `suggestedBootstrap` entries for `harness_symphony(action: "inspect_state")` and `harness_symphony(action: "dispatch_ready")`, including the dispatch fields an MCP host must supply.
+
 ## `harness_inspector`
 
 Start here when the runtime state is unclear.
@@ -109,6 +122,8 @@ Use this tool for fully agentic Symphony-style orchestration after the project/c
 | `compile_plan` | you need to compile orchestration milestones/slices into a canonical `plan_issues` payload |
 | `dispatch_ready` | ready issues should be assigned to isolated worktrees and compatible subagents |
 | `inspect_state` | you need orchestration leases, artifacts, evidence references, recent events, and health flags |
+
+Discovery prerequisite: call `harness_inspector(action: "capabilities")` and read the returned `orchestration.requiredDispatchFields` before invoking `dispatch_ready`. The MCP server records deterministic worktree assignments and runtime metadata artifacts; the host remains responsible for creating the physical git worktrees, launching compatible subagents, running quality gates, attaching accepted evidence artifacts, and cleaning up worktrees.
 
 Dispatch example:
 

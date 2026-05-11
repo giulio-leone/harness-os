@@ -45,6 +45,44 @@ test('capability catalog skills expose bundle version and workload profile metad
   assert.equal(typeof harnessLifecycle?.checksum, 'string');
 });
 
+test('capability catalog exposes Symphony orchestration discovery metadata', () => {
+  const catalog = getHarnessCapabilityCatalog({ packageRoot: repoRoot });
+  const symphonyTool = catalog.tools.find((entry) => entry.name === 'harness_symphony');
+
+  assert.ok(symphonyTool, 'harness_symphony must be discoverable as an MCP tool');
+  assert.deepEqual(
+    symphonyTool.actions.map((entry) => entry.action),
+    ['compile_plan', 'dispatch_ready', 'inspect_state'],
+  );
+  assert.equal(catalog.orchestration.mode, 'symphony');
+  assert.equal(catalog.orchestration.tool, 'harness_symphony');
+  assert.equal(catalog.orchestration.defaultModelProfile, 'gpt-5-high');
+  assert.equal(catalog.orchestration.defaultMaxConcurrentAgents, 4);
+  assert.deepEqual(catalog.orchestration.actions, {
+    compilePlan: 'compile_plan',
+    dispatchReady: 'dispatch_ready',
+    inspectState: 'inspect_state',
+  });
+  assert.ok(catalog.orchestration.requiredDispatchFields.includes('repoRoot'));
+  assert.equal(catalog.orchestration.worktreeIsolation.strategy, 'one_worktree_per_issue');
+  assert.equal(catalog.orchestration.worktreeIsolation.mcpCreatesWorktrees, false);
+  assert.ok(catalog.orchestration.evidence.acceptedArtifactKinds.includes('test_report'));
+  assert.ok(catalog.orchestration.evidence.acceptedArtifactKinds.includes('screenshot'));
+  assert.ok(
+    catalog.orchestration.evidence.runtimeMetadataArtifactKinds.includes(
+      'orchestration_worktree',
+    ),
+  );
+  assert.ok(
+    catalog.suggestedBootstrap.some(
+      (step) =>
+        step.tool === 'harness_symphony' &&
+        step.action === 'dispatch_ready' &&
+        step.requiredFields?.includes('worktreeRoot'),
+    ),
+  );
+});
+
 test('capability catalog can filter skills by workload profile', () => {
   const manifest = loadBundledSkillManifest(repoRoot);
   const codingCatalog = getHarnessCapabilityCatalog({

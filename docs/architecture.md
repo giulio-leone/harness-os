@@ -73,10 +73,11 @@ The detailed contract map, table ownership, and public/internal boundary rules l
 
 ## 6. The Execution Flow
 
-1. **Plan Issues**: Using `harness_orchestrator(action: "plan_issues")`, top-level objectives are converted into a canonical `milestones[]` batch with issue-level chains and milestone-level dependencies.
-2. **Begin Task**: An agent claims an unblocked task. A lease is atomically assigned, saving the target task from duplicates.
-3. **Checkpoint**: While working, an agent stores checkpoint metadata securely to the DB.
-4. **Close**: Task returns success/failure and its dependencies are subsequently unblocked or halted.
+1. **Discover Capabilities**: Using `harness_inspector(action: "capabilities")`, hosts read the tool catalog, workload profile, and `orchestration` block that advertises Symphony mode, `harness_symphony` actions, dispatch requirements, worktree isolation semantics, accepted evidence artifact kinds, and runtime metadata artifact kinds.
+2. **Plan Issues**: Using `harness_symphony(action: "compile_plan")` for Symphony-style slices or `harness_orchestrator(action: "plan_issues")` for canonical batches, top-level objectives are converted into a canonical `milestones[]` batch with issue-level chains and milestone-level dependencies.
+3. **Dispatch or Begin**: Fully agentic hosts use `harness_symphony(action: "dispatch_ready")` to assign multiple ready issues to isolated worktrees and compatible subagents. Single-worker hosts use `harness_session(action: "begin")` to claim one unblocked task. In both paths, leases are atomically assigned to prevent duplicate work.
+4. **Checkpoint**: While working, an agent stores checkpoint metadata and artifact links securely to the DB.
+5. **Close**: Task returns success/failure and its dependencies are subsequently unblocked or halted.
 
 By adhering to this strict state machine flow, large multi-agent systems coordinate flawlessly — regardless of which IDE or AI runtime is driving them.
 

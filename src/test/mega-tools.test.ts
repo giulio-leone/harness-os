@@ -319,6 +319,7 @@ test('harness_inspector: capabilities returns tool catalog, bundled skills, and 
 
   const tools = result.tools as Array<Record<string, unknown>>;
   const skills = result.skills as Array<Record<string, unknown>>;
+  const orchestration = result.orchestration as Record<string, unknown>;
   const mem0 = result.mem0 as Record<string, unknown>;
 
   assert.ok(tools.some((entry) => entry.name === 'harness_inspector'));
@@ -345,6 +346,15 @@ test('harness_inspector: capabilities returns tool catalog, bundled skills, and 
         Array.isArray(entry.workloadProfileIds),
     ),
   );
+  assert.equal(orchestration.mode, 'symphony');
+  assert.equal(orchestration.tool, 'harness_symphony');
+  assert.equal(orchestration.defaultModelProfile, 'gpt-5-high');
+  assert.equal(orchestration.defaultMaxConcurrentAgents, 4);
+  assert.deepEqual(orchestration.actions, {
+    compilePlan: 'compile_plan',
+    dispatchReady: 'dispatch_ready',
+    inspectState: 'inspect_state',
+  });
   assert.equal(mem0.configured, true);
   assert.equal(mem0.available, true);
   assert.equal(mem0.adapterId, 'stub-test');

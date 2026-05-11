@@ -94,7 +94,8 @@ SQLite acts as the absolute source of truth for:
 - **Failsafe Operations** — If `mem0-mcp` is unavailable, the harness gracefully degrades without corrupting the canonical SQLite tasks.
 
 ### 🧭 Capability Discoverability
-- `harness_inspector(action: "capabilities")` exposes the runtime tool surface, bundled skills, policy-driven skills, and mem0 state in an agent-readable format.
+- `harness_inspector(action: "capabilities")` exposes the runtime tool surface, bundled skills, policy-driven skills, Symphony orchestration metadata, and mem0 state in an agent-readable format.
+- The `orchestration` block advertises Symphony mode, the `harness_symphony` actions, the `gpt-5-high` default profile, four-agent fan-out defaults, required dispatch fields, worktree isolation responsibilities, accepted evidence artifact kinds, and runtime metadata artifact kinds so hosts can discover support without hardcoded assumptions.
 - The packaged skills under `.github/skills` mirror the canonical runtime contract, so prompts, docs, and MCP discovery stay aligned.
 - The bundled skill manifest now publishes explicit workload profiles (`coding`, `research`, `ops`, `sales`, `support`, `assistant`) and per-skill `workloadProfileIds`, so hosts can specialize without hardcoding the core runtime to one domain.
 - Human-facing discovery docs now live in one place per surface: [docs/mcp-tools.md](docs/mcp-tools.md) for MCP tools, [docs/cli-reference.md](docs/cli-reference.md) for the installable CLIs, [docs/workload-profiles.md](docs/workload-profiles.md) for workload selection, and [.github/skills/README.md](.github/skills/README.md) for the bundled skill index.
