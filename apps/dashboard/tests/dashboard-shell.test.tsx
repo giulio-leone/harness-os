@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import React from 'react';
@@ -65,4 +66,35 @@ test('dashboard shell preserves empty lanes instead of dropping future board col
 
   assert.match(html, /data-testid="lane-pending"/);
   assert.match(html, /No issues in this lane/);
+});
+
+test('dashboard shell renders a live create-ticket form and disables it for demo data', () => {
+  const liveHtml = renderToStaticMarkup(
+    <DashboardShell
+      createIssueAction="/dashboard-create-ticket"
+      dataSource="live"
+      viewModel={demoDashboardViewModel}
+    />,
+  );
+
+  assert.match(liveHtml, /data-testid="create-ticket-panel"/);
+  assert.match(liveHtml, /name="task"/);
+  assert.match(liveHtml, /name="priority"/);
+  assert.match(liveHtml, /Create ready ticket/);
+  assert.doesNotMatch(liveHtml, /Ticket creation is available only in live DB mode/);
+
+  const demoHtml = renderToStaticMarkup(
+    <DashboardShell dataSource="demo" viewModel={demoDashboardViewModel} />,
+  );
+
+  assert.match(demoHtml, /Ticket creation is available only in live DB mode/);
+  assert.match(demoHtml, /disabled=""/);
+});
+
+test('dashboard stylesheet contains responsive overflow guardrails for dense live data', () => {
+  const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
+
+  assert.match(css, /overflow-x:\s*hidden/);
+  assert.match(css, /repeat\(auto-fit,\s*minmax\(min\(100%, 260px\), 1fr\)\)/);
+  assert.match(css, /overflow-wrap:\s*anywhere/);
 });

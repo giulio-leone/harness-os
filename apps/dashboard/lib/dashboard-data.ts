@@ -55,7 +55,7 @@ export function getDashboardPageState(
   env: DashboardEnvironment = readDashboardEnvironment(),
   loader: DashboardViewModelLoader = loadOrchestrationDashboardViewModel,
 ): DashboardPageState {
-  const dbPath = normalizeOptional(env.HARNESS_DASHBOARD_DB_PATH);
+  const dbPath = normalizeDashboardString(env.HARNESS_DASHBOARD_DB_PATH);
   const demoEnabled = parseDemoFlag(env.HARNESS_DASHBOARD_DEMO);
 
   if (dbPath === undefined) {
@@ -81,8 +81,8 @@ export function getDashboardPageState(
       env.HARNESS_DASHBOARD_PROJECT_ID,
       'HARNESS_DASHBOARD_PROJECT_ID',
     ),
-    campaignId: normalizeOptional(env.HARNESS_DASHBOARD_CAMPAIGN_ID),
-    issueId: normalizeOptional(env.HARNESS_DASHBOARD_ISSUE_ID),
+    campaignId: normalizeDashboardString(env.HARNESS_DASHBOARD_CAMPAIGN_ID),
+    issueId: normalizeDashboardString(env.HARNESS_DASHBOARD_ISSUE_ID),
     eventLimit: parseEventLimit(env.HARNESS_DASHBOARD_EVENT_LIMIT),
   };
 
@@ -93,7 +93,7 @@ export function getDashboardPageState(
   };
 }
 
-function readDashboardEnvironment(): DashboardEnvironment {
+export function readDashboardEnvironment(): DashboardEnvironment {
   return {
     HARNESS_DASHBOARD_DB_PATH: process.env.HARNESS_DASHBOARD_DB_PATH,
     HARNESS_DASHBOARD_PROJECT_ID: process.env.HARNESS_DASHBOARD_PROJECT_ID,
@@ -104,13 +104,13 @@ function readDashboardEnvironment(): DashboardEnvironment {
   };
 }
 
-function normalizeOptional(value: string | undefined): string | undefined {
+export function normalizeDashboardString(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized === undefined || normalized.length === 0 ? undefined : normalized;
 }
 
 function requireNonEmpty(value: string | undefined, name: string): string {
-  const normalized = normalizeOptional(value);
+  const normalized = normalizeDashboardString(value);
 
   if (normalized === undefined) {
     throw new Error(`${name} is required when HARNESS_DASHBOARD_DB_PATH is set.`);
@@ -120,7 +120,7 @@ function requireNonEmpty(value: string | undefined, name: string): string {
 }
 
 function parseEventLimit(value: string | undefined): number {
-  const normalized = normalizeOptional(value);
+  const normalized = normalizeDashboardString(value);
 
   if (normalized === undefined) {
     return DEFAULT_EVENT_LIMIT;
@@ -140,7 +140,7 @@ function parseEventLimit(value: string | undefined): number {
 }
 
 function parseDemoFlag(value: string | undefined): boolean {
-  const normalized = normalizeOptional(value)?.toLowerCase();
+  const normalized = normalizeDashboardString(value)?.toLowerCase();
 
   if (normalized === undefined) {
     return false;
