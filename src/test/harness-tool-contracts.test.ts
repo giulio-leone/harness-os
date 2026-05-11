@@ -94,6 +94,21 @@ test('tool input JSON schemas stay compatible with object-root function calling 
   }
 });
 
+test('harness_symphony schema exposes the dedicated orchestration action enum', () => {
+  const schema = getHarnessToolInputJsonSchema('harness_symphony');
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  assert.ok(isRecord(schema.properties));
+
+  const actionProperty = schema.properties['action'];
+  assert.ok(isRecord(actionProperty));
+  assert.deepEqual(actionProperty.enum, [
+    'compile_plan',
+    'dispatch_ready',
+    'inspect_state',
+  ]);
+});
+
 function extractGeneratedBlock(
   content: string,
   startMarker: string,

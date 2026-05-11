@@ -93,6 +93,6 @@ Use `harness-install-mcp` when you want this wired into a supported host automat
 
 ## Related references
 
-- Use [mcp-tools.md](mcp-tools.md) for the action-level reference of the five MCP mega-tools.
+- Use [mcp-tools.md](mcp-tools.md) for the action-level reference of the six MCP tools.
 - Use [workload-profiles.md](workload-profiles.md) when you need to choose the right host specialization before install/sync.
 - Use [../.github/skills/README.md](../.github/skills/README.md) when you need the bundled skill index that sits on top of these commands.

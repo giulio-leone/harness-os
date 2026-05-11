@@ -97,7 +97,7 @@ SQLite acts as the absolute source of truth for:
 - `harness_inspector(action: "capabilities")` exposes the runtime tool surface, bundled skills, policy-driven skills, and mem0 state in an agent-readable format.
 - The packaged skills under `.github/skills` mirror the canonical runtime contract, so prompts, docs, and MCP discovery stay aligned.
 - The bundled skill manifest now publishes explicit workload profiles (`coding`, `research`, `ops`, `sales`, `support`, `assistant`) and per-skill `workloadProfileIds`, so hosts can specialize without hardcoding the core runtime to one domain.
-- Human-facing discovery docs now live in one place per surface: [docs/mcp-tools.md](docs/mcp-tools.md) for MCP mega-tools, [docs/cli-reference.md](docs/cli-reference.md) for the installable CLIs, [docs/workload-profiles.md](docs/workload-profiles.md) for workload selection, and [.github/skills/README.md](.github/skills/README.md) for the bundled skill index.
+- Human-facing discovery docs now live in one place per surface: [docs/mcp-tools.md](docs/mcp-tools.md) for MCP tools, [docs/cli-reference.md](docs/cli-reference.md) for the installable CLIs, [docs/workload-profiles.md](docs/workload-profiles.md) for workload selection, and [.github/skills/README.md](.github/skills/README.md) for the bundled skill index.
 
 ### 🧩 Workload-Aware Skill Sync
 - `harness-setup` now records a canonical `selectedWorkloadProfile` for every registered host under `~/.agent-harness/config.json`.
@@ -208,11 +208,12 @@ Every payload must declare `"contractVersion": "6.0.0"`.
 | [`inspect-health-snapshot.json`](examples/session-lifecycle/inspect-health-snapshot.json) | `inspect_health_snapshot` | Capture a machine-readable operational health snapshot for a project. |
 | [`promote-queue.json`](examples/session-lifecycle/promote-queue.json) | `promote_queue` | Promote pending work whose dependencies are now satisfied. |
 
-#### Harness MCP mega-tools
+#### Harness MCP tools
 | Tool | Summary | Actions |
 | --- | --- | --- |
 | `harness_inspector` | Use first in a new session, when queue state is unclear, or when the agent needs a machine-readable guide to the runtime plus auditable next_action reasons, exportable operational state, and health snapshots. | `capabilities`, `get_context`, `next_action`, `export`, `audit`, `health_snapshot` |
 | `harness_orchestrator` | Use to create scope, inject planned work, promote dependencies, and reset stuck issues. | `init_workspace`, `create_campaign`, `plan_issues`, `promote_queue`, `rollback_issue` |
+| `harness_symphony` | Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, and inspect evidence-backed orchestration state. | `compile_plan`, `dispatch_ready`, `inspect_state` |
 | `harness_session` | Use for claim/resume, checkpointing, close/advance, and lease heartbeat during execution. | `begin`, `begin_recovery`, `checkpoint`, `close`, `advance`, `heartbeat` |
 | `harness_artifacts` | Use to persist references to screenshots, browser state, generated files, or other task evidence. | `save`, `list` |
 | `harness_admin` | Use for recovery-oriented maintenance, retention cleanup, and project-level memory snapshots or rollups. | `reconcile`, `drain`, `archive`, `cleanup`, `mem0_snapshot`, `mem0_rollup` |

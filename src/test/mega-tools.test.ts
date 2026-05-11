@@ -1,5 +1,5 @@
 /**
- * Stringent MCP-level tests for the 5 consolidated mega-tools.
+ * Stringent MCP-level tests for the consolidated MCP tools.
  *
  * Tests exercise tools through the same handler surface the LLM uses,
  * verifying action dispatch, error handling, _meta hints, and DB state.
@@ -94,6 +94,15 @@ const TEST_HOST_ROUTING_CONTEXT = {
     capabilities: ['node', 'sqlite'],
   },
 };
+
+const PUBLIC_TOOL_NAMES = [
+  'harness_admin',
+  'harness_artifacts',
+  'harness_inspector',
+  'harness_orchestrator',
+  'harness_session',
+  'harness_symphony',
+] as const;
 
 class StrictHarnessAdminMem0Adapter extends StubMem0Adapter {
   readonly storedInputs: MemoryStoreInput[] = [];
@@ -1034,7 +1043,185 @@ test('harness_orchestrator: rollback_issue resets a failed issue', async () => {
   }
 });
 
-// ─── 3. harness_session: Full lifecycle ─────────────────────────────
+// ─── 3. harness_symphony: Agentic orchestration ─────────────────────
+
+test('harness_symphony: compile_plan output can be planned, dispatched, and inspected', async () => {
+  const tempDir = createTempDir('symphony-e2e-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+
+    const { internals } = createServer();
+    const symphony = internals.tools.get('harness_symphony')!;
+    const orchestrator = internals.tools.get('harness_orchestrator')!;
+    const campaign = (await orchestrator.handler({
+      action: 'create_campaign',
+      dbPath,
+      workspaceId: 'ws-1',
+      projectName: 'Test Project',
+      campaignName: 'Symphony MCP',
+      objective: 'Validate the fully agentic MCP orchestration flow.',
+    })) as { campaignId: string };
+
+    const compiled = (await symphony.handler({
+      action: 'compile_plan',
+      milestones: [
+        {
+          id: 'm-mcp',
+          key: 'mcp',
+          description: 'Expose MCP orchestration actions',
+        },
+      ],
+      slices: [
+        {
+          id: 'slice-dispatch',
+          milestoneId: 'm-mcp',
+          task: 'Dispatch ready work through the Symphony MCP tool',
+          priority: 'high',
+          size: 'M',
+          evidenceRequirements: [
+            {
+              id: 'dispatch-proof',
+              kind: 'e2e_report',
+              value: 'evidence://symphony-dispatch',
+              label: 'Symphony dispatch evidence',
+            },
+          ],
+        },
+      ],
+    })) as {
+      planIssuesPayload: { milestones: unknown[] };
+      _meta: Record<string, unknown>;
+    };
+
+    assert.equal(compiled.planIssuesPayload.milestones.length, 1);
+    assert.ok(
+      (compiled._meta.nextTools as string[]).includes('harness_orchestrator'),
+    );
+
+    await orchestrator.handler({
+      action: 'plan_issues',
+      dbPath,
+      projectId: 'proj-1',
+      campaignId: campaign.campaignId,
+      ...compiled.planIssuesPayload,
+    });
+
+    const dispatched = (await symphony.handler({
+      action: 'dispatch_ready',
+      dbPath,
+      projectId: 'proj-1',
+      campaignId: campaign.campaignId,
+      repoRoot: join(tempDir, 'repo'),
+      worktreeRoot: join(tempDir, 'worktrees'),
+      baseRef: 'main',
+      ...TEST_HOST_ROUTING_CONTEXT,
+      dispatchId: 'dispatch-mcp-e2e',
+      maxAssignments: 1,
+      maxConcurrentAgents: 1,
+      mem0Enabled: false,
+      subagents: [
+        {
+          id: 'agent-mcp',
+          role: 'implementation',
+          host: TEST_HOST_ROUTING_CONTEXT.host,
+          modelProfile: 'gpt-5-high',
+          capabilities: ['implementation'],
+          maxConcurrency: 1,
+        },
+      ],
+    })) as {
+      status: string;
+      dispatches: Array<Record<string, unknown>>;
+      _meta: Record<string, unknown>;
+    };
+
+    assert.equal(dispatched.status, 'dispatched');
+    assert.equal(dispatched.dispatches.length, 1);
+    assert.ok(
+      (dispatched._meta.nextTools as string[]).includes('harness_symphony'),
+    );
+
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      const issueRows = selectAll<{ id: string; status: string }>(
+        db.connection,
+        'SELECT id, status FROM issues ORDER BY id ASC',
+      );
+      assert.equal(issueRows.length, 1);
+      assert.equal(issueRows[0]?.status, 'in_progress');
+    } finally {
+      db.close();
+    }
+
+    const inspected = (await symphony.handler({
+      action: 'inspect_state',
+      dbPath,
+      projectId: 'proj-1',
+      campaignId: campaign.campaignId,
+      eventLimit: 10,
+    })) as { summary: Record<string, unknown>; _meta: Record<string, unknown> };
+    const summary = inspected.summary as {
+      leases: { activeCount: number };
+      artifacts: { references: { worktreePaths: string[] } };
+    };
+
+    assert.equal(summary.leases.activeCount, 1);
+    assert.equal(summary.artifacts.references.worktreePaths.length, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_symphony: inspect_state rejects unknown campaignName as a structured tool error', async () => {
+  const tempDir = createTempDir('symphony-campaign-error-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+
+    const { internals } = createServer();
+    const symphony = internals.tools.get('harness_symphony')!;
+
+    await assert.rejects(
+      () =>
+        symphony.handler({
+          action: 'inspect_state',
+          dbPath,
+          projectId: 'proj-1',
+          campaignName: 'Missing Campaign',
+        }),
+      /No campaign found with name "Missing Campaign"/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_symphony: dispatch_ready requires repository and host routing inputs', async () => {
+  const tempDir = createTempDir('symphony-dispatch-input-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+
+    const { internals } = createServer();
+    const symphony = internals.tools.get('harness_symphony')!;
+
+    await assert.rejects(
+      () =>
+        symphony.handler({
+          action: 'dispatch_ready',
+          dbPath,
+          projectId: 'proj-1',
+          ...TEST_HOST_ROUTING_CONTEXT,
+        }),
+      /repoRoot|worktreeRoot|baseRef/i,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// ─── 4. harness_session: Full lifecycle ─────────────────────────────
 
 test('harness_session: full begin → checkpoint → close lifecycle via mega-tool', async () => {
   const tempDir = createTempDir('session-lifecycle-');
@@ -1566,21 +1753,15 @@ test('harness_admin: mem0_rollup filters by milestoneId via linked issues', asyn
 
 // ─── 5. Cross-tool integrity ────────────────────────────────────────
 
-test('cross-tool: only 5 tools are registered on the server', async () => {
+test('cross-tool: registered server tools match the canonical public surface', async () => {
   const { internals } = createServer();
   const toolNames = [...internals.tools.keys()].sort();
-  assert.deepEqual(toolNames, [
-    'harness_admin',
-    'harness_artifacts',
-    'harness_inspector',
-    'harness_orchestrator',
-    'harness_session',
-  ]);
+  assert.deepEqual(toolNames, [...PUBLIC_TOOL_NAMES].sort());
 });
 
 test('cross-tool: every tool handler rejects missing action param', async () => {
   const { internals } = createServer();
-  for (const name of ['harness_inspector', 'harness_orchestrator', 'harness_session', 'harness_artifacts', 'harness_admin']) {
+  for (const name of PUBLIC_TOOL_NAMES) {
     const tool = internals.tools.get(name)!;
     await assert.rejects(
       () => tool.handler({}),
@@ -1610,6 +1791,10 @@ test('cross-tool: strict public actions reject unexpected top-level fields', asy
       {
         name: 'harness_session',
         args: { action: 'begin', ...beginArgs(dbPath, { preferredIssueId: 'issue-strict' }), legacyField: true },
+      },
+      {
+        name: 'harness_symphony',
+        args: { action: 'inspect_state', dbPath, projectId: 'proj-1', legacyField: true },
       },
       {
         name: 'harness_artifacts',

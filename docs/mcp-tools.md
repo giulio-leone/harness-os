@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-HarnessOS exposes five MCP mega-tools. The canonical discovery entrypoint is always:
+HarnessOS exposes six MCP tools. The canonical discovery entrypoint is always:
 
 ```json
 { "action": "capabilities" }
@@ -13,10 +13,11 @@ called through `harness_inspector`.
 1. `harness_inspector(action: "capabilities")` — discover tools, workload profiles, bundled skills, and mem0 state
 2. `harness_inspector(action: "get_context")` — understand workspace/project/queue scope
 3. `harness_orchestrator(...)` — create scope or inject planned work
-4. `harness_session(action: "begin" | "begin_recovery")` — claim work
-5. `harness_session(action: "checkpoint")` — persist progress
-6. `harness_session(action: "close" | "advance")` — complete the task
-7. `harness_artifacts(...)` / `harness_admin(...)` — persist evidence or do maintenance
+4. `harness_symphony(action: "dispatch_ready")` — fan out ready work across isolated worktrees and compatible subagents
+5. `harness_session(action: "begin" | "begin_recovery")` — claim one worker task when not using fan-out
+6. `harness_session(action: "checkpoint")` — persist progress
+7. `harness_session(action: "close" | "advance")` — complete the task
+8. `harness_artifacts(...)` / `harness_admin(...)` — persist evidence or do maintenance
 
 ## Tool summary
 
@@ -24,6 +25,7 @@ called through `harness_inspector`.
 | --- | --- | --- |
 | `harness_inspector` | read-only discovery and operational visibility | `capabilities`, `get_context`, `next_action`, `export`, `audit`, `health_snapshot` |
 | `harness_orchestrator` | creating scope, injecting plans, promoting or resetting work | `init_workspace`, `create_campaign`, `plan_issues`, `promote_queue`, `rollback_issue` |
+| `harness_symphony` | fully agentic orchestration planning, fan-out dispatch, and state inspection | `compile_plan`, `dispatch_ready`, `inspect_state` |
 | `harness_session` | claim/recovery, checkpoints, close/advance, heartbeats | `begin`, `begin_recovery`, `checkpoint`, `close`, `advance`, `heartbeat` |
 | `harness_artifacts` | register or list durable task evidence | `save`, `list` |
 | `harness_admin` | maintenance, cleanup, drain/archive, memory snapshots | `reconcile`, `drain`, `archive`, `cleanup`, `mem0_snapshot`, `mem0_rollup` |
@@ -95,6 +97,35 @@ Example:
       ]
     }
   ]
+}
+```
+
+## `harness_symphony`
+
+Use this tool for fully agentic Symphony-style orchestration after the project/campaign scope exists.
+
+| Action | Use when |
+| --- | --- |
+| `compile_plan` | you need to compile orchestration milestones/slices into a canonical `plan_issues` payload |
+| `dispatch_ready` | ready issues should be assigned to isolated worktrees and compatible subagents |
+| `inspect_state` | you need orchestration leases, artifacts, evidence references, recent events, and health flags |
+
+Dispatch example:
+
+```json
+{
+  "action": "dispatch_ready",
+  "projectName": "HarnessOS",
+  "repoRoot": "/repo/harness-os",
+  "worktreeRoot": "/repo/worktrees",
+  "baseRef": "main",
+  "host": "copilot",
+  "hostCapabilities": {
+    "workloadClasses": ["default", "typescript"],
+    "capabilities": ["node", "sqlite"]
+  },
+  "maxConcurrentAgents": 4,
+  "maxAssignments": 4
 }
 ```
 

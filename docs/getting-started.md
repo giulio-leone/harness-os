@@ -34,7 +34,7 @@ This creates the canonical runtime paths under `~/.agent-harness/` and updates t
 
 - Use `harness-install-mcp` when you want the lifecycle server registered directly into Codex, Copilot CLI, or antigravity.
 - Use `harness_inspector(action: "capabilities")` immediately after install when you want a machine-readable view of available tools, workload profiles, bundled skills, and mem0 status.
-- Use [mcp-tools.md](mcp-tools.md) when you need the authoritative action reference for the five Harness MCP mega-tools.
+- Use [mcp-tools.md](mcp-tools.md) when you need the authoritative action reference for the six Harness MCP tools.
 - Use [cli-reference.md](cli-reference.md) when you need the full command-level reference for the installable CLIs.
 
 You can still sync bundled skills to extra workspaces such as `~/.gemini`, `~/.cursor`, or `~/.copilot`:
