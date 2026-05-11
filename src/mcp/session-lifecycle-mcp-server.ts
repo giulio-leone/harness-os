@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
 import { z } from 'zod';
@@ -41,7 +42,11 @@ import {
   harnessInspectorInputSchema,
   harnessOrchestratorInputSchema,
   harnessSessionInputSchema,
+  harnessSymphonyInputSchema,
 } from '../runtime/harness-tool-contracts.js';
+import { dispatchReadyOrchestrationIssues } from '../runtime/orchestration-dispatcher.js';
+import { inspectOrchestration } from '../runtime/orchestration-inspector.js';
+import { toHarnessPlanIssuesPayload } from '../runtime/orchestration-planner.js';
 import type { SessionContext } from '../contracts/session-contracts.js';
 import {
   incrementalSessionInputSchema,
@@ -102,14 +107,15 @@ const toolCallParamsSchema = z
 
 const HARNESS_INSTRUCTIONS = `You are connected to the agent-harness lifecycle server — an Agentic OS for autonomous task execution.
 
-This server exposes 5 tools, each covering a specific domain. Use the "action" parameter to select the operation.
+This server exposes 6 tools, each covering a specific domain. Use the "action" parameter to select the operation.
 
 TOOLS:
 1. harness_inspector  — Read-only observation. Actions: capabilities, get_context, next_action, export, audit, health_snapshot.
 2. harness_orchestrator — Setup & queue management. Actions: init_workspace, create_campaign, plan_issues, promote_queue, rollback_issue.
-3. harness_session — Execution lifecycle. Actions: begin, begin_recovery, checkpoint, close, advance, heartbeat.
-4. harness_artifacts — Persistent state registry. Actions: save, list.
-5. harness_admin — Maintenance & administration. Actions: reconcile, drain, archive, cleanup, mem0_snapshot, mem0_rollup.
+3. harness_symphony — Fully agentic fan-out orchestration. Actions: compile_plan, dispatch_ready, inspect_state.
+4. harness_session — Execution lifecycle. Actions: begin, begin_recovery, checkpoint, close, advance, heartbeat.
+5. harness_artifacts — Persistent state registry. Actions: save, list.
+6. harness_admin — Maintenance & administration. Actions: reconcile, drain, archive, cleanup, mem0_snapshot, mem0_rollup.
 
 ORIENTATION (call first in any new session):
 - harness_inspector(action: "capabilities") → discover tool map, bundled skills, mem0 availability
@@ -121,6 +127,11 @@ SETUP (one-time, when no workspace/project exists):
 1. harness_orchestrator(action: "init_workspace")
 2. harness_orchestrator(action: "create_campaign")
 3. harness_orchestrator(action: "plan_issues")
+
+FULLY AGENTIC FAN-OUT:
+- harness_symphony(action: "compile_plan") → compile milestones/slices into a plan_issues payload
+- harness_symphony(action: "dispatch_ready") → assign ready issues to isolated worktrees and compatible subagents
+- harness_symphony(action: "inspect_state") → inspect leases, worktree artifacts, evidence references, and orchestration health
 
 EXECUTION LOOP (repeated):
 4. harness_orchestrator(action: "promote_queue")
@@ -280,6 +291,7 @@ export class SessionLifecycleMcpServer {
   private buildTools(): ToolDefinition[] {
     const inspectorContract = getHarnessToolContract('harness_inspector');
     const orchestratorContract = getHarnessToolContract('harness_orchestrator');
+    const symphonyContract = getHarnessToolContract('harness_symphony');
     const sessionContract = getHarnessToolContract('harness_session');
     const artifactsContract = getHarnessToolContract('harness_artifacts');
     const adminContract = getHarnessToolContract('harness_admin');
@@ -302,8 +314,8 @@ export class SessionLifecycleMcpServer {
                 }),
                 mem0: await inspectMem0Status(this.mem0AdapterLoader),
                 ...buildMeta(
-                  ['harness_inspector', 'harness_session', 'harness_orchestrator'],
-                  'Capability catalog loaded. Use harness_inspector(action: "next_action") for queue guidance or choose a tool/action directly from the catalog.',
+                  ['harness_inspector', 'harness_symphony', 'harness_session', 'harness_orchestrator'],
+                  'Capability catalog loaded. Use harness_inspector(action: "next_action") for queue guidance, harness_symphony(action: "dispatch_ready") for full fan-out, or choose a tool/action directly from the catalog.',
                 ),
               };
             }
@@ -358,14 +370,14 @@ export class SessionLifecycleMcpServer {
                 if (recoveryCount > 0) {
                   hint = `${recoveryCount} issue(s) need recovery. Call harness_session(action: "begin_recovery").`;
                 } else if (readyCount > 0) {
-                  hint = `${readyCount} ready task(s). Call harness_session(action: "begin") to start working.`;
+                  hint = `${readyCount} ready task(s). Call harness_symphony(action: "dispatch_ready") for fully agentic fan-out, or harness_session(action: "begin") for one worker.`;
                 } else {
                   hint = 'No ready tasks. Call harness_orchestrator(action: "promote_queue") to check for promotable pending tasks.';
                 }
 
                 return {
                   ...result,
-                  ...buildMeta(['harness_session', 'harness_orchestrator'], hint),
+                  ...buildMeta(['harness_symphony', 'harness_session', 'harness_orchestrator'], hint),
                 };
               } finally {
                 db.close();
@@ -475,10 +487,10 @@ export class SessionLifecycleMcpServer {
                   ...result,
                   ...buildMeta(
                     promotedIds.length > 0
-                      ? ['harness_session']
+                      ? ['harness_symphony', 'harness_session']
                       : ['harness_inspector'],
                     promotedIds.length > 0
-                      ? `${promotedIds.length} task(s) promoted to ready. Call harness_session(action: "begin") to start working.`
+                      ? `${promotedIds.length} task(s) promoted to ready. Call harness_symphony(action: "dispatch_ready") for fan-out, or harness_session(action: "begin") for one worker.`
                       : 'No tasks were promoted. Call harness_inspector(action: "next_action") for guidance.',
                   ),
                 };
@@ -497,7 +509,135 @@ export class SessionLifecycleMcpServer {
         },
       },
 
-      // ── 3. harness_session ────────────────────────────────────────
+      // ── 3. harness_symphony ───────────────────────────────────────
+      {
+        name: symphonyContract.name,
+        description: symphonyContract.description,
+        inputSchema: getHarnessToolInputJsonSchema(symphonyContract.name),
+        handler: async (args) => {
+          const parsed = harnessSymphonyInputSchema.parse(args);
+
+          switch (parsed.action) {
+            case 'compile_plan': {
+              const payload = toHarnessPlanIssuesPayload(stripAction(parsed));
+              return {
+                planIssuesPayload: payload,
+                milestones: payload.milestones,
+                ...buildMeta(
+                  ['harness_orchestrator'],
+                  'Compiled orchestration slices into a canonical plan_issues payload. Call harness_orchestrator(action: "plan_issues") with the returned milestones when you are ready to mutate the queue.',
+                ),
+              };
+            }
+
+            case 'dispatch_ready': {
+              const dbPath = this.resolvePinnedMcpDbPath(parsed.dbPath);
+              const db = openHarnessDatabase({ dbPath });
+              try {
+                const { projectId, workspaceId } = resolveProjectScope(db.connection, {
+                  projectId: parsed.projectId,
+                  projectName: parsed.projectName,
+                  workspaceId: parsed.workspaceId,
+                });
+                const campaignId = parsed.campaignId
+                  ? parsed.campaignId
+                  : parsed.campaignName
+                    ? resolveCampaignId(db.connection, projectId, {
+                        campaignName: parsed.campaignName,
+                      })
+                    : undefined;
+                const result = await dispatchReadyOrchestrationIssues({
+                  dbPath,
+                  workspaceId,
+                  projectId,
+                  ...(campaignId !== undefined ? { campaignId } : {}),
+                  repoRoot: parsed.repoRoot,
+                  worktreeRoot: parsed.worktreeRoot,
+                  baseRef: parsed.baseRef,
+                  host: parsed.host,
+                  hostCapabilities: parsed.hostCapabilities,
+                  dispatchId: parsed.dispatchId,
+                  objective: parsed.objective,
+                  branchPrefix: parsed.branchPrefix,
+                  cleanupPolicy: parsed.cleanupPolicy,
+                  maxAssignments: parsed.maxAssignments,
+                  maxConcurrentAgents: parsed.maxConcurrentAgents,
+                  leaseTtlSeconds: parsed.leaseTtlSeconds,
+                  checkpointFreshnessSeconds: parsed.checkpointFreshnessSeconds,
+                  mem0Enabled: parsed.mem0Enabled,
+                  memorySearchLimit: parsed.memorySearchLimit,
+                  artifacts: parsed.artifacts,
+                  subagents: parsed.subagents,
+                  issueRequirements: parsed.issueRequirements,
+                });
+                const hint =
+                  result.dispatches.length > 0
+                    ? `${result.dispatches.length} issue(s) dispatched into isolated worktrees. Use harness_symphony(action: "inspect_state") to review leases, artifacts, and evidence health.`
+                    : result.unassignedIssues.length > 0
+                      ? `${result.unassignedIssues.length} ready issue(s) could not be assigned. Inspect unassignedIssues and adjust subagents, hostCapabilities, or worktree conflicts.`
+                      : 'No ready issues were dispatched. Call harness_inspector(action: "next_action") or harness_orchestrator(action: "promote_queue") to inspect queue state.';
+
+                return {
+                  ...result,
+                  ...buildMeta(
+                    result.dispatches.length > 0
+                      ? ['harness_symphony', 'harness_session']
+                      : ['harness_inspector', 'harness_orchestrator'],
+                    hint,
+                  ),
+                };
+              } finally {
+                db.close();
+              }
+            }
+
+            case 'inspect_state': {
+              const dbPath = this.resolvePinnedMcpDbPath(parsed.dbPath);
+              const db = openHarnessDatabase({ dbPath });
+              try {
+                const projectId = resolveProjectId(db.connection, {
+                  projectId: parsed.projectId,
+                  projectName: parsed.projectName,
+                  workspaceId: parsed.workspaceId,
+                });
+                const campaignId = parsed.campaignId
+                  ? parsed.campaignId
+                  : parsed.campaignName
+                    ? resolveCampaignId(db.connection, projectId, {
+                        campaignName: parsed.campaignName,
+                      })
+                    : undefined;
+                const summary = inspectOrchestration({
+                  dbPath,
+                  projectId,
+                  ...(campaignId !== undefined ? { campaignId } : {}),
+                  issueId: parsed.issueId,
+                  eventLimit: parsed.eventLimit,
+                });
+                const readyCount = summary.issues.statusCounts['ready'] ?? 0;
+                const hint =
+                  summary.health.status === 'warning'
+                    ? `${summary.health.flags.length} orchestration health flag(s) detected. Review summary.health.flags before dispatching more work.`
+                    : readyCount > 0
+                      ? `${readyCount} ready issue(s) in scope. Call harness_symphony(action: "dispatch_ready") to fan out work.`
+                      : 'Orchestration state loaded. No health warnings detected.';
+
+                return {
+                  summary,
+                  ...buildMeta(
+                    readyCount > 0 ? ['harness_symphony'] : ['harness_inspector'],
+                    hint,
+                  ),
+                };
+              } finally {
+                db.close();
+              }
+            }
+          }
+        },
+      },
+
+      // ── 4. harness_session ────────────────────────────────────────
       {
         name: sessionContract.name,
         description: sessionContract.description,
@@ -702,7 +842,7 @@ export class SessionLifecycleMcpServer {
         },
       },
 
-      // ── 4. harness_artifacts ──────────────────────────────────────
+      // ── 5. harness_artifacts ──────────────────────────────────────
       {
         name: artifactsContract.name,
         description: artifactsContract.description,
@@ -819,7 +959,7 @@ export class SessionLifecycleMcpServer {
         },
       },
 
-      // ── 5. harness_admin ──────────────────────────────────────────
+      // ── 6. harness_admin ──────────────────────────────────────────
       {
         name: adminContract.name,
         description: adminContract.description,
@@ -1216,6 +1356,43 @@ function resolveActiveWorkloadProfile(): WorkloadProfileId | undefined {
   return configuredProfile;
 }
 
+function resolveProjectScope(
+  connection: DatabaseSync,
+  input: {
+    projectId?: string;
+    projectName?: string;
+    workspaceId?: string;
+  },
+): { projectId: string; workspaceId: string } {
+  const projectId = resolveProjectId(connection, input);
+  const project = selectOne<{ workspace_id: string }>(
+    connection,
+    'SELECT workspace_id FROM projects WHERE id = ?',
+    [projectId],
+  );
+
+  if (project === null) {
+    throw new AgenticToolError(
+      `Project ${projectId} was not found.`,
+      'Pass a valid projectId or projectName before dispatching Symphony work.',
+      'harness_inspector',
+    );
+  }
+
+  if (input.workspaceId !== undefined && project.workspace_id !== input.workspaceId) {
+    throw new AgenticToolError(
+      `Project ${projectId} does not belong to workspace ${input.workspaceId}.`,
+      'Pass the project workspaceId or omit workspaceId so the server can resolve it.',
+      'harness_inspector',
+    );
+  }
+
+  return {
+    projectId,
+    workspaceId: project.workspace_id,
+  };
+}
+
 // ─── Standalone functions ───────────────────────────────────────────
 
 interface StatusCountRow {
@@ -1530,8 +1707,8 @@ function getHarnessContext(input: {
       hint = `${inProgressCount} issue(s) in progress. Call harness_session(action: "begin") to resume.`;
       nextTools = ['harness_session'];
     } else if (readyCount > 0) {
-      hint = `${readyCount} ready task(s). Call harness_session(action: "begin") to start working.`;
-      nextTools = ['harness_session'];
+      hint = `${readyCount} ready task(s). Call harness_symphony(action: "dispatch_ready") for fully agentic fan-out, or harness_session(action: "begin") for single-worker execution.`;
+      nextTools = ['harness_symphony', 'harness_session'];
     } else {
       hint = 'No ready tasks. Call harness_orchestrator(action: "promote_queue") or harness_orchestrator(action: "plan_issues") to add work.';
       nextTools = ['harness_orchestrator'];

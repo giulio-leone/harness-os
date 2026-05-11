@@ -125,9 +125,9 @@ test('MCP and CLI discoverability docs stay aligned with public contracts', () =
     bin?: Record<string, string>;
   };
 
-  assert.match(mcpGuide, /five MCP mega-tools/);
+  assert.match(mcpGuide, /six MCP tools/);
   assert.match(mcpGuide, /hostCapabilities/);
-  assert.equal(HARNESS_TOOL_CONTRACTS.length, 5);
+  assert.equal(HARNESS_TOOL_CONTRACTS.length, 6);
 
   for (const tool of HARNESS_TOOL_CONTRACTS) {
     assert.match(mcpGuide, new RegExp(`\`${escapeForRegex(tool.name)}\``));

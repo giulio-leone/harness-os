@@ -33,7 +33,7 @@ When a breaking release lands, update all public surfaces atomically:
 | Surface | Canonical source | Hard-cut behavior |
 | --- | --- | --- |
 | Session-lifecycle CLI payloads | `src/runtime/session-lifecycle-cli.schemas.ts` | Every payload must declare `contractVersion: "6.0.0"` and stale or missing versions are rejected immediately; `begin_incremental` / `begin_recovery` payloads must include explicit `host` and `hostCapabilities` routing context plus the generic `artifacts` array instead of removed fixed path fields. |
-| Harness MCP mega-tools | `src/runtime/harness-tool-contracts.ts` | Inputs are `.strict()` and unknown or removed fields fail at the public boundary. |
+| Harness MCP tools | `src/runtime/harness-tool-contracts.ts` | Inputs are `.strict()` and unknown or removed fields fail at the public boundary. |
 | SQLite runtime store | `src/db/store.ts` | Only schema v5 is supported; older DBs fail with an explicit recreate instruction. |
 | Issue/milestone workflow metadata | `src/contracts/workflow-contracts.ts` + `src/runtime/harness-planning-tools.ts` | `deadlineAt`, `recipients`, `approvals`, and `externalRefs` are first-class issue/milestone fields; `policy.deadlineAt` is removed and rejected at the public boundary. |
 | Host sync config | `src/bin/agent-harness-setup.ts` | `harness-sync` rejects legacy host configs until `harness-setup` rewrites them to schemaVersion 3 with an explicit `selectedWorkloadProfile`. |

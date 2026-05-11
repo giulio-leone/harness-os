@@ -96,7 +96,7 @@ On `close()`, session-managed artifacts for the run are released even when `rele
 
 ### 7. Public API boundary
 
-The v1 orchestration modules are intentionally additive. Existing public lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The existing MCP mega-tools remain the public operational surface until the orchestration package exports are stabilized in the later public-integration milestone.
+The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, and the MCP surface exposes a dedicated `harness_symphony` tool for compile/dispatch/inspect orchestration workflows.
 
 ## Fully agentic completion posture
 
@@ -114,5 +114,5 @@ The runtime therefore supports a no-human-checkpoint mode while keeping quality 
 - The dispatcher assigns work and claims sessions; it is not yet a long-running daemon.
 - Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
 - Evidence packet validation exists, but the full E2E/CI gate runner is scheduled for later hardening milestones.
-- Public package exports and MCP orchestration actions are intentionally deferred until the internal API stabilizes.
+- Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.
 - Dashboard and CSQR-lite scorecards build on this evidence substrate rather than changing the schema.

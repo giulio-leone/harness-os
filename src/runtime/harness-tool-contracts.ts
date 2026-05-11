@@ -1,6 +1,18 @@
 import { z } from 'zod';
 
-import { harnessHostCapabilitiesSchema } from '../contracts/policy-contracts.js';
+import {
+  harnessHostCapabilitiesSchema,
+  harnessPolicySchema,
+} from '../contracts/policy-contracts.js';
+import {
+  orchestrationSubagentSchema,
+  orchestrationWorktreeCleanupPolicySchema,
+} from '../contracts/orchestration-contracts.js';
+import {
+  issuePrioritySchema,
+  tShirtSizeSchema,
+} from '../contracts/task-domain.js';
+import { harnessWorkflowMetadataSchema } from '../contracts/workflow-contracts.js';
 import {
   harnessCreateCampaignInputSchema,
   harnessInitWorkspaceInputSchema,
@@ -57,6 +69,11 @@ export const orchestratorActionValues = [
   'promote_queue',
   'rollback_issue',
 ] as const;
+export const symphonyActionValues = [
+  'compile_plan',
+  'dispatch_ready',
+  'inspect_state',
+] as const;
 export const sessionActionValues = [
   'begin',
   'begin_recovery',
@@ -77,6 +94,7 @@ export const adminActionValues = [
 
 export const inspectorActionSchema = z.enum(inspectorActionValues);
 export const orchestratorActionSchema = z.enum(orchestratorActionValues);
+export const symphonyActionSchema = z.enum(symphonyActionValues);
 export const sessionActionSchema = z.enum(sessionActionValues);
 export const artifactsActionSchema = z.enum(artifactsActionValues);
 export const adminActionSchema = z.enum(adminActionValues);
@@ -173,6 +191,108 @@ export const harnessOrchestratorInputSchema = z.discriminatedUnion('action', [
   harnessRollbackIssueInputSchema.extend({
     action: z.literal('rollback_issue'),
   }),
+]);
+
+const orchestrationScopeFields = {
+  ...projectScopeFields,
+  campaignId: optionalString,
+  campaignName: optionalString,
+} as const;
+
+const orchestrationWorkflowMetadataFields = {
+  deadlineAt: harnessWorkflowMetadataSchema.shape.deadlineAt,
+  recipients: harnessWorkflowMetadataSchema.shape.recipients,
+  approvals: harnessWorkflowMetadataSchema.shape.approvals,
+  externalRefs: harnessWorkflowMetadataSchema.shape.externalRefs,
+} as const;
+
+const harnessSymphonyMilestoneInputSchema = z
+  .object({
+    id: nonEmptyString,
+    key: optionalString,
+    description: nonEmptyString,
+    dependsOnMilestoneIds: z.array(nonEmptyString).optional(),
+    dependsOnMilestoneKeys: z.array(nonEmptyString).optional(),
+    dependsOnExistingMilestoneIds: z.array(nonEmptyString).optional(),
+    ...orchestrationWorkflowMetadataFields,
+  })
+  .strict();
+
+const harnessSymphonySliceInputSchema = z
+  .object({
+    id: nonEmptyString,
+    milestoneId: nonEmptyString,
+    task: nonEmptyString,
+    priority: issuePrioritySchema,
+    size: tShirtSizeSchema,
+    dependsOnSliceIds: z.array(nonEmptyString).optional(),
+    evidenceRequirements: harnessWorkflowMetadataSchema.shape.externalRefs,
+    policy: harnessPolicySchema.optional(),
+    ...orchestrationWorkflowMetadataFields,
+  })
+  .strict();
+
+const harnessSymphonyCompilePlanInputSchema = z
+  .object({
+    action: z.literal('compile_plan'),
+    milestones: z.array(harnessSymphonyMilestoneInputSchema).min(1),
+    slices: z.array(harnessSymphonySliceInputSchema).min(1),
+  })
+  .strict();
+
+const harnessSymphonyArtifactReferenceInputSchema = z
+  .object({
+    kind: nonEmptyString,
+    path: nonEmptyString,
+  })
+  .strict();
+
+const harnessSymphonyIssueRequirementInputSchema = z
+  .object({
+    issueId: nonEmptyString,
+    requiredCapabilityIds: z.array(nonEmptyString).optional(),
+    candidateFilePaths: z.array(nonEmptyString).max(500).optional(),
+  })
+  .strict();
+
+const harnessSymphonyDispatchInputSchema = z
+  .object({
+    action: z.literal('dispatch_ready'),
+    ...orchestrationScopeFields,
+    repoRoot: nonEmptyString,
+    worktreeRoot: nonEmptyString,
+    baseRef: nonEmptyString,
+    host: nonEmptyString,
+    hostCapabilities: harnessHostCapabilitiesSchema,
+    dispatchId: optionalString,
+    objective: optionalString,
+    branchPrefix: optionalString,
+    cleanupPolicy: orchestrationWorktreeCleanupPolicySchema.optional(),
+    maxAssignments: positiveInt.optional(),
+    maxConcurrentAgents: positiveInt.optional(),
+    leaseTtlSeconds: positiveInt.optional(),
+    checkpointFreshnessSeconds: positiveInt.optional(),
+    mem0Enabled: z.boolean().optional(),
+    memorySearchLimit: positiveInt.optional(),
+    artifacts: z.array(harnessSymphonyArtifactReferenceInputSchema).optional(),
+    subagents: z.array(orchestrationSubagentSchema).min(1).optional(),
+    issueRequirements: z.array(harnessSymphonyIssueRequirementInputSchema).optional(),
+  })
+  .strict();
+
+const harnessSymphonyInspectInputSchema = z
+  .object({
+    action: z.literal('inspect_state'),
+    ...orchestrationScopeFields,
+    issueId: optionalString,
+    eventLimit: boundedInt100.optional(),
+  })
+  .strict();
+
+export const harnessSymphonyInputSchema = z.discriminatedUnion('action', [
+  harnessSymphonyCompilePlanInputSchema,
+  harnessSymphonyDispatchInputSchema,
+  harnessSymphonyInspectInputSchema,
 ]);
 
 const sessionTokenSchema = z.string().min(1);
@@ -572,6 +692,105 @@ export const HARNESS_TOOL_CONTRACTS: HarnessToolContract[] = [
         example: {
           action: 'rollback_issue',
           issueId: 'I-123',
+        },
+      },
+    ],
+  },
+  {
+    name: 'harness_symphony',
+    description:
+      'Fully agentic Symphony-style orchestration. Actions: compile_plan (turn orchestration milestones/slices into canonical plan_issues payloads), dispatch_ready (fan out ready issues across isolated worktrees and compatible subagents), inspect_state (read orchestration assignments, leases, artifacts, events, and evidence health).',
+    role: 'Agentic fan-out planning, dispatch, and orchestration-state inspection',
+    summary:
+      'Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, and inspect evidence-backed orchestration state.',
+    inputSchema: harnessSymphonyInputSchema,
+    actions: [
+      {
+        action: 'compile_plan',
+        purpose:
+          'Compile Symphony-style milestones and slices into the canonical harness_orchestrator(action: "plan_issues") milestones payload without mutating runtime state.',
+        recommendedWhen: [
+          'tracker-driven planning',
+          'converting orchestration slices',
+          'preparing a deterministic plan_issues payload',
+        ],
+        requiredFields: ['milestones', 'slices'],
+        example: {
+          action: 'compile_plan',
+          milestones: [
+            {
+              id: 'm-foundation',
+              key: 'foundation',
+              description: 'Build the orchestration foundation',
+            },
+          ],
+          slices: [
+            {
+              id: 'slice-dispatcher',
+              milestoneId: 'm-foundation',
+              task: 'Implement the MCP dispatch surface',
+              priority: 'high',
+              size: 'M',
+              evidenceRequirements: [
+                {
+                  id: 'dispatch-e2e',
+                  kind: 'e2e_report',
+                  value: 'evidence://dispatch-ready',
+                  label: 'Dispatch E2E evidence',
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        action: 'dispatch_ready',
+        purpose:
+          'Claim ready issues with one compatible subagent and one isolated worktree per issue, enforcing dispatch limits, worktree conflict guardrails, and lease capacity.',
+        recommendedWhen: [
+          'fully agentic execution',
+          'parallel ready issue fan-out',
+          'worktree-isolated implementation',
+        ],
+        requiredFields: [
+          'projectId or projectName',
+          'repoRoot',
+          'worktreeRoot',
+          'baseRef',
+          'host',
+          'hostCapabilities',
+        ],
+        example: {
+          action: 'dispatch_ready',
+          projectName: 'Agent Harness Core',
+          repoRoot: '/repo/harness-os',
+          worktreeRoot: '/repo/worktrees',
+          baseRef: 'main',
+          host: 'copilot',
+          hostCapabilities: {
+            workloadClasses: ['default', 'typescript'],
+            capabilities: ['node', 'sqlite'],
+          },
+          maxConcurrentAgents: 4,
+          maxAssignments: 4,
+          cleanupPolicy: 'delete_on_completion',
+        },
+      },
+      {
+        action: 'inspect_state',
+        purpose:
+          'Read the orchestration state for a project, campaign, or issue, including active leases, worktree/evidence artifacts, recent events, and health flags.',
+        recommendedWhen: [
+          'orchestration observability',
+          'evidence review',
+          'dashboard data',
+          'post-dispatch inspection',
+        ],
+        requiredFields: ['projectId or projectName'],
+        example: {
+          action: 'inspect_state',
+          projectName: 'Agent Harness Core',
+          eventLimit: 25,
         },
       },
     ],
@@ -1285,7 +1504,7 @@ export function renderReadmePublicContractsSection(): string {
     '',
     cliExamplesTable,
     '',
-    '#### Harness MCP mega-tools',
+    '#### Harness MCP tools',
     toolTable,
   ].join('\n');
 }

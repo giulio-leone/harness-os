@@ -115,7 +115,7 @@ Use this when the host is primarily coordinating planning, follow-through, and e
 
 After installing MCP on a host, call `harness_inspector(action: "capabilities")`. The returned capability catalog includes:
 
-- the bundled MCP mega-tools and their actions
+- the bundled MCP tools and their actions
 - the active `workloadProfiles` list
 - skill metadata with `workloadProfileIds`
 - mem0 availability and bootstrap guidance
