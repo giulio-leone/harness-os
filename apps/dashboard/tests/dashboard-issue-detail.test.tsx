@@ -27,8 +27,8 @@ test('issue detail loader renders status, agent notes, lease history, and eviden
 
   assert.equal(state.kind, 'ready');
   assert.equal(state.kind === 'ready' ? state.detail.card.status : null, 'done');
-  assert.equal(state.kind === 'ready' ? state.detail.artifacts.length : null, 2);
-  assert.equal(state.kind === 'ready' ? state.detail.checkpoints.length : null, 1);
+  assert.equal(state.kind === 'ready' ? state.detail.artifacts.length : null, 5);
+  assert.equal(state.kind === 'ready' ? state.detail.checkpoints.length : null, 2);
   assert.equal(state.kind === 'ready' ? state.detail.leases.length : null, 1);
 
   const html = renderToStaticMarkup(
@@ -51,6 +51,19 @@ test('issue detail loader renders status, agent notes, lease history, and eviden
   assert.match(html, /e2e_report/);
   assert.match(html, /state_export/);
   assert.match(html, /global-checkpoint-artifact/);
+  assert.match(html, /Evidence drilldown/);
+  assert.match(html, /CSQR-lite scorecards/);
+  assert.match(html, /scorecard-detail/);
+  assert.match(html, /Passed/);
+  assert.match(html, /Weighted average/);
+  assert.match(html, /9\.5/);
+  assert.match(html, /8\.5/);
+  assert.match(html, /A-detail-null-metadata/);
+  assert.match(html, />null</);
+  assert.match(html, /A-detail-incomplete-scorecard/);
+  assert.match(html, /CSQR-lite artifact metadata is missing scorecardJson/);
+  assert.match(html, /Checkpoint provenance/);
+  assert.match(html, /CP-detail-newer/);
   assert.match(html, /Issue cannot be claimed from status done/);
 });
 
@@ -63,6 +76,8 @@ test('issue detail shell enables claim for live ready issues and disables demo c
   });
 
   assert.equal(state.kind, 'ready');
+  assert.deepEqual(state.kind === 'ready' ? state.detail.artifacts : null, []);
+  assert.deepEqual(state.kind === 'ready' ? state.detail.checkpoints : null, []);
 
   const liveHtml = renderToStaticMarkup(
     state.kind === 'ready' ? (
@@ -86,6 +101,8 @@ test('issue detail shell enables claim for live ready issues and disables demo c
   assert.match(liveHtml, /data-testid="claim-issue-form"/);
   assert.match(liveHtml, /name="issueId"/);
   assert.doesNotMatch(liveHtml, /disabled=""/);
+  assert.match(liveHtml, /No checkpoint notes have been written for this issue yet/);
+  assert.match(liveHtml, /No evidence artifacts are attached to this issue yet/);
   assert.match(demoHtml, /Claim is available only in live DB mode/);
   assert.match(demoHtml, /disabled=""/);
 });
@@ -130,6 +147,8 @@ test('issue detail not-found and stylesheet guardrails are deterministic', () =>
   assert.match(css, /\.issue-card-link:focus-visible/);
   assert.match(css, /\.detail-grid/);
   assert.match(css, /\.claim-panel/);
+  assert.match(css, /\.proof-card-grid/);
+  assert.match(css, /\.scorecard-outcome\.passed/);
 });
 
 function seedIssueDetailDatabase(): string {
@@ -301,6 +320,84 @@ function seedIssueDetailDatabase(): string {
          metadata_json,
          created_at
        )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        'A-detail-scorecard',
+        'W-detail',
+        'P-detail',
+        'C-detail',
+        'I-detail-done',
+        'csqr_lite_scorecard',
+        '/tmp/detail-scorecard.json',
+        buildScorecardMetadata(),
+        '2026-01-02T03:04:08.000Z',
+      ],
+    );
+    runStatement(
+      database.connection,
+      `INSERT INTO artifacts (
+         id,
+         workspace_id,
+         project_id,
+         campaign_id,
+         issue_id,
+         kind,
+         path,
+         metadata_json,
+         created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        'A-detail-incomplete-scorecard',
+        'W-detail',
+        'P-detail',
+        'C-detail',
+        'I-detail-done',
+        'csqr_lite_scorecard',
+        '/tmp/detail-incomplete-scorecard.json',
+        '{}',
+        '2026-01-02T03:04:07.000Z',
+      ],
+    );
+    runStatement(
+      database.connection,
+      `INSERT INTO artifacts (
+         id,
+         workspace_id,
+         project_id,
+         campaign_id,
+         issue_id,
+         kind,
+         path,
+         metadata_json,
+         created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        'A-detail-null-metadata',
+        'W-detail',
+        'P-detail',
+        'C-detail',
+        'I-detail-done',
+        'evidence_packet',
+        '/tmp/detail-null.json',
+        'null',
+        '2026-01-02T03:04:06.000Z',
+      ],
+    );
+    runStatement(
+      database.connection,
+      `INSERT INTO artifacts (
+         id,
+         workspace_id,
+         project_id,
+         campaign_id,
+         issue_id,
+         kind,
+         path,
+         metadata_json,
+         created_at
+       )
        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
       [
         'A-detail-global',
@@ -311,6 +408,32 @@ function seedIssueDetailDatabase(): string {
         '/tmp/detail-state.json',
         '{"label":"global-checkpoint-artifact"}',
         now,
+      ],
+    );
+    runStatement(
+      database.connection,
+      `INSERT INTO checkpoints (
+         id,
+         run_id,
+         issue_id,
+         title,
+         summary,
+         task_status,
+         next_step,
+         artifact_ids_json,
+         created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        'CP-detail-newer',
+        'RUN-detail',
+        'I-detail-done',
+        'proof-review',
+        'Verified CSQR-lite scorecard and checkpoint evidence.',
+        'done',
+        'Inspect proof drilldown.',
+        '["A-detail-global","A-detail-scorecard","A-detail-global","A-detail-missing",17]',
+        '2026-01-02T03:04:09.000Z',
       ],
     );
     runStatement(
@@ -394,4 +517,81 @@ function insertIssue(
       input.now,
     ],
   );
+}
+
+function buildScorecardMetadata(): string {
+  const scorecard = {
+    contractVersion: '1.0.0',
+    id: 'scorecard-detail',
+    scope: 'run',
+    runId: 'RUN-detail',
+    summary: 'Automated proof checks passed for the dashboard detail flow.',
+    criteria: [
+      {
+        id: 'correctness-detail',
+        dimension: 'correctness',
+        name: 'Correctness gate',
+        description: 'The implementation satisfies the issue behavior.',
+        weight: 1,
+      },
+      {
+        id: 'security-detail',
+        dimension: 'security',
+        name: 'Security gate',
+        description: 'Inputs are validated and database access remains scoped.',
+        weight: 1,
+      },
+      {
+        id: 'quality-detail',
+        dimension: 'quality',
+        name: 'Quality gate',
+        description: 'The implementation remains maintainable and typed.',
+        weight: 1,
+      },
+      {
+        id: 'runtime-detail',
+        dimension: 'runtime_evidence',
+        name: 'Runtime evidence gate',
+        description: 'E2E evidence and screenshots validate the flow.',
+        weight: 1,
+      },
+    ],
+    scores: [
+      {
+        criterionId: 'correctness-detail',
+        score: 10,
+        notes: 'Detail page renders evidence and agent state.',
+        evidenceArtifactIds: ['A-detail-e2e'],
+      },
+      {
+        criterionId: 'security-detail',
+        score: 9,
+        notes: 'Queries remain project and campaign scoped.',
+        evidenceArtifactIds: ['A-detail-global'],
+      },
+      {
+        criterionId: 'quality-detail',
+        score: 9,
+        notes: 'Proof drilldown is deterministic and typed.',
+        evidenceArtifactIds: ['A-detail-scorecard'],
+      },
+      {
+        criterionId: 'runtime-detail',
+        score: 10,
+        notes: 'Checkpoint provenance links evidence to the run.',
+        evidenceArtifactIds: ['A-detail-e2e', 'A-detail-global'],
+      },
+    ],
+    weightedAverage: 9.5,
+    targetScore: 8.5,
+    createdAt: '2026-01-02T03:04:08.000Z',
+    metadata: {
+      gate: 'completion',
+    },
+  };
+
+  return JSON.stringify({
+    csqrLiteScorecardId: 'scorecard-detail',
+    scorecardJson: JSON.stringify(scorecard),
+  });
 }

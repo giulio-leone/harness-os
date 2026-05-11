@@ -22,6 +22,7 @@ export interface DashboardIssueArtifact {
   issueId: string | null;
   campaignId: string | null;
   metadata: unknown;
+  metadataError?: string;
   createdAt: string;
 }
 
@@ -306,15 +307,38 @@ function buildDemoIssueDetail(
 }
 
 function mapArtifact(row: ArtifactRow): DashboardIssueArtifact {
+  const metadata = parseArtifactMetadata(row.metadata_json);
+
   return {
     id: row.id,
     kind: row.kind,
     path: row.path,
     issueId: row.issue_id,
     campaignId: row.campaign_id,
-    metadata: JSON.parse(row.metadata_json) as unknown,
+    metadata: metadata.value,
+    ...(metadata.error === undefined ? {} : { metadataError: metadata.error }),
     createdAt: row.created_at,
   };
+}
+
+function parseArtifactMetadata(value: string): { value: unknown; error?: string } {
+  if (value.trim().length === 0) {
+    return {
+      value: null,
+      error: 'Artifact metadata is empty.',
+    };
+  }
+
+  try {
+    return {
+      value: JSON.parse(value) as unknown,
+    };
+  } catch (error) {
+    return {
+      value: null,
+      error: error instanceof Error ? error.message : 'Artifact metadata is invalid JSON.',
+    };
+  }
 }
 
 function mapCheckpoint(row: CheckpointRow): DashboardIssueCheckpoint {

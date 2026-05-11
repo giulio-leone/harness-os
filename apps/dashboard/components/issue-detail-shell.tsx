@@ -1,5 +1,10 @@
 import React from 'react';
 import Link from 'next/link';
+import {
+  csqrLiteDefaultTargetScore,
+  csqrLiteScorecardSchema,
+  type CsqrLiteScorecard,
+} from 'harness-os/orchestration';
 
 import type { DashboardIssueDetail } from '../lib/dashboard-issue-detail';
 
@@ -10,6 +15,28 @@ interface IssueDetailShellProps {
 }
 
 const CLAIMABLE_STATUSES = new Set(['ready']);
+
+type IssueArtifact = DashboardIssueDetail['artifacts'][number];
+type IssueCheckpoint = DashboardIssueDetail['checkpoints'][number];
+
+interface EvidenceGroup {
+  kind: string;
+  artifacts: IssueArtifact[];
+}
+
+type CsqrScorecardProof =
+  | {
+      kind: 'valid';
+      artifact: IssueArtifact;
+      scorecard: CsqrLiteScorecard;
+      threshold: number;
+      passed: boolean;
+    }
+  | {
+      kind: 'invalid';
+      artifact: IssueArtifact;
+      error: string;
+    };
 
 export function IssueDetailShell({
   claimIssueAction,
@@ -223,31 +250,256 @@ function CheckpointPanel({ detail }: { detail: DashboardIssueDetail }) {
 }
 
 function EvidenceDetailPanel({ detail }: { detail: DashboardIssueDetail }) {
+  const evidenceGroups = groupArtifactsByKind(detail.artifacts);
+  const checkpointMap = buildArtifactCheckpointMap(detail.checkpoints);
+  const csqrScorecards = extractCsqrScorecards(detail.artifacts);
+
   return (
     <section className="panel detail-wide" data-testid="issue-evidence-panel" aria-labelledby="evidence-title">
-      <p className="eyebrow">Evidence</p>
+      <p className="eyebrow">Proof layer</p>
       <h2 className="panel-title" id="evidence-title">
-        Artifacts and proof
+        Evidence drilldown
       </h2>
-      <div className="stack">
-        {detail.artifacts.length === 0 ? (
-          <p className="panel-copy">No evidence artifacts are attached to this issue yet.</p>
-        ) : (
-          detail.artifacts.map((artifact) => (
-            <article className="evidence-card evidence-detail-card" key={artifact.id}>
-              <p className="agent-title">
-                {artifact.kind}
-                <span className="small-pill">{artifact.id}</span>
+      <div className="proof-summary" aria-label="Evidence summary">
+        <span className="small-pill">{detail.artifacts.length} artifacts</span>
+        <span className="small-pill">{evidenceGroups.length} evidence groups</span>
+        <span className="small-pill">{detail.checkpoints.length} checkpoints</span>
+        <span className="small-pill">{csqrScorecards.length} CSQR scorecards</span>
+      </div>
+      <CsqrScorecardPanel scorecards={csqrScorecards} />
+      <EvidenceGroupList groups={evidenceGroups} checkpointMap={checkpointMap} />
+    </section>
+  );
+}
+
+function CsqrScorecardPanel({
+  scorecards,
+}: {
+  scorecards: CsqrScorecardProof[];
+}) {
+  return (
+    <section className="proof-section" aria-labelledby="csqr-scorecards-title">
+      <h3 className="section-title" id="csqr-scorecards-title">
+        CSQR-lite scorecards
+      </h3>
+      {scorecards.length === 0 ? (
+        <p className="panel-copy">No CSQR-lite scorecard artifacts are attached.</p>
+      ) : (
+        <div className="proof-card-grid">
+          {scorecards.map((scorecard) => (
+            <CsqrScorecardCard
+              key={scorecard.artifact.id}
+              scorecard={scorecard}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CsqrScorecardCard({
+  scorecard,
+}: {
+  scorecard: CsqrScorecardProof;
+}) {
+  if (scorecard.kind === 'invalid') {
+    return (
+      <article className="scorecard-card">
+        <p className="agent-title">
+          Invalid CSQR metadata
+          <span className="small-pill">{scorecard.artifact.id}</span>
+        </p>
+        <p className="issue-blocker">{scorecard.error}</p>
+        <ArtifactRawMetadata artifact={scorecard.artifact} />
+      </article>
+    );
+  }
+
+  const scoreByCriterionId = new Map(
+    scorecard.scorecard.scores.map((score) => [score.criterionId, score]),
+  );
+
+  return (
+    <article className="scorecard-card">
+      <p className="agent-title">
+        {scorecard.scorecard.id}
+        <span className={`scorecard-outcome ${scorecard.passed ? 'passed' : 'failed'}`}>
+          {scorecard.passed ? 'Passed' : 'Failed'}
+        </span>
+      </p>
+      <p className="panel-copy">{scorecard.scorecard.summary}</p>
+      <dl className="proof-meta-grid">
+        <div>
+          <dt>Weighted average</dt>
+          <dd>{formatScore(scorecard.scorecard.weightedAverage)}</dd>
+        </div>
+        <div>
+          <dt>Target</dt>
+          <dd>{formatScore(scorecard.threshold)}</dd>
+        </div>
+        <div>
+          <dt>Scope</dt>
+          <dd>{scorecard.scorecard.scope}</dd>
+        </div>
+        <div>
+          <dt>Source artifact</dt>
+          <dd>{scorecard.artifact.id}</dd>
+        </div>
+      </dl>
+      <div className="criterion-list">
+        {scorecard.scorecard.criteria.map((criterion) => {
+          const criterionScore = scoreByCriterionId.get(criterion.id);
+
+          return (
+            <article className="criterion-card" key={criterion.id}>
+              <p className="timeline-title">
+                {criterion.name}
+                <span className="small-pill">{criterion.dimension}</span>
               </p>
-              <p className="timeline-meta">{artifact.path}</p>
-              <pre className="timeline-payload">
-                {JSON.stringify(artifact.metadata, null, 2)}
-              </pre>
+              <p className="timeline-meta">
+                Weight {formatScore(criterion.weight)} · Score{' '}
+                {criterionScore === undefined ? 'missing' : criterionScore.score}
+              </p>
+              {criterionScore ? (
+                <>
+                  <p className="panel-copy">{criterionScore.notes}</p>
+                  <div className="artifact-list" aria-label={`Evidence artifacts for ${criterion.id}`}>
+                    {criterionScore.evidenceArtifactIds.map((artifactId) => (
+                      <span className="small-pill" key={artifactId}>
+                        {artifactId}
+                      </span>
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </article>
-          ))
-        )}
+          );
+        })}
+      </div>
+    </article>
+  );
+}
+
+function EvidenceGroupList({
+  checkpointMap,
+  groups,
+}: {
+  checkpointMap: Map<string, IssueCheckpoint[]>;
+  groups: EvidenceGroup[];
+}) {
+  if (groups.length === 0) {
+    return (
+      <section className="proof-section" aria-labelledby="evidence-groups-title">
+        <h3 className="section-title" id="evidence-groups-title">
+          Evidence artifacts
+        </h3>
+        <p className="panel-copy">No evidence artifacts are attached to this issue yet.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="proof-section" aria-labelledby="evidence-groups-title">
+      <h3 className="section-title" id="evidence-groups-title">
+        Evidence artifacts
+      </h3>
+      <div className="stack">
+        {groups.map((group) => (
+          <article className="evidence-group" key={group.kind}>
+            <div className="evidence-group-header">
+              <p className="timeline-title">{group.kind}</p>
+              <span className="small-pill">{group.artifacts.length} artifact(s)</span>
+            </div>
+            <div className="proof-card-grid">
+              {group.artifacts.map((artifact) => (
+                <ArtifactProofCard
+                  artifact={artifact}
+                  checkpoints={checkpointMap.get(artifact.id) ?? []}
+                  key={artifact.id}
+                />
+              ))}
+            </div>
+          </article>
+        ))}
       </div>
     </section>
+  );
+}
+
+function ArtifactProofCard({
+  artifact,
+  checkpoints,
+}: {
+  artifact: IssueArtifact;
+  checkpoints: IssueCheckpoint[];
+}) {
+  return (
+    <article className="evidence-card evidence-detail-card">
+      <p className="agent-title">
+        {artifact.id}
+        <span className="small-pill">{artifact.kind}</span>
+      </p>
+      <p className="timeline-meta">{artifact.path}</p>
+      <dl className="proof-meta-grid">
+        <div>
+          <dt>Issue scope</dt>
+          <dd>{artifact.issueId ?? 'global'}</dd>
+        </div>
+        <div>
+          <dt>Campaign</dt>
+          <dd>{artifact.campaignId ?? 'none'}</dd>
+        </div>
+        <div>
+          <dt>Created</dt>
+          <dd>{formatDate(artifact.createdAt)}</dd>
+        </div>
+      </dl>
+      {artifact.metadataError ? (
+        <p className="issue-blocker">Metadata warning: {artifact.metadataError}</p>
+      ) : null}
+      <CheckpointProvenance artifactId={artifact.id} checkpoints={checkpoints} />
+      <ArtifactRawMetadata artifact={artifact} />
+    </article>
+  );
+}
+
+function CheckpointProvenance({
+  artifactId,
+  checkpoints,
+}: {
+  artifactId: string;
+  checkpoints: IssueCheckpoint[];
+}) {
+  return (
+    <div className="provenance-list" aria-label={`Checkpoint provenance for ${artifactId}`}>
+      <p className="timeline-title">Checkpoint provenance</p>
+      {checkpoints.length === 0 ? (
+        <p className="panel-copy">No checkpoint references this artifact.</p>
+      ) : (
+        checkpoints.map((checkpoint) => (
+          <article className="timeline-item" key={checkpoint.id}>
+            <p className="timeline-title">
+              {checkpoint.title}
+              <span className="status-pill">{checkpoint.taskStatus}</span>
+            </p>
+            <p className="timeline-meta">
+              {checkpoint.id} · Run {checkpoint.runId} · {formatDate(checkpoint.createdAt)}
+            </p>
+            <p className="panel-copy">{checkpoint.summary}</p>
+          </article>
+        ))
+      )}
+    </div>
+  );
+}
+
+function ArtifactRawMetadata({ artifact }: { artifact: IssueArtifact }) {
+  return (
+    <details className="proof-detail-summary">
+      <summary>Raw metadata</summary>
+      <pre className="timeline-payload">{formatMetadata(artifact.metadata)}</pre>
+    </details>
   );
 }
 
@@ -291,6 +543,117 @@ function getClaimDisabledReason(
   }
 
   return null;
+}
+
+function groupArtifactsByKind(artifacts: IssueArtifact[]): EvidenceGroup[] {
+  const groups = new Map<string, IssueArtifact[]>();
+
+  for (const artifact of artifacts) {
+    const group = groups.get(artifact.kind) ?? [];
+    group.push(artifact);
+    groups.set(artifact.kind, group);
+  }
+
+  return [...groups.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([kind, groupArtifacts]) => ({
+      kind,
+      artifacts: groupArtifacts,
+    }));
+}
+
+function buildArtifactCheckpointMap(
+  checkpoints: IssueCheckpoint[],
+): Map<string, IssueCheckpoint[]> {
+  const checkpointMap = new Map<string, IssueCheckpoint[]>();
+
+  for (const checkpoint of checkpoints) {
+    for (const artifactId of checkpoint.artifactIds) {
+      const artifactCheckpoints = checkpointMap.get(artifactId) ?? [];
+      artifactCheckpoints.push(checkpoint);
+      checkpointMap.set(artifactId, artifactCheckpoints);
+    }
+  }
+
+  return checkpointMap;
+}
+
+function extractCsqrScorecards(artifacts: IssueArtifact[]): CsqrScorecardProof[] {
+  return artifacts
+    .filter((artifact) => artifact.kind === 'csqr_lite_scorecard')
+    .map(parseCsqrScorecardArtifact);
+}
+
+function parseCsqrScorecardArtifact(artifact: IssueArtifact): CsqrScorecardProof {
+  if (artifact.metadataError !== undefined) {
+    return {
+      kind: 'invalid',
+      artifact,
+      error: artifact.metadataError,
+    };
+  }
+
+  if (!isRecord(artifact.metadata)) {
+    return {
+      kind: 'invalid',
+      artifact,
+      error: 'CSQR-lite artifact metadata must be a JSON object.',
+    };
+  }
+
+  const scorecardJson = artifact.metadata['scorecardJson'];
+
+  if (typeof scorecardJson !== 'string') {
+    return {
+      kind: 'invalid',
+      artifact,
+      error: 'CSQR-lite artifact metadata is missing scorecardJson.',
+    };
+  }
+
+  let parsedScorecard: unknown;
+
+  try {
+    parsedScorecard = JSON.parse(scorecardJson) as unknown;
+  } catch (error) {
+    return {
+      kind: 'invalid',
+      artifact,
+      error: error instanceof Error ? error.message : 'scorecardJson is invalid JSON.',
+    };
+  }
+
+  const scorecard = csqrLiteScorecardSchema.safeParse(parsedScorecard);
+
+  if (!scorecard.success) {
+    return {
+      kind: 'invalid',
+      artifact,
+      error: scorecard.error.issues.map((issue) => issue.message).join('; '),
+    };
+  }
+
+  const threshold = scorecard.data.targetScore ?? csqrLiteDefaultTargetScore;
+
+  return {
+    kind: 'valid',
+    artifact,
+    scorecard: scorecard.data,
+    threshold,
+    passed: scorecard.data.weightedAverage >= threshold,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function formatMetadata(value: unknown): string {
+  return JSON.stringify(value, null, 2) ?? 'null';
+}
+
+function formatScore(value: number): string {
+  return Number.isInteger(value) ? value.toString() : value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function formatDate(value: string): string {
