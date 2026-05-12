@@ -8,6 +8,7 @@ import {
   orchestrationPlanSchema,
   orchestrationRunResultSchema,
   orchestrationSubagentSchema,
+  orchestrationSupervisorRunInputSchema,
   orchestrationSupervisorRunSummarySchema,
   orchestrationSupervisorTickInputSchema,
   orchestrationSupervisorTickResultSchema,
@@ -429,7 +430,7 @@ test('orchestrationSupervisorTickInputSchema requires host execution inputs in e
           },
         },
       }),
-    /execute supervisor ticks require workspaceId/,
+    /execute supervisor inputs require workspaceId/,
   );
 
   assert.throws(
@@ -449,7 +450,7 @@ test('orchestrationSupervisorTickInputSchema requires host execution inputs in e
           },
         },
       }),
-    /execute supervisor ticks require projectId/,
+    /execute supervisor inputs require projectId/,
   );
 
   const parsed = orchestrationSupervisorTickInputSchema.parse({
@@ -489,6 +490,36 @@ test('orchestrationSupervisorTickInputSchema rejects unsafe host worktree contai
         },
       }),
     /repoRoot must not be contained by worktreeRoot/,
+  );
+});
+
+test('orchestrationSupervisorRunInputSchema shares supervisor defaults and execute guardrails', () => {
+  const parsed = orchestrationSupervisorRunInputSchema.parse({
+    ...createValidSupervisorRunInput(),
+    stopCondition: {
+      maxTicks: 3,
+      stopWhenIdle: true,
+    },
+  });
+
+  assert.equal(parsed.runId, 'run-M8-I3-001');
+  assert.equal(parsed.mode, 'dry_run');
+  assert.equal(parsed.stopCondition.maxTicks, 3);
+  assert.equal(parsed.stopCondition.stopWhenIdle, true);
+  assert.deepEqual(parsed.requiredEvidenceArtifactKinds, [
+    'test_report',
+    'e2e_report',
+    'screenshot',
+    'csqr_lite_scorecard',
+  ]);
+
+  assert.throws(
+    () =>
+      orchestrationSupervisorRunInputSchema.parse({
+        ...createValidSupervisorRunInput(),
+        mode: 'execute',
+      }),
+    /require dispatch host execution inputs/,
   );
 });
 
@@ -803,6 +834,18 @@ function createValidSupervisorTickInput(): Record<string, unknown> {
     projectId: 'project-1',
     campaignId: 'campaign-1',
     objective: 'Run fully autonomous Symphony supervision without checkpoints.',
+  };
+}
+
+function createValidSupervisorRunInput(): Record<string, unknown> {
+  return {
+    contractVersion: '1.0.0',
+    runId: 'run-M8-I3-001',
+    dbPath: '/tmp/harness.sqlite',
+    workspaceId: 'workspace-1',
+    projectId: 'project-1',
+    campaignId: 'campaign-1',
+    objective: 'Run bounded autonomous Symphony supervision without checkpoints.',
   };
 }
 

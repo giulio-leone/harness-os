@@ -36,6 +36,7 @@
     "harness-scheduler-inject": "./dist/bin/scheduler-inject.js",
     "harness-session-lifecycle": "./dist/bin/session-lifecycle.js",
     "harness-session-lifecycle-mcp": "./dist/bin/session-lifecycle-mcp.js",
+    "harness-supervisor": "./dist/bin/supervisor.js",
     "harness-setup": "./dist/bin/agent-harness-setup.js",
     "harness-sync": "./dist/bin/agent-harness-sync.js"
   },
@@ -60,7 +61,9 @@
     "session:lifecycle": "node dist/bin/session-lifecycle.js",
     "session:lifecycle:dev": "tsx src/bin/session-lifecycle.ts",
     "session:lifecycle:mcp": "node dist/bin/session-lifecycle-mcp.js",
-    "session:lifecycle:mcp:dev": "tsx src/bin/session-lifecycle-mcp.ts"
+    "session:lifecycle:mcp:dev": "tsx src/bin/session-lifecycle-mcp.ts",
+    "supervisor": "node dist/bin/supervisor.js",
+    "supervisor:dev": "tsx src/bin/supervisor.ts"
   },
   "keywords": [
     "agent",

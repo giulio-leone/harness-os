@@ -66,11 +66,27 @@ export interface HarnessOrchestrationCapability {
     dispatchReady: 'dispatch_ready';
     inspectState: 'inspect_state';
     dashboardView: 'dashboard_view';
+    supervisorTick: 'supervisor_tick';
+    supervisorRun: 'supervisor_run';
   };
   dashboard: {
     contractVersion: '1.0.0';
     filteredViewAction: 'dashboard_view';
     supportedFilters: string[];
+  };
+  supervisor: {
+    contractVersion: '1.0.0';
+    cli: 'harness-supervisor';
+    tickAction: 'supervisor_tick';
+    runAction: 'supervisor_run';
+    defaultMaxTicks: 1;
+    defaultBackoffMs: {
+      idle: 30000;
+      blocked: 60000;
+      error: 120000;
+    };
+    boundedPolling: true;
+    supportsDryRun: true;
   };
   requiredDispatchFields: string[];
   hostResponsibilities: string[];
@@ -117,6 +133,8 @@ const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
     dispatchReady: 'dispatch_ready',
     inspectState: 'inspect_state',
     dashboardView: 'dashboard_view',
+    supervisorTick: 'supervisor_tick',
+    supervisorRun: 'supervisor_run',
   },
   dashboard: {
     contractVersion: '1.0.0',
@@ -131,6 +149,20 @@ const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
       'hasCsqr',
       'signal',
     ],
+  },
+  supervisor: {
+    contractVersion: '1.0.0',
+    cli: 'harness-supervisor',
+    tickAction: 'supervisor_tick',
+    runAction: 'supervisor_run',
+    defaultMaxTicks: 1,
+    defaultBackoffMs: {
+      idle: 30_000,
+      blocked: 60_000,
+      error: 120_000,
+    },
+    boundedPolling: true,
+    supportsDryRun: true,
   },
   requiredDispatchFields: [
     'projectId or projectName',
@@ -207,6 +239,18 @@ const BOOTSTRAP_STEPS: HarnessBootstrapStep[] = [
   },
   {
     step: 6,
+    tool: 'harness_symphony',
+    action: 'supervisor_run',
+    reason: 'Run bounded autonomous polling when the host can provide supervisor inputs, stop conditions, and dispatch/worktree routing fields.',
+    requiredFields: [
+      'contractVersion',
+      'runId',
+      'dbPath',
+      'projectId or projectName',
+    ],
+  },
+  {
+    step: 7,
     tool: 'harness_symphony',
     action: 'dispatch_ready',
     reason: 'Fan out ready issues only after the host knows the repository root, worktree root, base ref, and host routing capabilities.',

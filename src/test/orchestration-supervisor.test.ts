@@ -4,13 +4,19 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import type { OrchestrationSubagent } from '../contracts/orchestration-contracts.js';
-import { orchestrationSupervisorTickResultSchema } from '../contracts/orchestration-contracts.js';
+import {
+  orchestrationSupervisorRunSummarySchema,
+  orchestrationSupervisorTickResultSchema,
+} from '../contracts/orchestration-contracts.js';
 import {
   openHarnessDatabase,
   runStatement,
   selectOne,
 } from '../db/store.js';
-import { runOrchestrationSupervisorTick } from '../runtime/orchestration-supervisor.js';
+import {
+  runOrchestrationSupervisor,
+  runOrchestrationSupervisorTick,
+} from '../runtime/orchestration-supervisor.js';
 
 let tempCounter = 0;
 
@@ -291,6 +297,89 @@ test('supervisor returns an auditable error result with error backoff', async ()
   }
 });
 
+test('supervisor run performs bounded polling with deterministic tick ids and backoff sleeps', async () => {
+  const tempDir = createLocalTempDir('bounded-run');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  const sleeps: number[] = [];
+
+  try {
+    seedBaseProject(dbPath);
+
+    const result = await runOrchestrationSupervisor(
+      {
+        ...baseRunInput(dbPath),
+        stopCondition: {
+          maxTicks: 2,
+          stopWhenIdle: false,
+          stopWhenBlocked: false,
+        },
+        backoff: {
+          idleDelayMs: 7,
+          blockedDelayMs: 11,
+          errorDelayMs: 13,
+        },
+      },
+      {
+        clock: () => timestamp,
+        sleep: async (delayMs) => {
+          sleeps.push(delayMs);
+        },
+      },
+    );
+
+    assert.deepEqual(orchestrationSupervisorRunSummarySchema.parse(result), result);
+    assert.equal(result.runId, 'run-supervisor-test');
+    assert.equal(result.status, 'partial');
+    assert.equal(result.stopReason, 'tick_limit_reached');
+    assert.deepEqual(
+      result.tickResults.map((tick) => tick.tickId),
+      ['run-supervisor-test-tick-1', 'run-supervisor-test-tick-2'],
+    );
+    assert.deepEqual(
+      result.tickResults.map((tick) => tick.stopReason),
+      ['idle', 'idle'],
+    );
+    assert.deepEqual(sleeps, [7]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('supervisor run stops on idle when stop condition is enabled', async () => {
+  const tempDir = createLocalTempDir('idle-run-stop');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  const sleeps: number[] = [];
+
+  try {
+    seedBaseProject(dbPath);
+
+    const result = await runOrchestrationSupervisor(
+      {
+        ...baseRunInput(dbPath),
+        stopCondition: {
+          maxTicks: 5,
+          stopWhenIdle: true,
+          stopWhenBlocked: false,
+        },
+      },
+      {
+        clock: () => timestamp,
+        sleep: async (delayMs) => {
+          sleeps.push(delayMs);
+        },
+      },
+    );
+
+    assert.deepEqual(orchestrationSupervisorRunSummarySchema.parse(result), result);
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.stopReason, 'idle');
+    assert.equal(result.tickResults.length, 1);
+    assert.deepEqual(sleeps, []);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 function baseTickInput(dbPath: string) {
   return {
     contractVersion: '1.0.0' as const,
@@ -307,6 +396,17 @@ function baseTickInput(dbPath: string) {
       hostCapabilities,
       maxConcurrentAgents: 4,
     },
+  };
+}
+
+function baseRunInput(dbPath: string) {
+  return {
+    contractVersion: '1.0.0' as const,
+    runId: 'run-supervisor-test',
+    dbPath,
+    workspaceId: 'workspace-1',
+    projectId: 'project-1',
+    objective: 'Run a bounded deterministic supervisor loop.',
   };
 }
 

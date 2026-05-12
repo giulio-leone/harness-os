@@ -799,76 +799,52 @@ export const orchestrationSupervisorStopConditionSchema = z
   })
   .strict();
 
+const orchestrationSupervisorCommonInputFields = {
+  dbPath: nonEmptyString,
+  workspaceId: nonEmptyString.optional(),
+  projectId: nonEmptyString.optional(),
+  projectName: nonEmptyString.optional(),
+  campaignId: nonEmptyString.optional(),
+  campaignName: nonEmptyString.optional(),
+  issueId: nonEmptyString.optional(),
+  mode: orchestrationSupervisorTickModeSchema.default('dry_run'),
+  objective: nonEmptyString.optional(),
+  eventLimit: positiveInteger.default(25),
+  dashboardFilters: orchestrationDashboardIssueFiltersInputSchema.optional(),
+  dispatch: orchestrationSupervisorHostExecutionSchema.optional(),
+  backoff: orchestrationSupervisorBackoffSchema.default({
+    idleDelayMs: 30_000,
+    blockedDelayMs: 60_000,
+    errorDelayMs: 120_000,
+  }),
+  stopCondition: orchestrationSupervisorStopConditionSchema.default({
+    stopWhenIdle: false,
+    stopWhenBlocked: false,
+  }),
+  requiredEvidenceArtifactKinds: z
+    .array(orchestrationEvidenceArtifactKindSchema)
+    .default(['test_report', 'e2e_report', 'screenshot', 'csqr_lite_scorecard']),
+  metadata: z.record(z.string(), z.string()).optional(),
+} as const;
+
 export const orchestrationSupervisorTickInputSchema = z
   .object({
     contractVersion: z.literal(orchestrationContractVersion),
     tickId: identifierString,
-    dbPath: nonEmptyString,
-    workspaceId: nonEmptyString.optional(),
-    projectId: nonEmptyString.optional(),
-    projectName: nonEmptyString.optional(),
-    campaignId: nonEmptyString.optional(),
-    campaignName: nonEmptyString.optional(),
-    issueId: nonEmptyString.optional(),
-    mode: orchestrationSupervisorTickModeSchema.default('dry_run'),
-    objective: nonEmptyString.optional(),
-    eventLimit: positiveInteger.default(25),
-    dashboardFilters: orchestrationDashboardIssueFiltersInputSchema.optional(),
-    dispatch: orchestrationSupervisorHostExecutionSchema.optional(),
-    backoff: orchestrationSupervisorBackoffSchema.default({
-      idleDelayMs: 30_000,
-      blockedDelayMs: 60_000,
-      errorDelayMs: 120_000,
-    }),
-    stopCondition: orchestrationSupervisorStopConditionSchema.default({
-      stopWhenIdle: false,
-      stopWhenBlocked: false,
-    }),
-    requiredEvidenceArtifactKinds: z
-      .array(orchestrationEvidenceArtifactKindSchema)
-      .default(['test_report', 'e2e_report', 'screenshot', 'csqr_lite_scorecard']),
-    metadata: z.record(z.string(), z.string()).optional(),
+    ...orchestrationSupervisorCommonInputFields,
   })
   .strict()
-  .superRefine((value, ctx) => {
-    if (value.projectId === undefined && value.projectName === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'supervisor ticks require projectId or projectName.',
-        path: ['projectId'],
-      });
-    }
+  .superRefine(validateSupervisorInputScopeAndExecution);
 
-    if (value.mode === 'execute' && value.dispatch === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'execute supervisor ticks require dispatch host execution inputs.',
-        path: ['dispatch'],
-      });
-    }
-
-    if (value.mode === 'execute' && value.workspaceId === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'execute supervisor ticks require workspaceId.',
-        path: ['workspaceId'],
-      });
-    }
-
-    if (value.mode === 'execute' && value.projectId === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'execute supervisor ticks require projectId.',
-        path: ['projectId'],
-      });
-    }
-
-    validateUniqueStrings(
-      value.requiredEvidenceArtifactKinds,
-      'requiredEvidenceArtifactKinds',
-      ctx,
-    );
-  });
+export const orchestrationSupervisorRunInputSchema = z
+  .object({
+    contractVersion: z.literal(orchestrationContractVersion),
+    runId: identifierString,
+    tickIdPrefix: identifierString.optional(),
+    ...orchestrationSupervisorCommonInputFields,
+  })
+  .strict()
+  .superRefine(validateSupervisorInputScopeAndExecution);
 
 export const orchestrationSupervisorDecisionSchema = z
   .object({
@@ -1110,6 +1086,9 @@ export type OrchestrationSupervisorStopCondition = z.infer<
 export type OrchestrationSupervisorTickInput = z.infer<
   typeof orchestrationSupervisorTickInputSchema
 >;
+export type OrchestrationSupervisorRunInput = z.infer<
+  typeof orchestrationSupervisorRunInputSchema
+>;
 export type OrchestrationSupervisorDecision = z.infer<
   typeof orchestrationSupervisorDecisionSchema
 >;
@@ -1275,6 +1254,56 @@ function isSupervisorMutatingDecision(value: {
     value.kind === 'dispatch_ready' ||
     value.action === 'promote_queue' ||
     value.action === 'dispatch_ready'
+  );
+}
+
+function validateSupervisorInputScopeAndExecution(
+  value: {
+    projectId?: string;
+    projectName?: string;
+    workspaceId?: string;
+    mode: (typeof orchestrationSupervisorTickModeValues)[number];
+    dispatch?: unknown;
+    requiredEvidenceArtifactKinds?: ReadonlyArray<string>;
+  },
+  ctx: z.core.$RefinementCtx,
+): void {
+  if (value.projectId === undefined && value.projectName === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'supervisor inputs require projectId or projectName.',
+      path: ['projectId'],
+    });
+  }
+
+  if (value.mode === 'execute' && value.dispatch === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'execute supervisor inputs require dispatch host execution inputs.',
+      path: ['dispatch'],
+    });
+  }
+
+  if (value.mode === 'execute' && value.workspaceId === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'execute supervisor inputs require workspaceId.',
+      path: ['workspaceId'],
+    });
+  }
+
+  if (value.mode === 'execute' && value.projectId === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'execute supervisor inputs require projectId.',
+      path: ['projectId'],
+    });
+  }
+
+  validateUniqueStrings(
+    value.requiredEvidenceArtifactKinds,
+    'requiredEvidenceArtifactKinds',
+    ctx,
   );
 }
 

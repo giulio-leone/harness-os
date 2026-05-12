@@ -134,6 +134,8 @@ test('harness_symphony schema exposes the dedicated orchestration action enum', 
     'dispatch_ready',
     'inspect_state',
     'dashboard_view',
+    'supervisor_tick',
+    'supervisor_run',
   ]);
 });
 
