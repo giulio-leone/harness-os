@@ -1,4 +1,5 @@
 import React from 'react';
+import type { UrlObject } from 'node:url';
 import Link from 'next/link';
 
 import type {
@@ -11,6 +12,7 @@ import type {
   OrchestrationDashboardViewModel,
 } from 'harness-os/orchestration';
 import {
+  applyOrchestrationDashboardIssueFilters,
   emptyOrchestrationDashboardIssueFilters,
   hasOrchestrationDashboardIssueFilters,
 } from 'harness-os/orchestration';
@@ -22,6 +24,7 @@ interface DashboardShellProps {
   dataSource?: 'live' | 'demo';
   createIssueAction?: React.ComponentProps<'form'>['action'];
   filters?: OrchestrationDashboardIssueFilters;
+  savedViewModel?: OrchestrationDashboardViewModel;
   unfilteredIssueCount?: number;
 }
 
@@ -31,62 +34,208 @@ const HEALTH_FLAG_LABELS: Record<OrchestrationDashboardHealthFlag['kind'], strin
   expired_active_lease: 'Expired lease',
 };
 
+interface SavedView {
+  id: string;
+  label: string;
+  href: UrlObject;
+  count: number;
+}
+
 export function DashboardShell({
   createIssueAction,
   dataSource = 'live',
   filters = emptyOrchestrationDashboardIssueFilters,
+  savedViewModel,
   unfilteredIssueCount,
   viewModel,
 }: DashboardShellProps) {
   const filtersActive = hasOrchestrationDashboardIssueFilters(filters);
   const totalIssueCount = unfilteredIssueCount ?? viewModel.overview.totalIssues;
+  const savedViewsSource = savedViewModel ?? viewModel;
 
   return (
     <main className="dashboard-root" data-testid="orchestration-dashboard">
-      <div className="dashboard-frame">
-        <section className="dashboard-hero" aria-labelledby="dashboard-title">
-          <div className="hero-panel">
-            <p className="eyebrow">HarnessOS Symphony dashboard</p>
-            <h1 className="hero-title" id="dashboard-title">
-              Linear-like command center for fully agentic campaigns.
-            </h1>
-            <p className="hero-copy">
-              Track issue lanes, active leases, worktree evidence, CSQR scorecards,
-              and recovery signals from the stable orchestration dashboard view model.
-            </p>
-            <div className="scope-grid" aria-label="Dashboard scope">
-              <ScopePill label="Project" value={viewModel.scope.projectId} />
-              <ScopePill label="Campaign" value={viewModel.scope.campaignId ?? 'All campaigns'} />
-              <ScopePill label="Issue" value={viewModel.scope.issueId ?? 'All issues'} />
-            </div>
-          </div>
+      <div className="dashboard-frame dashboard-workspace">
+        <WorkspaceSidebar
+          dataSource={dataSource}
+          savedViewModel={savedViewsSource}
+          viewModel={viewModel}
+        />
+        <section className="dashboard-main" aria-labelledby="dashboard-title">
+          <DashboardTopbar
+            dataSource={dataSource}
+            filters={filters}
+            totalIssueCount={totalIssueCount}
+            viewModel={viewModel}
+          />
           <OverviewPanel dataSource={dataSource} viewModel={viewModel} />
-        </section>
 
-        <section className="content-grid">
-          <div>
-            <IssueFilterPanel
-              filters={filters}
-              totalIssueCount={totalIssueCount}
-              visibleIssueCount={viewModel.overview.totalIssues}
-            />
-            <LaneBoard
-              filtersActive={filtersActive}
-              lanes={viewModel.issueLanes}
-              visibleIssueCount={viewModel.overview.totalIssues}
-            />
-          </div>
-          <aside aria-label="Evidence and health summaries">
-            <CreateTicketPanel action={createIssueAction} dataSource={dataSource} />
-            <HealthPanel viewModel={viewModel} />
-            <ActiveAgentsPanel agents={viewModel.activeAgents} />
-            <EvidencePanel viewModel={viewModel} />
-            <TimelinePanel viewModel={viewModel} />
-          </aside>
+          <section className="content-grid">
+            <div className="board-region">
+              <IssueFilterPanel
+                filters={filters}
+                totalIssueCount={totalIssueCount}
+                visibleIssueCount={viewModel.overview.totalIssues}
+              />
+              <LaneBoard
+                filtersActive={filtersActive}
+                lanes={viewModel.issueLanes}
+                visibleIssueCount={viewModel.overview.totalIssues}
+              />
+            </div>
+            <aside className="dashboard-inspector" aria-label="Evidence and health summaries">
+              <CreateTicketPanel action={createIssueAction} dataSource={dataSource} />
+              <HealthPanel viewModel={viewModel} />
+              <ActiveAgentsPanel agents={viewModel.activeAgents} />
+              <EvidencePanel viewModel={viewModel} />
+              <TimelinePanel viewModel={viewModel} />
+            </aside>
+          </section>
         </section>
       </div>
     </main>
   );
+}
+
+function WorkspaceSidebar({
+  dataSource,
+  savedViewModel,
+  viewModel,
+}: {
+  dataSource: 'live' | 'demo';
+  savedViewModel: OrchestrationDashboardViewModel;
+  viewModel: OrchestrationDashboardViewModel;
+}) {
+  const savedViews = buildSavedViews(savedViewModel);
+
+  return (
+    <aside className="workspace-sidebar" data-testid="dashboard-sidebar" aria-label="Workspace navigation">
+      <div className="workspace-brand">
+        <span className="workspace-logo" aria-hidden="true">
+          H
+        </span>
+        <div>
+          <p className="eyebrow">HarnessOS</p>
+          <p className="workspace-name">Symphony</p>
+        </div>
+      </div>
+      <nav className="workspace-nav" aria-label="Saved dashboard views">
+        <p className="nav-section-label">Saved views</p>
+        {savedViews.map((view) => (
+          <Link className="nav-item" data-testid={`saved-view-${view.id}`} href={view.href} key={view.id}>
+            <span>{view.label}</span>
+            <span className="nav-count">{view.count}</span>
+          </Link>
+        ))}
+      </nav>
+      <div className="workspace-scope" aria-label="Dashboard scope">
+        <ScopePill label="Project" value={viewModel.scope.projectId} />
+        <ScopePill label="Campaign" value={viewModel.scope.campaignId ?? 'All campaigns'} />
+        <ScopePill label="Issue" value={viewModel.scope.issueId ?? 'All issues'} />
+      </div>
+      <div className="workspace-footer">
+        <Pill className="status-pill">{dataSource} data</Pill>
+        <Pill className={`status-pill ${viewModel.health.status}`}>
+          {viewModel.health.status}
+        </Pill>
+      </div>
+    </aside>
+  );
+}
+
+function DashboardTopbar({
+  dataSource,
+  filters,
+  totalIssueCount,
+  viewModel,
+}: {
+  dataSource: 'live' | 'demo';
+  filters: OrchestrationDashboardIssueFilters;
+  totalIssueCount: number;
+  viewModel: OrchestrationDashboardViewModel;
+}) {
+  return (
+    <header className="workspace-topbar" data-testid="dashboard-topbar">
+      <div className="workspace-title-block">
+        <p className="eyebrow">HarnessOS Symphony dashboard</p>
+        <h1 className="workspace-title" id="dashboard-title">
+          Linear-like command center for fully agentic campaigns.
+        </h1>
+        <p className="workspace-subtitle">
+          Track lanes, leases, proof artifacts, CSQR scorecards, and recovery signals
+          from the stable orchestration dashboard view model.
+        </p>
+      </div>
+      <div className="workspace-command-stack">
+        <form action="/" aria-label="Command search" className="command-search" method="get" role="search">
+          <span className="command-icon" aria-hidden="true">
+            CMD K
+          </span>
+          <input
+            defaultValue={filters.q ?? ''}
+            name="q"
+            placeholder="Search issues, blockers, agents, proof..."
+            type="search"
+          />
+          <button className="secondary-button compact-button" type="submit">
+            Search
+          </button>
+        </form>
+        <div className="topbar-pills" aria-label="Dashboard state">
+          <Pill>{viewModel.overview.totalIssues} visible</Pill>
+          <Pill>{totalIssueCount} total</Pill>
+          <Pill className={`status-pill ${viewModel.health.status}`}>
+            {dataSource} / {viewModel.health.status}
+          </Pill>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function buildSavedViews(viewModel: OrchestrationDashboardViewModel): SavedView[] {
+  return [
+    {
+      id: 'all',
+      label: 'All work',
+      href: { pathname: '/' },
+      count: viewModel.overview.totalIssues,
+    },
+    {
+      id: 'ready',
+      label: 'Ready to claim',
+      href: { pathname: '/', query: { status: 'ready' } },
+      count: countSavedViewIssues(viewModel, { status: ['ready'] }),
+    },
+    {
+      id: 'active',
+      label: 'Active leases',
+      href: { pathname: '/', query: { signal: 'active' } },
+      count: countSavedViewIssues(viewModel, { signal: 'active' }),
+    },
+    {
+      id: 'blocked',
+      label: 'Blocked / recovery',
+      href: { pathname: '/', query: { signal: 'blocked' } },
+      count: countSavedViewIssues(viewModel, { signal: 'blocked' }),
+    },
+    {
+      id: 'proof',
+      label: 'Proof artifacts',
+      href: { pathname: '/', query: { signal: 'evidence' } },
+      count: countSavedViewIssues(viewModel, { signal: 'evidence' }),
+    },
+  ];
+}
+
+function countSavedViewIssues(
+  viewModel: OrchestrationDashboardViewModel,
+  filters: Partial<OrchestrationDashboardIssueFilters>,
+): number {
+  return applyOrchestrationDashboardIssueFilters(viewModel, {
+    ...emptyOrchestrationDashboardIssueFilters,
+    ...filters,
+  }).overview.totalIssues;
 }
 
 function IssueFilterPanel({

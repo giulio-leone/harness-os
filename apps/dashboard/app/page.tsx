@@ -29,6 +29,7 @@ export default async function DashboardPage({
       createIssueAction={state.mode === 'live' ? createDashboardIssueAction : undefined}
       dataSource={state.mode}
       filters={filters}
+      savedViewModel={state.viewModel}
       unfilteredIssueCount={state.viewModel.overview.totalIssues}
       viewModel={applyOrchestrationDashboardIssueFilters(state.viewModel, filters)}
     />

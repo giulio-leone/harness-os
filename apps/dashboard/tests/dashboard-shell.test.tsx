@@ -41,6 +41,52 @@ test('dashboard shell renders the stable lane order and orchestration evidence s
   );
 });
 
+test('dashboard shell renders Linear-style sidebar, topbar, command search, and saved views', () => {
+  const filtered = applyDashboardIssueFilters(demoDashboardViewModel, {
+    ...emptyFilters(),
+    q: 'threshold',
+  });
+  const html = renderToStaticMarkup(
+    <DashboardShell
+      dataSource="demo"
+      filters={{ ...emptyFilters(), q: 'threshold' }}
+      savedViewModel={demoDashboardViewModel}
+      unfilteredIssueCount={demoDashboardViewModel.overview.totalIssues}
+      viewModel={filtered}
+    />,
+  );
+
+  assert.match(html, /data-testid="dashboard-sidebar"/);
+  assert.match(html, /aria-label="Workspace navigation"/);
+  assert.match(html, /data-testid="dashboard-topbar"/);
+  assert.match(html, /aria-label="Command search"/);
+  assert.match(html, /class="command-search"/);
+  assert.match(html, /placeholder="Search issues, blockers, agents, proof..."/);
+  assert.match(html, /value="threshold"/);
+  assert.match(html, /data-testid="saved-view-all"/);
+  assert.match(html, /data-testid="saved-view-ready"/);
+  assert.match(html, /data-testid="saved-view-active"/);
+  assert.match(html, /data-testid="saved-view-blocked"/);
+  assert.match(html, /data-testid="saved-view-proof"/);
+  assert.match(html, /href="\/\?status=ready"/);
+  assert.match(html, /href="\/\?signal=active"/);
+  assert.match(html, /href="\/\?signal=evidence"/);
+  assert.match(html, /All work/);
+  assert.match(html, /Ready to claim/);
+  assert.match(html, /Proof artifacts/);
+  assertSavedViewCount(html, 'all', demoDashboardViewModel.overview.totalIssues);
+  assertSavedViewCount(
+    html,
+    'active',
+    cardIds(applyDashboardIssueFilters(demoDashboardViewModel, { ...emptyFilters(), signal: 'active' })).length,
+  );
+  assertSavedViewCount(
+    html,
+    'proof',
+    cardIds(applyDashboardIssueFilters(demoDashboardViewModel, { ...emptyFilters(), signal: 'evidence' })).length,
+  );
+});
+
 test('dashboard setup renders required live configuration instead of placeholder data', () => {
   const html = renderToStaticMarkup(
     <DashboardSetup
@@ -326,6 +372,12 @@ test('dashboard stylesheet contains responsive overflow guardrails for dense liv
   assert.match(css, /--ds-space-4/);
   assert.match(css, /--ds-focus-ring/);
   assert.match(css, /\.ui-panel/);
+  assert.match(css, /\.dashboard-workspace\s*\{[\s\S]*grid-template-columns:\s*minmax\(220px, 248px\) minmax\(0, 1fr\)/);
+  assert.match(css, /\.workspace-sidebar\s*\{[\s\S]*position:\s*sticky/);
+  assert.match(css, /\.workspace-topbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(min\(100%, 420px\), 480px\)/);
+  assert.match(css, /\.command-search:focus-within\s*\{[\s\S]*box-shadow:\s*var\(--ds-focus-ring\)/);
+  assert.match(css, /@media \(max-width: 1280px\)\s*\{[\s\S]*\.dashboard-workspace/);
+  assert.match(css, /@media \(max-width: 760px\)\s*\{[\s\S]*\.workspace-nav\s*\{[\s\S]*overflow-x:\s*auto/);
   assert.match(css, /\.issue-card-link:focus-visible\s*\{[\s\S]*outline:\s*2px solid var\(--accent-strong\)/);
   assert.doesNotMatch(css, /outline:\s*none/);
 });
@@ -357,4 +409,11 @@ function assertRenderedCards(
   for (const id of absent) {
     assert.doesNotMatch(html, new RegExp(`data-testid="issue-card-${id}"`));
   }
+}
+
+function assertSavedViewCount(html: string, savedViewId: string, count: number): void {
+  assert.match(
+    html,
+    new RegExp(`data-testid="saved-view-${savedViewId}"[^>]*>[\\s\\S]*?<span class="nav-count">${count}</span>`),
+  );
 }
