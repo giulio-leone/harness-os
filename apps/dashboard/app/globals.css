@@ -179,6 +179,8 @@ select {
 }
 
 .kanban-shell {
+  min-width: 0;
+  overflow: hidden;
   padding: 10px;
 }
 
@@ -188,6 +190,20 @@ select {
   gap: 10px;
   align-items: center;
   justify-content: space-between;
+}
+
+.kanban-heading-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.board-scroll-hint {
+  color: var(--subtle);
+  font-size: 0.73rem;
+  font-weight: 800;
 }
 
 .kanban-heading {
@@ -712,11 +728,36 @@ select {
   grid-auto-columns: minmax(280px, 330px);
   grid-auto-flow: column;
   gap: 10px;
-  overflow-x: auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: scroll;
   overflow-y: visible;
   padding: 0 1px 8px;
+  overscroll-behavior-x: contain;
   scroll-padding-inline: 2px;
   scroll-snap-type: x proximity;
+  scrollbar-gutter: stable both-edges;
+  -webkit-overflow-scrolling: touch;
+}
+
+.board::-webkit-scrollbar {
+  height: 10px;
+}
+
+.board::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.board::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(8, 9, 12, 0.88);
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.42);
+}
+
+.board::-webkit-scrollbar-thumb:hover {
+  background: rgba(167, 139, 250, 0.62);
 }
 
 .board:focus-visible {

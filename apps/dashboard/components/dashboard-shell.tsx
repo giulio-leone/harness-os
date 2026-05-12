@@ -506,7 +506,12 @@ function LaneBoard({
             Execution lanes
           </h2>
         </div>
-        <Pill>{visibleIssueCount} visible</Pill>
+        <div className="kanban-heading-actions">
+          <span className="board-scroll-hint" id="board-scroll-hint">
+            Scroll sideways
+          </span>
+          <Pill>{visibleIssueCount} visible</Pill>
+        </div>
       </div>
       {filtersActive && visibleIssueCount === 0 ? (
         <div className="empty-board">
@@ -517,6 +522,7 @@ function LaneBoard({
         </div>
       ) : null}
       <div
+        aria-describedby="board-scroll-hint"
         aria-label="Issue lane board"
         className="board"
         role="region"
