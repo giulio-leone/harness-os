@@ -15,6 +15,7 @@ import {
   hasOrchestrationDashboardIssueFilters,
 } from 'harness-os/orchestration';
 import type { DashboardPageState } from '../lib/dashboard-data';
+import { MetricTile, Panel, Pill, SectionHeader } from './ui';
 
 interface DashboardShellProps {
   viewModel: OrchestrationDashboardViewModel;
@@ -98,18 +99,17 @@ function IssueFilterPanel({
   visibleIssueCount: number;
 }) {
   return (
-    <section className="panel filter-panel" aria-labelledby="filters-title">
-      <div className="panel-header">
-        <div>
-          <p className="eyebrow">Dashboard filters</p>
-          <h2 className="panel-title" id="filters-title">
-            Find issues and proof artifacts
-          </h2>
-          <p className="results-summary" id="filter-summary">
+    <Panel className="filter-panel" aria-labelledby="filters-title">
+      <SectionHeader
+        copy={
+          <span aria-live="polite" className="results-summary" id="filter-summary">
             Showing {visibleIssueCount} of {totalIssueCount} issues.
-          </p>
-        </div>
-      </div>
+          </span>
+        }
+        eyebrow="Dashboard filters"
+        title="Find issues and proof artifacts"
+        titleId="filters-title"
+      />
       <form action="/" aria-describedby="filter-summary" className="filter-form" method="get">
         <div className="filter-grid">
           <label className="field">
@@ -190,7 +190,7 @@ function IssueFilterPanel({
           </Link>
         </div>
       </form>
-    </section>
+    </Panel>
   );
 }
 
@@ -204,18 +204,13 @@ function CreateTicketPanel({
   const disabled = dataSource !== 'live' || action === undefined;
 
   return (
-    <section className="panel create-ticket-panel" data-testid="create-ticket-panel" aria-labelledby="create-ticket-title">
-      <div className="panel-header">
-        <div>
-          <p className="eyebrow">Create ticket</p>
-          <h2 className="panel-title" id="create-ticket-title">
-            Add work to this campaign
-          </h2>
-          <p className="panel-copy">
-            Creates a real ready issue in the configured HarnessOS database.
-          </p>
-        </div>
-      </div>
+    <Panel className="create-ticket-panel" data-testid="create-ticket-panel" aria-labelledby="create-ticket-title">
+      <SectionHeader
+        copy="Creates a real ready issue in the configured HarnessOS database."
+        eyebrow="Create ticket"
+        title="Add work to this campaign"
+        titleId="create-ticket-title"
+      />
       <form action={action} className="ticket-form">
         <label className="field">
           <span className="label">Task</span>
@@ -265,7 +260,7 @@ function CreateTicketPanel({
           <p className="form-note">Ticket creation is available only in live DB mode.</p>
         ) : null}
       </form>
-    </section>
+    </Panel>
   );
 }
 
@@ -334,31 +329,32 @@ function OverviewPanel({ dataSource = 'live', viewModel }: DashboardShellProps) 
   ];
 
   return (
-    <section className="panel" aria-labelledby="overview-title">
-      <div className="panel-header">
-        <div>
-          <p className="eyebrow">Live overview</p>
-          <h2 className="panel-title" id="overview-title">
-            Campaign pulse
-          </h2>
-        </div>
-        <div className="header-pills">
-          <span className="status-pill">{dataSource} data</span>
-          <span className={`status-pill ${viewModel.health.status}`}>
-            {viewModel.health.status}
-          </span>
-        </div>
-      </div>
+    <Panel aria-labelledby="overview-title">
+      <SectionHeader
+        actions={
+          <>
+            <Pill className="status-pill">{dataSource} data</Pill>
+            <Pill className={`status-pill ${viewModel.health.status}`}>
+              {viewModel.health.status}
+            </Pill>
+          </>
+        }
+        eyebrow="Live overview"
+        title="Campaign pulse"
+        titleId="overview-title"
+      />
       <div className="metric-grid">
         {metrics.map((metric) => (
-          <div className="metric-card" data-testid={`metric-${metric.id}`} key={metric.id}>
-            <span className="label">{metric.label}</span>
-            <span className="metric-value">{metric.value}</span>
-            <p className="metric-caption">{metric.caption}</p>
-          </div>
+          <MetricTile
+            caption={metric.caption}
+            id={metric.id}
+            key={metric.id}
+            label={metric.label}
+            value={metric.value}
+          />
         ))}
       </div>
-    </section>
+    </Panel>
   );
 }
 
@@ -372,19 +368,13 @@ function LaneBoard({
   visibleIssueCount: number;
 }) {
   return (
-    <section className="panel" aria-labelledby="lanes-title">
-      <div className="panel-header">
-        <div>
-          <p className="eyebrow">Issue lanes</p>
-          <h2 className="panel-title" id="lanes-title">
-            Dependency-ordered execution board
-          </h2>
-          <p className="panel-copy">
-            Lanes are rendered in the stable v1 contract order and preserve unknown
-            future states in Other.
-          </p>
-        </div>
-      </div>
+    <Panel aria-labelledby="lanes-title">
+      <SectionHeader
+        copy="Lanes are rendered in the stable v1 contract order and preserve unknown future states in Other."
+        eyebrow="Issue lanes"
+        title="Dependency-ordered execution board"
+        titleId="lanes-title"
+      />
       {filtersActive && visibleIssueCount === 0 ? (
         <div className="empty-board">
           <p>No issues match these filters.</p>
@@ -398,7 +388,7 @@ function LaneBoard({
           <LaneColumn filtersActive={filtersActive} lane={lane} key={lane.id} />
         ))}
       </div>
-    </section>
+    </Panel>
   );
 }
 

@@ -1,21 +1,51 @@
 :root {
   color-scheme: dark;
-  --background: #08090c;
-  --surface: #0f1117;
-  --surface-strong: #12141b;
-  --surface-soft: rgba(255, 255, 255, 0.035);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --text: #f6f7fb;
-  --muted: #a7adbd;
-  --subtle: #737b91;
-  --accent: #8b5cf6;
-  --accent-strong: #a78bfa;
-  --success: #34d399;
-  --warning: #fbbf24;
-  --danger: #fb7185;
-  --info: #38bdf8;
-  --shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  --ds-color-bg-canvas: #08090c;
+  --ds-color-bg-surface: #0f1117;
+  --ds-color-bg-surface-raised: #12141b;
+  --ds-color-bg-surface-muted: rgba(255, 255, 255, 0.035);
+  --ds-color-border-subtle: rgba(255, 255, 255, 0.08);
+  --ds-color-border-strong: rgba(255, 255, 255, 0.14);
+  --ds-color-text-primary: #f6f7fb;
+  --ds-color-text-secondary: #a7adbd;
+  --ds-color-text-tertiary: #737b91;
+  --ds-color-accent: #8b5cf6;
+  --ds-color-accent-strong: #a78bfa;
+  --ds-color-success: #34d399;
+  --ds-color-warning: #fbbf24;
+  --ds-color-danger: #fb7185;
+  --ds-color-info: #38bdf8;
+  --ds-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ds-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --ds-space-1: 4px;
+  --ds-space-2: 8px;
+  --ds-space-3: 12px;
+  --ds-space-4: 16px;
+  --ds-space-5: 20px;
+  --ds-space-6: 24px;
+  --ds-radius-sm: 10px;
+  --ds-radius-md: 14px;
+  --ds-radius-lg: 16px;
+  --ds-radius-pill: 999px;
+  --ds-motion-fast: 160ms ease;
+  --ds-shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.28);
+  --ds-focus-ring: 0 0 0 3px rgba(139, 92, 246, 0.22);
+  --background: var(--ds-color-bg-canvas);
+  --surface: var(--ds-color-bg-surface);
+  --surface-strong: var(--ds-color-bg-surface-raised);
+  --surface-soft: var(--ds-color-bg-surface-muted);
+  --border: var(--ds-color-border-subtle);
+  --border-strong: var(--ds-color-border-strong);
+  --text: var(--ds-color-text-primary);
+  --muted: var(--ds-color-text-secondary);
+  --subtle: var(--ds-color-text-tertiary);
+  --accent: var(--ds-color-accent);
+  --accent-strong: var(--ds-color-accent-strong);
+  --success: var(--ds-color-success);
+  --warning: var(--ds-color-warning);
+  --danger: var(--ds-color-danger);
+  --info: var(--ds-color-info);
+  --shadow: var(--ds-shadow-soft);
 }
 
 * {
@@ -37,9 +67,7 @@ body {
   overflow-x: hidden;
   color: var(--text);
   background: transparent;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  font-family: var(--ds-font-sans);
 }
 
 a {
@@ -85,6 +113,48 @@ select {
   border: 1px solid var(--border);
   background: linear-gradient(180deg, var(--surface-strong), var(--surface));
   box-shadow: var(--shadow);
+}
+
+.ui-panel {
+  position: relative;
+}
+
+.ui-section-header {
+  align-items: flex-start;
+}
+
+.ui-pill {
+  min-height: 24px;
+  background: var(--surface-soft);
+}
+
+.ui-pill.tone-accent {
+  border-color: rgba(167, 139, 250, 0.42);
+  color: var(--accent-strong);
+}
+
+.ui-pill.tone-success {
+  border-color: rgba(52, 211, 153, 0.36);
+  color: var(--success);
+}
+
+.ui-pill.tone-warning {
+  border-color: rgba(251, 191, 36, 0.4);
+  color: var(--warning);
+}
+
+.ui-pill.tone-danger {
+  border-color: rgba(251, 113, 133, 0.42);
+  color: var(--danger);
+}
+
+.ui-pill.tone-info {
+  border-color: rgba(56, 189, 248, 0.38);
+  color: var(--info);
+}
+
+.ui-metric-card {
+  min-width: 0;
 }
 
 .hero-panel,
@@ -386,8 +456,13 @@ select {
 .issue-card-link:focus-visible {
   border-color: rgba(167, 139, 250, 0.56);
   background: rgba(255, 255, 255, 0.045);
-  outline: none;
   transform: translateY(-1px);
+}
+
+.issue-card-link:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 3px;
+  box-shadow: var(--shadow), var(--ds-focus-ring);
 }
 
 .issue-card-header {
@@ -549,7 +624,13 @@ select {
 .secondary-button:focus-visible {
   border-color: rgba(167, 139, 250, 0.56);
   color: var(--text);
-  outline: none;
+}
+
+.secondary-button:focus-visible,
+.primary-button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 3px;
+  box-shadow: var(--ds-focus-ring);
 }
 
 .results-summary {
@@ -592,7 +673,6 @@ select {
   padding: 8px 10px;
   background: rgba(0, 0, 0, 0.18);
   color: var(--text);
-  outline: none;
 }
 
 .field textarea {
@@ -680,7 +760,12 @@ select {
 .back-link:focus-visible {
   border-color: rgba(167, 139, 250, 0.56);
   color: var(--text);
-  outline: none;
+}
+
+.back-link:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 3px;
+  box-shadow: var(--ds-focus-ring);
 }
 
 .evidence-detail-card {

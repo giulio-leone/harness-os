@@ -12,6 +12,7 @@ import {
 } from 'harness-os/orchestration';
 
 import { DashboardSetup, DashboardShell } from '../components/dashboard-shell';
+import { MetricTile, Panel, Pill, SectionHeader } from '../components/ui';
 import { demoDashboardViewModel } from '../lib/demo-view-model';
 
 test('dashboard shell renders the stable lane order and orchestration evidence summaries', () => {
@@ -283,6 +284,36 @@ test('dashboard shell renders a live create-ticket form and disables it for demo
   assert.match(demoHtml, /disabled=""/);
 });
 
+test('dashboard UI primitives render server-side foundation classes', () => {
+  const html = renderToStaticMarkup(
+    <Panel aria-labelledby="foundation-title">
+      <SectionHeader
+        actions={<Pill tone="accent">Command ready</Pill>}
+        copy="Design primitives stay server-renderable and additive."
+        eyebrow="Foundation"
+        title="Linear-like primitives"
+        titleId="foundation-title"
+      />
+      <MetricTile
+        caption="Stable data-testid contract."
+        id="foundation"
+        label="Foundation score"
+        value={10}
+      />
+    </Panel>,
+  );
+  const primitiveSource = readFileSync(
+    new URL('../components/ui.tsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(html, /class="panel ui-panel"/);
+  assert.match(html, /class="panel-header ui-section-header"/);
+  assert.match(html, /class="small-pill ui-pill tone-accent"/);
+  assert.match(html, /data-testid="metric-foundation"/);
+  assert.doesNotMatch(primitiveSource, /'use client'|"use client"|useState|useEffect|window\./);
+});
+
 test('dashboard stylesheet contains responsive overflow guardrails for dense live data', () => {
   const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
 
@@ -291,6 +322,12 @@ test('dashboard stylesheet contains responsive overflow guardrails for dense liv
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.filter-grid/);
   assert.match(css, /\.empty-board/);
+  assert.match(css, /--ds-color-bg-canvas/);
+  assert.match(css, /--ds-space-4/);
+  assert.match(css, /--ds-focus-ring/);
+  assert.match(css, /\.ui-panel/);
+  assert.match(css, /\.issue-card-link:focus-visible\s*\{[\s\S]*outline:\s*2px solid var\(--accent-strong\)/);
+  assert.doesNotMatch(css, /outline:\s*none/);
 });
 
 function emptyFilters() {
