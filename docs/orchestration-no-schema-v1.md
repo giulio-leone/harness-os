@@ -16,7 +16,7 @@ Source references:
 | Repository workflow contract | `WORKFLOW.md` loader with YAML front matter, typed defaults, `$VAR` path/secret resolution, strict prompt interpolation, and reload-with-last-known-good semantics | `src/contracts/symphony-workflow-contracts.ts`, `src/runtime/symphony-workflow.ts` |
 | Issue tracker work item | Existing `issues` rows planned by `harness_orchestrator(action: "plan_issues")` | `src/db/sqlite.schema.sql`, `src/runtime/harness-planning-tools.ts` |
 | Orchestrator state | Existing `runs`, `leases`, `active_sessions`, `events`, and issue status state | `src/runtime/session-orchestrator.ts`, `src/db/lease-manager.ts` |
-| Per-issue workspace | Validated worktree allocation metadata, not shell-created worktrees | `src/runtime/worktree-manager.ts` |
+| Per-issue workspace | Validated worktree allocation metadata plus an opt-in physical git worktree adapter with root containment, hook execution, timeout handling, cleanup, and durable manifest/log artifacts | `src/runtime/worktree-manager.ts`, `src/contracts/symphony-worktree-contracts.ts`, `src/runtime/symphony-worktree-adapter.ts` |
 | Agent registry | Typed subagent definitions with host, model profile, capabilities, and capacity | `src/contracts/orchestration-contracts.ts`, `src/runtime/subagent-registry.ts` |
 | Dispatch loop | Ready-issue selection, subagent/worktree assignment, session claim, and bounded fan-out | `src/runtime/orchestration-dispatcher.ts` |
 | Supervisor tick runtime | Durable tick inputs, host execution hooks, filtered dashboard reads, queue promotion, ready dispatch, decision traces, backoff/stop conditions, and run summaries | `src/contracts/orchestration-contracts.ts`, `src/runtime/orchestration-supervisor.ts` |
@@ -78,7 +78,9 @@ The contract deliberately separates read-only decisions from mutating decisions.
 
 ### 4. Worktree boundary
 
-`worktree-manager` validates and describes workspace isolation. It normalizes absolute repo/worktree roots, rejects unsafe git refs and traversal segments, detects duplicate paths/branches within a planned batch, and emits cleanup command plans. It intentionally does not run shell commands; callers must execute generated git commands in their host environment and register the resulting paths as artifacts.
+`worktree-manager` validates and describes workspace isolation. It normalizes absolute repo/worktree roots, rejects unsafe git refs and traversal segments, detects duplicate paths/branches within a planned batch, and emits cleanup command plans.
+
+`createSymphonyPhysicalWorktree()` and `cleanupSymphonyPhysicalWorktree()` are the opt-in physical execution adapter for hosts that are ready to materialize those assignments. The adapter keeps the dispatcher behavior unchanged, but can create/reuse a real `git worktree`, verify the checkout root and branch, run repo-owned `WORKFLOW.md` hooks with explicit `ISSUE_*`/workspace env, enforce hook/command timeouts, perform idempotent cleanup according to the existing cleanup policy, and write per-run/attempt evidence under `${worktree.root}/.harness/orchestration/worktrees/<id>/<run>/attempt-XX`. Those artifacts include a manifest, command log, and cleanup plan so later `harness_session` checkpoints can persist them as session evidence without adding schema tables.
 
 ### 5. Conflict boundary
 
@@ -165,8 +167,8 @@ Scorecards passed to `harness_session(action: "checkpoint" | "close")` are durab
 
 ## Current v1 limits
 
-- The dispatcher assigns work and claims sessions; the supervisor runtime now exposes one-tick and bounded polling entrypoints, but worker process execution still remains host-owned.
-- Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
+- The dispatcher assigns work and claims sessions; the supervisor runtime now exposes one-tick and bounded polling entrypoints, but worker process execution still remains host-owned until the runner surface consumes dispatched assignments.
+- Worktree metadata, physical creation, hooks, timeout handling, cleanup, and evidence manifests are typed; invoking the adapter remains an explicit host/runner responsibility.
 - Evidence packet validation, deterministic reference E2E assertions, and supervisor-driven MCP E2E coverage exist; the actual shell command runner for typecheck/test/E2E/screenshot capture remains host-owned.
-- Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.
+- MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out by default. Hosts can opt into the physical adapter before the future assignment runner wires this into `harness_symphony`.
 - Dashboard APIs build on this evidence substrate rather than changing the schema.

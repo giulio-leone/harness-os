@@ -15,9 +15,12 @@ import {
   evaluateCsqrLiteCompletionGate,
   loadOrchestrationDashboardViewModel,
   normalizeOrchestrationDashboardIssueFilters,
+  cleanupSymphonyPhysicalWorktree,
+  createSymphonyPhysicalWorktree,
   createSymphonyWorkflowReloader,
   loadSymphonyWorkflowFromText,
   renderSymphonyWorkflowPrompt,
+  symphonyWorktreeOperationResultSchema,
   runOrchestrationSupervisorTick,
   assertReferenceOrchestrationEvidencePacket,
   orchestrationDashboardViewModelSchema,
@@ -51,6 +54,8 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof loadOrchestrationDashboardViewModel, 'function');
   assert.equal(typeof applyOrchestrationDashboardIssueFilters, 'function');
   assert.equal(typeof normalizeOrchestrationDashboardIssueFilters, 'function');
+  assert.equal(typeof createSymphonyPhysicalWorktree, 'function');
+  assert.equal(typeof cleanupSymphonyPhysicalWorktree, 'function');
   assert.equal(typeof createSymphonyWorkflowReloader, 'function');
   assert.equal(typeof loadSymphonyWorkflowFromText, 'function');
   assert.equal(typeof renderSymphonyWorkflowPrompt, 'function');
@@ -62,6 +67,7 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof orchestrationSupervisorRunSummarySchema.safeParse, 'function');
   assert.equal(typeof symphonyWorkflowConfigSchema.safeParse, 'function');
   assert.equal(typeof symphonyWorkflowDocumentSchema.safeParse, 'function');
+  assert.equal(typeof symphonyWorktreeOperationResultSchema.safeParse, 'function');
   assert.equal(typeof csqrLiteScorecardSchema.safeParse, 'function');
   assert.equal(csqrLiteDefaultCriteria.length, 4);
 });
@@ -117,6 +123,14 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
     normalizeOrchestrationDashboardIssueFilters,
   );
   assert.equal(
+    orchestration.createSymphonyPhysicalWorktree,
+    createSymphonyPhysicalWorktree,
+  );
+  assert.equal(
+    orchestration.cleanupSymphonyPhysicalWorktree,
+    cleanupSymphonyPhysicalWorktree,
+  );
+  assert.equal(
     orchestration.createSymphonyWorkflowReloader,
     createSymphonyWorkflowReloader,
   );
@@ -154,6 +168,10 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
   );
   assert.equal(orchestration.symphonyWorkflowConfigSchema, symphonyWorkflowConfigSchema);
   assert.equal(orchestration.symphonyWorkflowDocumentSchema, symphonyWorkflowDocumentSchema);
+  assert.equal(
+    orchestration.symphonyWorktreeOperationResultSchema,
+    symphonyWorktreeOperationResultSchema,
+  );
   assert.equal(orchestration.csqrLiteScorecardSchema, csqrLiteScorecardSchema);
   assert.equal(orchestration.csqrLiteDefaultCriteria, csqrLiteDefaultCriteria);
 });

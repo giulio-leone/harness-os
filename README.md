@@ -68,7 +68,7 @@ Latest release notes and breaking changes are tracked in [CHANGELOG.md](CHANGELO
 - **Skill-Policy Registry** — Dynamic management of agent capabilities and operational rules.
 - **Canonical SQLite Store** — Robust, ACID-compliant state layer for leases, checkpoints, events, and task states.
 - **Session Orchestration** — High-level inspection, queue promotion, and task lifecycle management.
-- **Symphony-style Agentic Orchestration** — Fully agentic fan-out over ready issues, isolated worktree metadata, `gpt-5-high` subagent routing, and deterministic evidence gates instead of human runtime checkpoints.
+- **Symphony-style Agentic Orchestration** — Fully agentic fan-out over ready issues, isolated worktree metadata/physical worktree adapters, `gpt-5-high` subagent routing, and deterministic evidence gates instead of human runtime checkpoints.
 
 ---
 
@@ -112,11 +112,12 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.
 
 ### Agentic Symphony-Style Orchestration
 - `loadSymphonyWorkflow()` resolves repo-owned `WORKFLOW.md` contracts with YAML front matter, typed defaults, `$VAR` path/secret resolution, strict prompt interpolation, and reload semantics that preserve the last known good workflow on invalid edits.
+- `createSymphonyPhysicalWorktree()` and `cleanupSymphonyPhysicalWorktree()` let a host materialize an assigned worktree with safe refs, root containment, repo-owned hooks, timeouts, idempotent cleanup, and per-run evidence manifests/logs outside the removable checkout.
 - `harness_symphony(action: "compile_plan")` converts tracker-style milestones and slices into the canonical `plan_issues` batch without mutating state.
 - `harness_symphony(action: "dispatch_ready")` assigns ready issues to one compatible subagent and one isolated worktree per issue, with `gpt-5-high` and four-agent fan-out as the discoverable defaults.
 - `harness_symphony(action: "inspect_state")` reads leases, worktree artifacts, evidence references, recent events, and orchestration health flags.
 - `runOrchestrationSupervisorTick()` executes one deterministic autonomous supervisor tick, while `runOrchestrationSupervisor()`, `harness-supervisor`, and `harness_symphony(action: "supervisor_run")` provide bounded autonomous polling with stop conditions and backoff.
-- Completion remains no-human-checkpoint: the supervisor owns inspect/promote/dispatch, while hosts create/run/cleanup git worktrees and attach typecheck, test, E2E, screenshot, state export, CSQR-lite, and codebase evidence before closing work.
+- Completion remains no-human-checkpoint: the supervisor owns inspect/promote/dispatch, while hosts or future runners create/run/cleanup git worktrees through the physical adapter and attach typecheck, test, E2E, screenshot, state export, CSQR-lite, and codebase evidence before closing work.
 - Copy/paste MCP payloads live in [`examples/orchestration-symphony/`](examples/orchestration-symphony/), and the runtime contract is documented in [docs/orchestration-no-schema-v1.md](docs/orchestration-no-schema-v1.md).
 
 ### Linear-Like Orchestration Dashboard
