@@ -116,6 +116,46 @@ Runs the autonomous Symphony supervisor from JSON on stdin or `--input <path>`. 
 
 Use `action: "tick"` with a `tickId` for one deterministic tick, or `action: "run"` with a `runId` and `stopCondition.maxTicks` for bounded polling. `execute` mode also requires canonical `workspaceId`, `projectId`, and `dispatch` host/worktree routing inputs.
 
+Execute-mode supervisor payloads are the CLI form of the no-human runtime path. The supervisor owns inspection, queue promotion, and dispatch; the host still owns physical worktree creation, subagent launch, gate commands, screenshot capture, artifact file creation, and cleanup.
+
+```json
+{
+  "action": "run",
+  "input": {
+    "contractVersion": "1.0.0",
+    "runId": "supervisor-run-1",
+    "dbPath": ".harness/harness.sqlite",
+    "workspaceId": "workspace-1",
+    "projectId": "project-1",
+    "mode": "execute",
+    "requiredEvidenceArtifactKinds": [
+      "typecheck_report",
+      "state_export",
+      "csqr_lite_scorecard",
+      "test_report",
+      "e2e_report",
+      "screenshot"
+    ],
+    "stopCondition": {
+      "maxTicks": 2,
+      "stopWhenIdle": true,
+      "stopWhenBlocked": true
+    },
+    "dispatch": {
+      "repoRoot": "/repo/harness-os",
+      "worktreeRoot": "/repo/worktrees",
+      "baseRef": "main",
+      "host": "copilot",
+      "hostCapabilities": {
+        "workloadClasses": ["default", "typescript"],
+        "capabilities": ["node", "sqlite"]
+      },
+      "maxConcurrentAgents": 4
+    }
+  }
+}
+```
+
 ## Related references
 
 - Use [mcp-tools.md](mcp-tools.md) for the action-level reference of the six MCP tools.

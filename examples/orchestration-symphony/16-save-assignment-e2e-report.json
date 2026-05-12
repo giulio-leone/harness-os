@@ -1,0 +1,18 @@
+{
+  "tool": "harness_artifacts",
+  "input": {
+    "action": "save",
+    "projectName": "HarnessOS",
+    "campaignId": "C-REPLACE-WITH-CREATE-CAMPAIGN-OUTPUT",
+    "issueId": "ISSUE-DISPATCH",
+    "kind": "e2e_report",
+    "path": ".harness/evidence/symphony-reference/assignment-dispatch/e2e-report.json",
+    "metadata": {
+      "evidencePacketId": "reference-orchestration-e2e-packet",
+      "evidenceArtifactId": "assignment-dispatch-e2e-report",
+      "assignmentId": "assignment-dispatch",
+      "scope": "assignment",
+      "gate": "assignment-dispatch-reference-e2e-gate"
+    }
+  }
+}

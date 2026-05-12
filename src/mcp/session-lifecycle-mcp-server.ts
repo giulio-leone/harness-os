@@ -122,7 +122,7 @@ This server exposes 6 tools, each covering a specific domain. Use the "action" p
 TOOLS:
 1. harness_inspector  — Read-only observation. Actions: capabilities, get_context, next_action, export, audit, health_snapshot.
 2. harness_orchestrator — Setup & queue management. Actions: init_workspace, create_campaign, plan_issues, promote_queue, rollback_issue.
-3. harness_symphony — Fully agentic fan-out orchestration. Actions: compile_plan, dispatch_ready, inspect_state, dashboard_view.
+3. harness_symphony — Fully agentic fan-out orchestration. Actions: compile_plan, dispatch_ready, inspect_state, dashboard_view, supervisor_tick, supervisor_run.
 4. harness_session — Execution lifecycle. Actions: begin, begin_recovery, checkpoint, close, advance, heartbeat.
 5. harness_artifacts — Persistent state registry. Actions: save, list.
 6. harness_admin — Maintenance & administration. Actions: reconcile, drain, archive, cleanup, mem0_snapshot, mem0_rollup.
@@ -140,6 +140,8 @@ SETUP (one-time, when no workspace/project exists):
 
 FULLY AGENTIC FAN-OUT:
 - harness_symphony(action: "compile_plan") → compile milestones/slices into a plan_issues payload
+- harness_symphony(action: "supervisor_tick") → run one auditable dry-run or execute supervisor decision trace
+- harness_symphony(action: "supervisor_run") → run bounded no-human supervisor polling over inspect/promote/dispatch
 - harness_symphony(action: "dispatch_ready") → assign ready issues to isolated worktrees and compatible subagents
 - harness_symphony(action: "inspect_state") → inspect raw leases, worktree artifacts, evidence references, and orchestration health
 - harness_symphony(action: "dashboard_view") → read a filtered Linear-like dashboard view for agent navigation and proof review

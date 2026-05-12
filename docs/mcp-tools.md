@@ -13,11 +13,12 @@ called through `harness_inspector`.
 1. `harness_inspector(action: "capabilities")` — discover tools, workload profiles, bundled skills, and mem0 state
 2. `harness_inspector(action: "get_context")` — understand workspace/project/queue scope
 3. `harness_orchestrator(...)` — create scope or inject planned work
-4. `harness_symphony(action: "dispatch_ready")` — fan out ready work across isolated worktrees and compatible subagents
-5. `harness_session(action: "begin" | "begin_recovery")` — claim one worker task when not using fan-out
-6. `harness_session(action: "checkpoint")` — persist progress
-7. `harness_session(action: "close" | "advance")` — complete the task
-8. `harness_artifacts(...)` / `harness_admin(...)` — persist evidence or do maintenance
+4. `harness_symphony(action: "supervisor_tick" | "supervisor_run")` — inspect, promote, and fan out ready work through the autonomous supervisor
+5. `harness_symphony(action: "dispatch_ready")` — lower-level direct fan-out when the host owns inspect/promote itself
+6. `harness_session(action: "begin" | "begin_recovery")` — claim one worker task when not using fan-out
+7. `harness_session(action: "checkpoint")` — persist progress
+8. `harness_session(action: "close" | "advance")` — complete the task
+9. `harness_artifacts(...)` / `harness_admin(...)` — persist evidence or do maintenance
 
 ## Tool summary
 
@@ -167,9 +168,9 @@ Supervisor run example:
 }
 ```
 
-Reference evidence matrix: fully agentic hosts should attach at least run-scoped `typecheck_report`, `state_export`, and `csqr_lite_scorecard` artifacts plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every dispatched assignment. HarnessOS includes deterministic reference packet assertions for this matrix, while command execution and screenshot capture stay host-owned.
+Reference evidence matrix: fully agentic hosts should attach at least run-scoped `typecheck_report`, `state_export`, and `csqr_lite_scorecard` artifacts plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every dispatched assignment. HarnessOS includes deterministic reference packet assertions for this matrix, while command execution and screenshot capture stay host-owned. The supervisor proves the no-human control path through inspect/promote/dispatch decisions; evidence artifacts prove the host-owned worker gates after dispatch.
 
-Reference example set: [`../examples/orchestration-symphony/`](../examples/orchestration-symphony/) contains parse-tested MCP payloads for capability discovery, workspace/campaign setup, `compile_plan`, compiled `plan_issues`, four-agent `dispatch_ready`, evidence artifact registration, and post-dispatch inspection. Each file wraps the actual MCP input as `{ "tool": "<name>", "input": { ... } }`; send only `input` to the named tool.
+Reference example set: [`../examples/orchestration-symphony/`](../examples/orchestration-symphony/) contains parse-tested MCP payloads for capability discovery, workspace/campaign setup, `compile_plan`, compiled `plan_issues`, supervisor dry-run/execute control, four-agent `dispatch_ready`, full evidence artifact registration, and post-dispatch inspection. Each file wraps the actual MCP input as `{ "tool": "<name>", "input": { ... } }`; send only `input` to the named tool.
 
 Dispatch example:
 

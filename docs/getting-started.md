@@ -169,7 +169,7 @@ Reference payloads for that sequence live under [`../examples/orchestration-symp
 }
 ```
 
-Pass the `input` object to the named MCP `tool`. Replace placeholder workspace and campaign ids with the values returned by `init_workspace` and `create_campaign`, then replace placeholder issue ids in the dispatch/evidence examples with the ids returned by `plan_issues` or by `harness_inspector(action: "export")`.
+Pass the `input` object to the named MCP `tool`. Replace placeholder workspace and campaign ids with the values returned by `init_workspace` and `create_campaign`, use the supervisor examples for no-human inspect/promote/dispatch control, then replace placeholder issue ids in the direct dispatch and assignment evidence examples with the ids returned by `plan_issues` or by `harness_inspector(action: "export")`.
 
 <!-- GENERATED:GETTING-STARTED-EXAMPLES:START -->
 Generated from the canonical public contract model:

@@ -1,0 +1,73 @@
+{
+  "tool": "harness_symphony",
+  "input": {
+    "action": "supervisor_run",
+    "contractVersion": "1.0.0",
+    "runId": "example-supervisor-run-1",
+    "dbPath": ".harness/harness.sqlite",
+    "workspaceId": "W-REPLACE-WITH-INIT-WORKSPACE-OUTPUT",
+    "projectId": "P-REPLACE-WITH-CREATE-CAMPAIGN-OUTPUT",
+    "campaignId": "C-REPLACE-WITH-CREATE-CAMPAIGN-OUTPUT",
+    "mode": "execute",
+    "objective": "Promote and dispatch ready Symphony work without a human runtime checkpoint.",
+    "requiredEvidenceArtifactKinds": [
+      "typecheck_report",
+      "state_export",
+      "csqr_lite_scorecard",
+      "test_report",
+      "e2e_report",
+      "screenshot"
+    ],
+    "stopCondition": {
+      "maxTicks": 2,
+      "stopWhenIdle": true,
+      "stopWhenBlocked": true
+    },
+    "dispatch": {
+      "repoRoot": "/repo/harness-os",
+      "worktreeRoot": "/repo/worktrees",
+      "baseRef": "main",
+      "branchPrefix": "symphony-supervisor",
+      "host": "copilot",
+      "hostCapabilities": {
+        "workloadClasses": ["default", "typescript"],
+        "capabilities": ["node", "sqlite"]
+      },
+      "maxConcurrentAgents": 4,
+      "subagents": [
+        {
+          "id": "agent-worktree",
+          "role": "worktree",
+          "host": "copilot",
+          "modelProfile": "gpt-5-high",
+          "capabilities": ["git.branch", "git.merge", "worktree.cleanup", "worktree.create"],
+          "maxConcurrency": 1
+        },
+        {
+          "id": "agent-registry",
+          "role": "registry",
+          "host": "copilot",
+          "modelProfile": "gpt-5-high",
+          "capabilities": ["capability.matching", "subagent.registry", "subagent.routing"],
+          "maxConcurrency": 1
+        },
+        {
+          "id": "agent-planner",
+          "role": "planner",
+          "host": "copilot",
+          "modelProfile": "gpt-5-high",
+          "capabilities": ["assignment.create", "dispatch.plan", "planning"],
+          "maxConcurrency": 1
+        },
+        {
+          "id": "agent-inspector-dispatcher",
+          "role": "inspector/dispatcher",
+          "host": "copilot",
+          "modelProfile": "gpt-5-high",
+          "capabilities": ["dispatch.execute", "evidence.review", "inspection"],
+          "maxConcurrency": 1
+        }
+      ]
+    }
+  }
+}
