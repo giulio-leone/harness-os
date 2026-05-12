@@ -89,6 +89,7 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
+    "yaml": "^2.9.0",
     "zod": "^4.3.6"
   },
   "peerDependencies": {

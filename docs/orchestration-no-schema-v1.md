@@ -13,6 +13,7 @@ Source references:
 
 | Symphony concept | HarnessOS v1 contract | Code boundary |
 | --- | --- | --- |
+| Repository workflow contract | `WORKFLOW.md` loader with YAML front matter, typed defaults, `$VAR` path/secret resolution, strict prompt interpolation, and reload-with-last-known-good semantics | `src/contracts/symphony-workflow-contracts.ts`, `src/runtime/symphony-workflow.ts` |
 | Issue tracker work item | Existing `issues` rows planned by `harness_orchestrator(action: "plan_issues")` | `src/db/sqlite.schema.sql`, `src/runtime/harness-planning-tools.ts` |
 | Orchestrator state | Existing `runs`, `leases`, `active_sessions`, `events`, and issue status state | `src/runtime/session-orchestrator.ts`, `src/db/lease-manager.ts` |
 | Per-issue workspace | Validated worktree allocation metadata, not shell-created worktrees | `src/runtime/worktree-manager.ts` |
@@ -44,6 +45,8 @@ No orchestration-specific table is required for v1 because the existing store al
 ### 1. Planning boundary
 
 `plan_issues` remains the only public way to create canonical queue work. Symphony-style slices are normalized by `src/runtime/orchestration-planner.ts` into the existing milestone/issue batch contract. The planner does not claim leases, create worktrees, or run agents.
+
+`WORKFLOW.md` support now covers the repo-owned contract layer that Symphony expects before physical runner execution exists. `loadSymphonyWorkflow()` resolves an explicit workflow path or `cwd/WORKFLOW.md`, parses optional YAML front matter, ignores unknown future top-level keys in the effective config, applies typed defaults, resolves `$VAR` only in tracker/path fields, preserves `codex.command` as a shell command string, and trims the Markdown prompt body. `renderSymphonyWorkflowPrompt()` intentionally implements a strict interpolation subset (`{{ issue.title }}`, `{{ attempt }}`) and fails unsupported filters/tags/comments instead of silently accepting incomplete Liquid behavior. `createSymphonyWorkflowReloader()` detects content-hash changes and preserves the last known good workflow when a reload becomes invalid or the file disappears.
 
 ### 2. Dispatch boundary
 
