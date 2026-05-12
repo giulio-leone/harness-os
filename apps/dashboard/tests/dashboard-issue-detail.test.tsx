@@ -44,6 +44,9 @@ test('issue detail loader renders status, agent notes, lease history, and eviden
   );
 
   assert.match(html, /data-testid="issue-detail-dashboard"/);
+  assert.match(html, /class="detail-layout"/);
+  assert.match(html, /class="detail-primary"/);
+  assert.match(html, /class="detail-inspector" aria-label="Issue proof inspector"/);
   assert.match(html, /Final implementation summary/);
   assert.match(html, /What the agent wrote/);
   assert.match(html, /Implemented detail view and attached evidence/);
@@ -55,6 +58,15 @@ test('issue detail loader renders status, agent notes, lease history, and eviden
   assert.match(html, /CSQR-lite scorecards/);
   assert.match(html, /scorecard-detail/);
   assert.match(html, /Passed/);
+  assert.match(html, /data-testid="issue-proof-review-panel"/);
+  assert.match(html, /data-testid="automated-proof-note"/);
+  assert.match(html, /Automated proof only - no human review is required for completion/);
+  assert.match(html, /aria-label="Proof review summary"/);
+  assert.match(html, /Metadata warnings/);
+  assert.match(html, /Latest checkpoint:/);
+  assert.match(html, /role="meter"/);
+  assert.match(html, /aria-valuenow="9.5"/);
+  assert.match(html, /class="score-meter-fill" style="width:95%"/);
   assert.match(html, /Weighted average/);
   assert.match(html, /9\.5/);
   assert.match(html, /8\.5/);
@@ -63,6 +75,9 @@ test('issue detail loader renders status, agent notes, lease history, and eviden
   assert.match(html, /A-detail-incomplete-scorecard/);
   assert.match(html, /CSQR-lite artifact metadata is missing scorecardJson/);
   assert.match(html, /Checkpoint provenance/);
+  assert.match(html, /class="provenance-timeline"/);
+  assert.match(html, /Raw metadata - collapsed by default for safe inspection/);
+  assert.match(html, /Inspect raw JSON only when provenance or parser diagnostics require it/);
   assert.match(html, /CP-detail-newer/);
   assert.match(html, /Issue cannot be claimed from status done/);
 });
@@ -146,6 +161,14 @@ test('issue detail not-found and stylesheet guardrails are deterministic', () =>
   assert.match(notFoundHtml, /Issue not found/);
   assert.match(css, /\.issue-card-link:focus-visible/);
   assert.match(css, /\.detail-grid/);
+  assert.match(css, /\.detail-layout/);
+  assert.match(css, /\.detail-inspector\s*\{[\s\S]*max-height:\s*calc\(100vh - 48px\)/);
+  assert.match(css, /\.proof-review-panel/);
+  assert.match(css, /\.automated-proof-note/);
+  assert.match(css, /\.score-meter/);
+  assert.match(css, /\.provenance-timeline/);
+  assert.match(css, /\.metadata-safety-copy/);
+  assert.match(css, /@media \(max-width: 1280px\)\s*\{[\s\S]*\.detail-layout/);
   assert.match(css, /\.claim-panel/);
   assert.match(css, /\.proof-card-grid/);
   assert.match(css, /\.scorecard-outcome\.passed/);

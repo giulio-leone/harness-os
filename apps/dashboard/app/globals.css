@@ -1083,8 +1083,8 @@ select {
 
 .detail-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(min(100%, 320px), 0.3fr);
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
   align-items: start;
   margin-bottom: 20px;
 }
@@ -1102,6 +1102,32 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   align-items: start;
+}
+
+.detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(min(100%, 320px), 360px);
+  gap: 16px;
+  align-items: start;
+}
+
+.detail-primary,
+.detail-inspector {
+  min-width: 0;
+}
+
+.detail-primary {
+  display: grid;
+  gap: 16px;
+}
+
+.detail-inspector {
+  position: sticky;
+  top: 24px;
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
 }
 
 .detail-wide {
@@ -1150,6 +1176,37 @@ select {
   align-items: center;
   justify-content: space-between;
   margin: 14px 0;
+}
+
+.proof-review-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.automated-proof-note {
+  margin: 0;
+  border: 1px solid rgba(52, 211, 153, 0.28);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(52, 211, 153, 0.08);
+  color: var(--success);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.proof-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.proof-review-metric {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 9px;
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .proof-section {
@@ -1219,11 +1276,39 @@ select {
   overflow-wrap: anywhere;
 }
 
+.score-meter {
+  position: relative;
+  overflow: hidden;
+  height: 10px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.score-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--success), var(--accent-strong));
+}
+
 .provenance-list,
 .criterion-list {
   display: grid;
   gap: 10px;
   margin-top: 12px;
+}
+
+.provenance-timeline {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.provenance-step {
+  padding-left: 0;
 }
 
 .scorecard-outcome {
@@ -1254,6 +1339,13 @@ select {
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 800;
+}
+
+.metadata-safety-copy {
+  margin: 10px 0 0;
+  color: var(--subtle);
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 .setup-root {
@@ -1289,8 +1381,16 @@ select {
   .dashboard-hero,
   .content-grid,
   .workspace-topbar,
+  .detail-layout,
   .detail-hero {
     grid-template-columns: 1fr;
+  }
+
+  .detail-inspector {
+    position: static;
+    order: -1;
+    max-height: none;
+    overflow: visible;
   }
 
   .workspace-sidebar {
@@ -1344,6 +1444,7 @@ select {
   .metric-grid,
   .evidence-grid,
   .detail-grid,
+  .proof-review-grid,
   .proof-card-grid,
   .proof-meta-grid,
   .filter-grid,

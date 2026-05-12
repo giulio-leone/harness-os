@@ -24,6 +24,15 @@ interface EvidenceGroup {
   artifacts: IssueArtifact[];
 }
 
+interface ProofReviewModel {
+  evidenceGroups: EvidenceGroup[];
+  checkpointMap: Map<string, IssueCheckpoint[]>;
+  csqrScorecards: CsqrScorecardProof[];
+  metadataWarningCount: number;
+  provenanceCoveredArtifactCount: number;
+  latestCheckpoint: IssueCheckpoint | null;
+}
+
 type CsqrScorecardProof =
   | {
       kind: 'valid';
@@ -50,11 +59,12 @@ export function IssueDetailShell({
   const primaryLease =
     detail.leases.find((lease) => lease.status === 'active') ??
     detail.leases[0];
+  const proofReview = buildProofReviewModel(detail);
 
   return (
     <main className="dashboard-root" data-testid="issue-detail-dashboard">
       <div className="dashboard-frame">
-        <section className="detail-hero panel" aria-labelledby="issue-detail-title">
+        <section className="detail-hero panel detail-hero-panel" aria-labelledby="issue-detail-title">
           <div>
             <Link className="back-link" href="/">
               Back to board
@@ -72,20 +82,25 @@ export function IssueDetailShell({
               <span className="small-pill">size {detail.card.size}</span>
             </div>
           </div>
-          <ClaimPanel
-            action={claimIssueAction}
-            disabled={claimDisabled}
-            issueId={detail.card.id}
-            reason={getClaimDisabledReason(dataSource, detail.card.status, claimIssueAction)}
-          />
         </section>
 
-        <section className="detail-grid">
-          <StatusPanel detail={detail} />
-          <AgentPanel leases={detail.leases} primaryLease={primaryLease} />
-          <CheckpointPanel detail={detail} />
-          <EvidenceDetailPanel detail={detail} />
-          <TimelineDetailPanel detail={detail} />
+        <section className="detail-layout">
+          <div className="detail-primary">
+            <CheckpointPanel detail={detail} />
+            <EvidenceDetailPanel detail={detail} proofReview={proofReview} />
+            <TimelineDetailPanel detail={detail} />
+          </div>
+          <aside className="detail-inspector" aria-label="Issue proof inspector">
+            <ClaimPanel
+              action={claimIssueAction}
+              disabled={claimDisabled}
+              issueId={detail.card.id}
+              reason={getClaimDisabledReason(dataSource, detail.card.status, claimIssueAction)}
+            />
+            <StatusPanel detail={detail} />
+            <AgentPanel leases={detail.leases} primaryLease={primaryLease} />
+            <ProofReviewPanel detail={detail} proofReview={proofReview} />
+          </aside>
         </section>
       </div>
     </main>
@@ -128,7 +143,7 @@ function ClaimPanel({
   reason: string | null;
 }) {
   return (
-    <form action={action} className="claim-panel" data-testid="claim-issue-form">
+    <form action={action} className="panel claim-panel" data-testid="claim-issue-form">
       <input name="issueId" type="hidden" value={issueId} />
       <button className="primary-button" disabled={disabled} type="submit">
         Claim issue
@@ -249,11 +264,61 @@ function CheckpointPanel({ detail }: { detail: DashboardIssueDetail }) {
   );
 }
 
-function EvidenceDetailPanel({ detail }: { detail: DashboardIssueDetail }) {
-  const evidenceGroups = groupArtifactsByKind(detail.artifacts);
-  const checkpointMap = buildArtifactCheckpointMap(detail.checkpoints);
-  const csqrScorecards = extractCsqrScorecards(detail.artifacts);
+function ProofReviewPanel({
+  detail,
+  proofReview,
+}: {
+  detail: DashboardIssueDetail;
+  proofReview: ProofReviewModel;
+}) {
+  const validScorecards = proofReview.csqrScorecards.filter((scorecard) => scorecard.kind === 'valid');
+  const invalidScorecards = proofReview.csqrScorecards.length - validScorecards.length;
 
+  return (
+    <section className="panel proof-review-panel" data-testid="issue-proof-review-panel" aria-labelledby="proof-review-title">
+      <p className="eyebrow">Proof review</p>
+      <h2 className="panel-title" id="proof-review-title">
+        Automated proof clarity
+      </h2>
+      <p className="automated-proof-note" data-testid="automated-proof-note">
+        Automated proof only - no human review is required for completion.
+      </p>
+      <div className="proof-review-grid" aria-label="Proof review summary">
+        <ProofReviewMetric label="Artifacts" value={detail.artifacts.length} />
+        <ProofReviewMetric label="Provenance" value={`${proofReview.provenanceCoveredArtifactCount}/${detail.artifacts.length}`} />
+        <ProofReviewMetric label="CSQR valid" value={validScorecards.length} />
+        <ProofReviewMetric label="CSQR invalid" value={invalidScorecards} />
+        <ProofReviewMetric label="Metadata warnings" value={proofReview.metadataWarningCount} />
+        <ProofReviewMetric label="Checkpoints" value={detail.checkpoints.length} />
+      </div>
+      {proofReview.latestCheckpoint ? (
+        <p className="panel-copy">
+          Latest checkpoint: <strong>{proofReview.latestCheckpoint.title}</strong> -{' '}
+          {formatDate(proofReview.latestCheckpoint.createdAt)}
+        </p>
+      ) : (
+        <p className="panel-copy">No checkpoint has recorded proof yet.</p>
+      )}
+    </section>
+  );
+}
+
+function ProofReviewMetric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="proof-review-metric">
+      <span className="label">{label}</span>
+      <span className="metric-value">{value}</span>
+    </div>
+  );
+}
+
+function EvidenceDetailPanel({
+  detail,
+  proofReview,
+}: {
+  detail: DashboardIssueDetail;
+  proofReview: ProofReviewModel;
+}) {
   return (
     <section className="panel detail-wide" data-testid="issue-evidence-panel" aria-labelledby="evidence-title">
       <p className="eyebrow">Proof layer</p>
@@ -262,12 +327,15 @@ function EvidenceDetailPanel({ detail }: { detail: DashboardIssueDetail }) {
       </h2>
       <div className="proof-summary" aria-label="Evidence summary">
         <span className="small-pill">{detail.artifacts.length} artifacts</span>
-        <span className="small-pill">{evidenceGroups.length} evidence groups</span>
+        <span className="small-pill">{proofReview.evidenceGroups.length} evidence groups</span>
         <span className="small-pill">{detail.checkpoints.length} checkpoints</span>
-        <span className="small-pill">{csqrScorecards.length} CSQR scorecards</span>
+        <span className="small-pill">{proofReview.csqrScorecards.length} CSQR scorecards</span>
+        <span className="small-pill">
+          provenance {proofReview.provenanceCoveredArtifactCount}/{detail.artifacts.length}
+        </span>
       </div>
-      <CsqrScorecardPanel scorecards={csqrScorecards} />
-      <EvidenceGroupList groups={evidenceGroups} checkpointMap={checkpointMap} />
+      <CsqrScorecardPanel scorecards={proofReview.csqrScorecards} />
+      <EvidenceGroupList groups={proofReview.evidenceGroups} checkpointMap={proofReview.checkpointMap} />
     </section>
   );
 }
@@ -329,6 +397,16 @@ function CsqrScorecardCard({
         </span>
       </p>
       <p className="panel-copy">{scorecard.scorecard.summary}</p>
+      <div
+        aria-label={`Weighted average ${formatScore(scorecard.scorecard.weightedAverage)} out of 10`}
+        aria-valuemax={10}
+        aria-valuemin={0}
+        aria-valuenow={scorecard.scorecard.weightedAverage}
+        className="score-meter"
+        role="meter"
+      >
+        <span className="score-meter-fill" style={{ width: `${scoreToPercent(scorecard.scorecard.weightedAverage)}%` }} />
+      </div>
       <dl className="proof-meta-grid">
         <div>
           <dt>Weighted average</dt>
@@ -477,18 +555,20 @@ function CheckpointProvenance({
       {checkpoints.length === 0 ? (
         <p className="panel-copy">No checkpoint references this artifact.</p>
       ) : (
-        checkpoints.map((checkpoint) => (
-          <article className="timeline-item" key={checkpoint.id}>
-            <p className="timeline-title">
-              {checkpoint.title}
-              <span className="status-pill">{checkpoint.taskStatus}</span>
-            </p>
-            <p className="timeline-meta">
-              {checkpoint.id} · Run {checkpoint.runId} · {formatDate(checkpoint.createdAt)}
-            </p>
-            <p className="panel-copy">{checkpoint.summary}</p>
-          </article>
-        ))
+        <ol className="provenance-timeline">
+          {checkpoints.map((checkpoint) => (
+            <li className="timeline-item provenance-step" key={checkpoint.id}>
+              <p className="timeline-title">
+                {checkpoint.title}
+                <span className="status-pill">{checkpoint.taskStatus}</span>
+              </p>
+              <p className="timeline-meta">
+                {checkpoint.id} · Run {checkpoint.runId} · {formatDate(checkpoint.createdAt)}
+              </p>
+              <p className="panel-copy">{checkpoint.summary}</p>
+            </li>
+          ))}
+        </ol>
       )}
     </div>
   );
@@ -497,7 +577,10 @@ function CheckpointProvenance({
 function ArtifactRawMetadata({ artifact }: { artifact: IssueArtifact }) {
   return (
     <details className="proof-detail-summary">
-      <summary>Raw metadata</summary>
+      <summary>Raw metadata - collapsed by default for safe inspection</summary>
+      <p className="metadata-safety-copy">
+        Inspect raw JSON only when provenance or parser diagnostics require it.
+      </p>
       <pre className="timeline-payload">{formatMetadata(artifact.metadata)}</pre>
     </details>
   );
@@ -578,6 +661,32 @@ function buildArtifactCheckpointMap(
   return checkpointMap;
 }
 
+function buildProofReviewModel(detail: DashboardIssueDetail): ProofReviewModel {
+  const checkpointMap = buildArtifactCheckpointMap(detail.checkpoints);
+  const referencedArtifactIds = new Set(
+    detail.checkpoints.flatMap((checkpoint) => checkpoint.artifactIds),
+  );
+
+  return {
+    evidenceGroups: groupArtifactsByKind(detail.artifacts),
+    checkpointMap,
+    csqrScorecards: extractCsqrScorecards(detail.artifacts),
+    metadataWarningCount: detail.artifacts.filter((artifact) => artifact.metadataError !== undefined).length,
+    provenanceCoveredArtifactCount: detail.artifacts.filter((artifact) => referencedArtifactIds.has(artifact.id)).length,
+    latestCheckpoint: selectLatestCheckpoint(detail.checkpoints),
+  };
+}
+
+function selectLatestCheckpoint(checkpoints: IssueCheckpoint[]): IssueCheckpoint | null {
+  return checkpoints.reduce<IssueCheckpoint | null>((latest, checkpoint) => {
+    if (latest === null || checkpoint.createdAt > latest.createdAt) {
+      return checkpoint;
+    }
+
+    return latest;
+  }, null);
+}
+
 function extractCsqrScorecards(artifacts: IssueArtifact[]): CsqrScorecardProof[] {
   return artifacts
     .filter((artifact) => artifact.kind === 'csqr_lite_scorecard')
@@ -654,6 +763,10 @@ function formatMetadata(value: unknown): string {
 
 function formatScore(value: number): string {
   return Number.isInteger(value) ? value.toString() : value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function scoreToPercent(value: number): number {
+  return Math.max(0, Math.min(100, value * 10));
 }
 
 function formatDate(value: string): string {
