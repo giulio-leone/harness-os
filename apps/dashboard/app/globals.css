@@ -565,23 +565,50 @@ select {
 
 .board {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-  gap: 10px;
+  grid-auto-columns: minmax(282px, 330px);
+  grid-auto-flow: column;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 2px 2px 12px;
+  scroll-padding-inline: 2px;
+  scroll-snap-type: x proximity;
+}
+
+.board:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 4px;
+  box-shadow: var(--ds-focus-ring);
 }
 
 .lane {
+  display: flex;
+  flex-direction: column;
+  max-height: min(72vh, 860px);
   min-height: 228px;
   border-radius: 14px;
   padding: 10px;
   min-width: 0;
+  overflow-y: auto;
+  scroll-snap-align: start;
 }
 
 .lane-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   gap: 10px;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin: -10px -10px 10px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 14px 14px 0 0;
+  padding: 10px;
+  background:
+    linear-gradient(180deg, rgba(18, 20, 27, 0.98), rgba(18, 20, 27, 0.9)),
+    var(--surface);
+  backdrop-filter: blur(14px);
 }
 
 .lane-title {
@@ -654,6 +681,32 @@ select {
   color: var(--success);
 }
 
+.status-pill.ready {
+  border-color: rgba(56, 189, 248, 0.38);
+  color: var(--info);
+}
+
+.status-pill.in_progress {
+  border-color: rgba(167, 139, 250, 0.44);
+  color: var(--accent-strong);
+}
+
+.status-pill.blocked,
+.status-pill.failed {
+  border-color: rgba(251, 113, 133, 0.42);
+  color: var(--danger);
+}
+
+.status-pill.needs_recovery {
+  border-color: rgba(251, 191, 36, 0.4);
+  color: var(--warning);
+}
+
+.status-pill.done {
+  border-color: rgba(52, 211, 153, 0.36);
+  color: var(--success);
+}
+
 .lane-card-stack,
 .stack {
   display: grid;
@@ -677,7 +730,7 @@ select {
 .issue-card {
   display: block;
   border-radius: 12px;
-  padding: 11px;
+  padding: 10px;
 }
 
 .issue-card-link {
@@ -705,23 +758,38 @@ select {
 .issue-card-header {
   display: flex;
   gap: 10px;
-  align-items: flex-start;
+  align-items: start;
   justify-content: space-between;
 }
 
+.issue-card-topline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
 .issue-id {
-  margin: 0 0 7px;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
   color: var(--subtle);
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.08em;
+  text-overflow: ellipsis;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .issue-title {
+  min-width: 0;
   margin: 0;
   font-size: 0.92rem;
   line-height: 1.35;
+  letter-spacing: -0.018em;
   overflow-wrap: anywhere;
 }
 
@@ -730,6 +798,11 @@ select {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
+}
+
+.issue-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .issue-action,
@@ -754,11 +827,71 @@ select {
   background: rgba(251, 113, 133, 0.07);
 }
 
+.issue-health.health-medium {
+  border-left-color: var(--warning);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.proof-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.proof-badge {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.032);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.proof-count {
+  color: var(--text);
+  font-size: 0.95rem;
+  letter-spacing: -0.04em;
+}
+
+.proof-badge-positive,
+.proof-badge-info {
+  border-color: rgba(56, 189, 248, 0.34);
+}
+
+.proof-badge-success {
+  border-color: rgba(52, 211, 153, 0.34);
+}
+
+.proof-badge-muted {
+  color: var(--subtle);
+}
+
 .artifact-list {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
+}
+
+.compact-artifact-list {
+  gap: 5px;
+}
+
+.proof-kind-pill {
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.truncate-pill {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .evidence-grid {
@@ -1174,7 +1307,7 @@ select {
   }
 
   .board {
-    grid-template-columns: repeat(2, minmax(250px, 1fr));
+    grid-auto-columns: minmax(260px, 32vw);
   }
 }
 
@@ -1214,9 +1347,16 @@ select {
   .proof-card-grid,
   .proof-meta-grid,
   .filter-grid,
-  .field-row,
-  .board {
+  .field-row {
     grid-template-columns: 1fr;
+  }
+
+  .board {
+    grid-auto-columns: minmax(min(86vw, 320px), 86vw);
+  }
+
+  .lane {
+    max-height: none;
   }
 
   .command-search {

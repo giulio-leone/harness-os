@@ -519,7 +519,8 @@ function LaneBoard({
   return (
     <Panel aria-labelledby="lanes-title">
       <SectionHeader
-        copy="Lanes are rendered in the stable v1 contract order and preserve unknown future states in Other."
+        actions={<Pill>{visibleIssueCount} visible issues</Pill>}
+        copy="Lanes keep the stable v1 contract order, preserve future states in Other, and support dense horizontal navigation."
         eyebrow="Issue lanes"
         title="Dependency-ordered execution board"
         titleId="lanes-title"
@@ -532,7 +533,12 @@ function LaneBoard({
           </Link>
         </div>
       ) : null}
-      <div className="board">
+      <div
+        aria-label="Issue lane board"
+        className="board"
+        role="region"
+        tabIndex={0}
+      >
         {lanes.map((lane) => (
           <LaneColumn filtersActive={filtersActive} lane={lane} key={lane.id} />
         ))}
@@ -549,7 +555,11 @@ function LaneColumn({
   lane: OrchestrationDashboardIssueLane;
 }) {
   return (
-    <section className="lane" data-testid={`lane-${lane.id}`} aria-labelledby={`${lane.id}-title`}>
+    <section
+      className={`lane lane-${normalizeClassName(lane.id)}`}
+      data-testid={`lane-${lane.id}`}
+      aria-labelledby={`${lane.id}-title`}
+    >
       <div className="lane-header">
         <div>
           <h3 className="lane-title" id={`${lane.id}-title`}>
@@ -557,7 +567,9 @@ function LaneColumn({
           </h3>
           <p className="lane-description">{lane.description}</p>
         </div>
-        <span className="count-pill">{lane.count}</span>
+        <span className="count-pill" aria-label={`${lane.count} issues in ${lane.label}`}>
+          {lane.count}
+        </span>
       </div>
       <div className="lane-card-stack">
         {lane.cards.length === 0 ? (
@@ -591,25 +603,32 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
   const artifactEntries = Object.entries(card.artifactKinds).sort(([left], [right]) =>
     left.localeCompare(right),
   );
+  const totalArtifactCount = artifactEntries.reduce((total, [, count]) => total + count, 0);
+  const proofBadges = buildProofBadges(card, totalArtifactCount);
+  const healthSeverity = getHighestHealthSeverity(card.healthFlags);
 
   return (
     <Link
       aria-label={`Open issue ${card.id}: ${card.task}`}
-      className="issue-card issue-card-link"
+      className={`issue-card issue-card-link card-status-${normalizeClassName(card.status)}${
+        healthSeverity ? ` card-health-${healthSeverity}` : ''
+      }`}
       data-testid={`issue-card-${card.id}`}
       href={`/issues/${encodeURIComponent(card.id)}`}
     >
+      <div className="issue-card-topline">
+        <span className="issue-id">{card.id}</span>
+        <span className={`status-pill ${normalizeClassName(card.status)}`}>
+          {formatKind(card.status)}
+        </span>
+      </div>
       <div className="issue-card-header">
-        <div>
-          <p className="issue-id">{card.id}</p>
-          <h4 className="issue-title">{card.task}</h4>
-        </div>
+        <h4 className="issue-title">{card.task}</h4>
         <span className={`priority-pill ${normalizeClassName(card.priority)}`}>
           {card.priority}
         </span>
       </div>
-      <div className="issue-meta">
-        <span className="small-pill">{card.status}</span>
+      <div className="issue-meta issue-meta-grid" aria-label={`Execution metadata for ${card.id}`}>
         <span className="small-pill">size {card.size}</span>
         {card.deadlineAt ? (
           <span className="small-pill">due {formatDate(card.deadlineAt)}</span>
@@ -617,6 +636,14 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
         {card.activeLeases.length > 0 ? (
           <span className="small-pill">{card.activeLeases.length} active lease(s)</span>
         ) : null}
+      </div>
+      <div className="proof-strip" aria-label={`Proof summary for ${card.id}`}>
+        {proofBadges.map((badge) => (
+          <span className={`proof-badge ${badge.className}`} key={badge.label}>
+            <span className="proof-count">{badge.count}</span>
+            {badge.label}
+          </span>
+        ))}
       </div>
       {card.nextBestAction ? (
         <p className="issue-action">
@@ -629,9 +656,9 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
         </p>
       ) : null}
       {artifactEntries.length > 0 ? (
-        <div className="artifact-list" aria-label={`Evidence artifacts for ${card.id}`}>
+        <div className="artifact-list compact-artifact-list" aria-label={`Evidence artifacts for ${card.id}`}>
           {artifactEntries.map(([kind, count]) => (
-            <span className="small-pill" key={kind}>
+            <span className="small-pill proof-kind-pill" key={kind}>
               {formatKind(kind)} x {count}
             </span>
           ))}
@@ -649,16 +676,16 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
       {card.worktreePaths.length > 0 ? (
         <div className="artifact-list" aria-label={`Worktrees for ${card.id}`}>
           {card.worktreePaths.map((worktreePath) => (
-            <span className="small-pill" key={worktreePath}>
-              {worktreePath}
+            <span className="small-pill truncate-pill" key={worktreePath} title={worktreePath}>
+              {formatWorktreePath(worktreePath)}
             </span>
           ))}
         </div>
       ) : null}
       {card.healthFlags.length > 0 ? (
-        <div className="issue-health">
-          {card.healthFlags.map((flag) => (
-            <div key={`${card.id}-${flag.kind}-${flag.message}`}>
+        <div className={`issue-health health-${healthSeverity ?? 'medium'}`}>
+          {card.healthFlags.map((flag, index) => (
+            <div key={`${card.id}-${flag.kind}-${index}-${flag.message}`}>
               <strong>{HEALTH_FLAG_LABELS[flag.kind]}:</strong> {flag.message}
             </div>
           ))}
@@ -666,6 +693,51 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
       ) : null}
     </Link>
   );
+}
+
+interface ProofBadge {
+  label: string;
+  count: number;
+  className: string;
+}
+
+type HealthSeverity = 'high' | 'medium' | 'low';
+
+function buildProofBadges(
+  card: OrchestrationDashboardIssueCard,
+  totalArtifactCount: number,
+): ProofBadge[] {
+  return [
+    {
+      label: 'artifacts',
+      count: totalArtifactCount,
+      className: totalArtifactCount > 0 ? 'proof-badge-positive' : 'proof-badge-muted',
+    },
+    {
+      label: 'CSQR',
+      count: card.csqrLiteScorecardIds.length,
+      className: card.csqrLiteScorecardIds.length > 0 ? 'proof-badge-success' : 'proof-badge-muted',
+    },
+    {
+      label: 'worktrees',
+      count: card.worktreePaths.length,
+      className: card.worktreePaths.length > 0 ? 'proof-badge-info' : 'proof-badge-muted',
+    },
+  ];
+}
+
+function getHighestHealthSeverity(
+  flags: OrchestrationDashboardHealthFlag[],
+): HealthSeverity | null {
+  if (flags.some((flag) => flag.severity === 'high')) {
+    return 'high';
+  }
+
+  if (flags.some((flag) => flag.severity === 'medium')) {
+    return 'medium';
+  }
+
+  return flags.length > 0 ? 'low' : null;
 }
 
 function HealthPanel({ viewModel }: DashboardShellProps) {
@@ -825,6 +897,11 @@ function formatKind(kind: string): string {
 
 function formatDate(value: string): string {
   return value.slice(0, 10);
+}
+
+function formatWorktreePath(path: string): string {
+  const segments = path.split('/').filter(Boolean);
+  return segments.at(-1) ?? path;
 }
 
 function normalizeClassName(value: string): string {

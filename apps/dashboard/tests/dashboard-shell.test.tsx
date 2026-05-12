@@ -87,6 +87,28 @@ test('dashboard shell renders Linear-style sidebar, topbar, command search, and 
   );
 });
 
+test('dashboard board renders dense lanes, proof badges, and keyboard-scroll affordance', () => {
+  const html = renderToStaticMarkup(
+    <DashboardShell dataSource="demo" viewModel={demoDashboardViewModel} />,
+  );
+
+  assert.match(html, /class="board" role="region" tabindex="0"/);
+  assert.match(html, /aria-label="Issue lane board"/);
+  assert.match(html, /class="lane lane-ready" data-testid="lane-ready"/);
+  assert.match(html, /aria-label="2 issues in Ready"/);
+  assert.match(html, /class="issue-card-topline"/);
+  assert.match(html, /class="issue-meta issue-meta-grid"/);
+  assert.match(html, /aria-label="Proof summary for M7-I2"/);
+  assert.match(html, /class="proof-badge proof-badge-positive"/);
+  assert.match(html, /class="proof-badge proof-badge-success"/);
+  assert.match(html, /class="proof-badge proof-badge-info"/);
+  assert.match(html, /<span class="proof-count">[^<]+<\/span>artifacts/);
+  assert.match(html, /<span class="proof-count">[^<]+<\/span>CSQR/);
+  assert.match(html, /<span class="proof-count">[^<]+<\/span>worktrees/);
+  assert.match(html, /class="small-pill truncate-pill" title="\/worktrees\/M7-I2-dashboard">M7-I2-dashboard<\/span>/);
+  assert.match(html, /class="issue-health health-high"/);
+});
+
 test('dashboard setup renders required live configuration instead of placeholder data', () => {
   const html = renderToStaticMarkup(
     <DashboardSetup
@@ -364,7 +386,15 @@ test('dashboard stylesheet contains responsive overflow guardrails for dense liv
   const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
 
   assert.match(css, /overflow-x:\s*hidden/);
-  assert.match(css, /repeat\(auto-fit,\s*minmax\(min\(100%, 260px\), 1fr\)\)/);
+  assert.match(css, /\.board\s*\{[\s\S]*grid-auto-flow:\s*column/);
+  assert.match(css, /\.board\s*\{[\s\S]*overflow-x:\s*auto/);
+  assert.match(css, /\.board\s*\{[\s\S]*overflow-y:\s*visible/);
+  assert.match(css, /\.board:focus-visible\s*\{[\s\S]*box-shadow:\s*var\(--ds-focus-ring\)/);
+  assert.match(css, /\.lane-header\s*\{[\s\S]*position:\s*sticky/);
+  assert.match(css, /\.proof-strip\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.proof-badge/);
+  assert.match(css, /\.issue-meta-grid/);
+  assert.match(css, /\.truncate-pill/);
   assert.match(css, /overflow-wrap:\s*anywhere/);
   assert.match(css, /\.filter-grid/);
   assert.match(css, /\.empty-board/);
