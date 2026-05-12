@@ -47,6 +47,7 @@ test('issue detail loader renders status, agent notes, lease history, and eviden
   assert.match(html, /class="detail-layout"/);
   assert.match(html, /class="detail-primary"/);
   assert.match(html, /class="detail-inspector" aria-label="Issue proof inspector"/);
+  assert.match(html, /class="status-pill done"/);
   assert.match(html, /Final implementation summary/);
   assert.match(html, /What the agent wrote/);
   assert.match(html, /Implemented detail view and attached evidence/);
@@ -79,6 +80,8 @@ test('issue detail loader renders status, agent notes, lease history, and eviden
   assert.match(html, /Raw metadata - collapsed by default for safe inspection/);
   assert.match(html, /Inspect raw JSON only when provenance or parser diagnostics require it/);
   assert.match(html, /CP-detail-newer/);
+  assert.match(html, /Raw event payload/);
+  assert.match(html, /class="proof-detail-summary timeline-event-payload"/);
   assert.match(html, /Issue cannot be claimed from status done/);
 });
 
@@ -156,18 +159,30 @@ test('issue detail not-found and stylesheet guardrails are deterministic', () =>
     />,
   );
   const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
+  const detailInspectorRule = readCssRule(css, '.detail-inspector');
+  const responsiveDetailInspectorRule = readCssRule(
+    css,
+    '.detail-inspector',
+    '@media (max-width: 1280px)',
+  );
+  const claimPanelRule = readCssRule(css, '.claim-panel');
+  const detailIssueActionRule = readCssRule(css, '.detail-layout .issue-action,\n.detail-layout .issue-blocker');
 
   assert.match(notFoundHtml, /data-testid="issue-detail-not-found"/);
   assert.match(notFoundHtml, /Issue not found/);
   assert.match(css, /\.issue-card-link:focus-visible/);
   assert.match(css, /\.detail-grid/);
   assert.match(css, /\.detail-layout/);
-  assert.match(css, /\.detail-inspector\s*\{[\s\S]*max-height:\s*calc\(100vh - 48px\)/);
+  assert.doesNotMatch(detailInspectorRule, /max-height|overflow-y/);
+  assert.doesNotMatch(responsiveDetailInspectorRule, /order\s*:\s*-1/);
+  assert.match(claimPanelRule, /position:\s*sticky/);
+  assert.match(detailIssueActionRule, /-webkit-line-clamp:\s*initial/);
   assert.match(css, /\.proof-review-panel/);
   assert.match(css, /\.automated-proof-note/);
   assert.match(css, /\.score-meter/);
   assert.match(css, /\.provenance-timeline/);
   assert.match(css, /\.metadata-safety-copy/);
+  assert.match(css, /\.timeline-event-payload/);
   assert.match(css, /@media \(max-width: 1280px\)\s*\{[\s\S]*\.detail-layout/);
   assert.match(css, /\.claim-panel/);
   assert.match(css, /\.proof-card-grid/);
@@ -617,4 +632,19 @@ function buildScorecardMetadata(): string {
     csqrLiteScorecardId: 'scorecard-detail',
     scorecardJson: JSON.stringify(scorecard),
   });
+}
+
+function readCssRule(css: string, selector: string, within?: string): string {
+  const source = within === undefined
+    ? css
+    : css.slice(css.indexOf(within));
+  const pattern = new RegExp(`${escapeRegex(selector)}\\s*\\{([^}]*)\\}`);
+  const match = source.match(pattern);
+
+  assert.ok(match, `Expected CSS rule for ${selector}`);
+  return match[1] ?? '';
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

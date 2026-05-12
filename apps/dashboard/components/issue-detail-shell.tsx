@@ -64,7 +64,7 @@ export function IssueDetailShell({
   return (
     <main className="dashboard-root" data-testid="issue-detail-dashboard">
       <div className="dashboard-frame">
-        <section className="detail-hero panel detail-hero-panel" aria-labelledby="issue-detail-title">
+        <section className="detail-hero" aria-labelledby="issue-detail-title">
           <div>
             <Link className="back-link" href="/">
               Back to board
@@ -75,7 +75,9 @@ export function IssueDetailShell({
             </h1>
             <div className="issue-meta">
               <span className="small-pill">{detail.card.id}</span>
-              <span className="small-pill">{detail.card.status}</span>
+              <span className={`status-pill ${normalizeClassName(detail.card.status)}`}>
+                {detail.card.status}
+              </span>
               <span className={`priority-pill ${normalizeClassName(detail.card.priority)}`}>
                 {detail.card.priority}
               </span>
@@ -242,6 +244,9 @@ function CheckpointPanel({ detail }: { detail: DashboardIssueDetail }) {
               <p className="timeline-title">
                 {checkpoint.title}
                 <span className="status-pill">{checkpoint.taskStatus}</span>
+              </p>
+              <p className="timeline-meta">
+                {checkpoint.id} · {formatDate(checkpoint.createdAt)}
               </p>
               <p className="timeline-meta">{checkpoint.summary}</p>
               <p className="issue-action">
@@ -603,7 +608,10 @@ function TimelineDetailPanel({ detail }: { detail: DashboardIssueDetail }) {
               <p className="timeline-meta">
                 Run {event.runId} at {formatDate(event.createdAt)}
               </p>
-              <pre className="timeline-payload">{JSON.stringify(event.payload, null, 2)}</pre>
+              <details className="proof-detail-summary timeline-event-payload">
+                <summary>Raw event payload</summary>
+                <pre className="timeline-payload">{JSON.stringify(event.payload, null, 2)}</pre>
+              </details>
             </article>
           ))
         )}
