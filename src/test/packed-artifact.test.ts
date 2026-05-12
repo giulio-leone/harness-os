@@ -298,10 +298,12 @@ test('packed npm artifact executes installable bins and host smoke paths', async
       const result = runInstalledPackageScript(installRoot, baseEnv, `
         import {
           applyOrchestrationDashboardIssueFilters as applyFiltersFromRoot,
-          buildCsqrLiteScorecard,
-          buildOrchestrationDashboardViewModel,
-          buildWorktreeAllocation as buildFromRoot,
-          createSymphonyWorkflowReloader as createReloaderFromRoot,
+           buildCsqrLiteScorecard,
+           buildOrchestrationDashboardViewModel,
+           buildWorktreeAllocation as buildFromRoot,
+           cleanupSymphonyPhysicalWorktree as cleanupPhysicalWorktreeFromRoot,
+           createSymphonyPhysicalWorktree as createPhysicalWorktreeFromRoot,
+           createSymphonyWorkflowReloader as createReloaderFromRoot,
           createDefaultGpt5HighSubagents,
           csqrLiteDefaultCriteria,
           loadSymphonyWorkflowFromText as loadWorkflowFromRoot,
@@ -320,10 +322,12 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         import {
           applyOrchestrationDashboardIssueFilters as applyFiltersFromSubpath,
           buildWorktreeAllocation as buildFromSubpath,
-          assertReferenceOrchestrationEvidencePacket,
-          createSymphonyWorkflowReloader as createReloaderFromSubpath,
-          csqrLiteScorecardSchema,
-          inspectOrchestration,
+           assertReferenceOrchestrationEvidencePacket,
+           createSymphonyWorkflowReloader as createReloaderFromSubpath,
+           cleanupSymphonyPhysicalWorktree as cleanupPhysicalWorktreeFromSubpath,
+           csqrLiteScorecardSchema,
+           createSymphonyPhysicalWorktree as createPhysicalWorktreeFromSubpath,
+           inspectOrchestration,
           loadSymphonyWorkflowFromText as loadWorkflowFromSubpath,
           orchestrationDashboardViewModelSchema,
           orchestrationPlanSchema,
@@ -331,8 +335,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           orchestrationSupervisorRunSummarySchema,
           orchestrationSupervisorTickInputSchema,
           orchestrationSupervisorTickResultSchema,
-          renderSymphonyWorkflowPrompt as renderWorkflowPromptFromSubpath,
-          symphonyWorkflowDocumentSchema,
+           renderSymphonyWorkflowPrompt as renderWorkflowPromptFromSubpath,
+           symphonyWorktreeOperationResultSchema,
+           symphonyWorkflowDocumentSchema,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromSubpath,
           runOrchestrationSupervisor as runSupervisorFromSubpath,
           runOrchestrationSupervisorTick as runSupervisorTickFromSubpath,
@@ -362,16 +367,21 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           dashboardServerOrchestratorType: typeof SessionOrchestrator,
           matrixSameReference: matrixFromRoot === matrixFromSubpath,
           filterSameReference: applyFiltersFromRoot === applyFiltersFromSubpath,
-          workflowLoaderSameReference: loadWorkflowFromRoot === loadWorkflowFromSubpath,
-          workflowRendererSameReference: renderWorkflowPromptFromRoot === renderWorkflowPromptFromSubpath,
-          workflowReloaderSameReference: createReloaderFromRoot === createReloaderFromSubpath,
-          supervisorRunSameReference: runSupervisorFromRoot === runSupervisorFromSubpath,
+           workflowLoaderSameReference: loadWorkflowFromRoot === loadWorkflowFromSubpath,
+           workflowRendererSameReference: renderWorkflowPromptFromRoot === renderWorkflowPromptFromSubpath,
+           workflowReloaderSameReference: createReloaderFromRoot === createReloaderFromSubpath,
+           physicalWorktreeCreateSameReference: createPhysicalWorktreeFromRoot === createPhysicalWorktreeFromSubpath,
+           physicalWorktreeCleanupSameReference: cleanupPhysicalWorktreeFromRoot === cleanupPhysicalWorktreeFromSubpath,
+           supervisorRunSameReference: runSupervisorFromRoot === runSupervisorFromSubpath,
           supervisorTickSameReference: runSupervisorTickFromRoot === runSupervisorTickFromSubpath,
           inspectorType: typeof inspectOrchestration,
           workflowLoaderType: typeof loadWorkflowFromSubpath,
-          workflowRendererType: typeof renderWorkflowPromptFromSubpath,
-          workflowSchemaType: typeof symphonyWorkflowDocumentSchema.safeParse,
-          supervisorRunType: typeof runSupervisorFromSubpath,
+           workflowRendererType: typeof renderWorkflowPromptFromSubpath,
+           workflowSchemaType: typeof symphonyWorkflowDocumentSchema.safeParse,
+           physicalWorktreeCreateType: typeof createPhysicalWorktreeFromSubpath,
+           physicalWorktreeCleanupType: typeof cleanupPhysicalWorktreeFromSubpath,
+           physicalWorktreeSchemaType: typeof symphonyWorktreeOperationResultSchema.safeParse,
+           supervisorRunType: typeof runSupervisorFromSubpath,
           supervisorTickType: typeof runSupervisorTickFromSubpath,
           schemaType: typeof orchestrationPlanSchema.safeParse,
           supervisorRunSchemaType: typeof orchestrationSupervisorRunInputSchema.safeParse,
@@ -401,15 +411,20 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         matrixSameReference: boolean;
         filterSameReference: boolean;
         workflowLoaderSameReference: boolean;
-        workflowRendererSameReference: boolean;
-        workflowReloaderSameReference: boolean;
-        supervisorRunSameReference: boolean;
+         workflowRendererSameReference: boolean;
+         workflowReloaderSameReference: boolean;
+         physicalWorktreeCreateSameReference: boolean;
+         physicalWorktreeCleanupSameReference: boolean;
+         supervisorRunSameReference: boolean;
         supervisorTickSameReference: boolean;
         inspectorType: string;
         workflowLoaderType: string;
-        workflowRendererType: string;
-        workflowSchemaType: string;
-        supervisorRunType: string;
+         workflowRendererType: string;
+         workflowSchemaType: string;
+         physicalWorktreeCreateType: string;
+         physicalWorktreeCleanupType: string;
+         physicalWorktreeSchemaType: string;
+         supervisorRunType: string;
         supervisorTickType: string;
         schemaType: string;
         supervisorRunSchemaType: string;
@@ -437,15 +452,20 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         matrixSameReference: true,
         filterSameReference: true,
         workflowLoaderSameReference: true,
-        workflowRendererSameReference: true,
-        workflowReloaderSameReference: true,
-        supervisorRunSameReference: true,
+         workflowRendererSameReference: true,
+         workflowReloaderSameReference: true,
+         physicalWorktreeCreateSameReference: true,
+         physicalWorktreeCleanupSameReference: true,
+         supervisorRunSameReference: true,
         supervisorTickSameReference: true,
         inspectorType: 'function',
         workflowLoaderType: 'function',
-        workflowRendererType: 'function',
-        workflowSchemaType: 'function',
-        supervisorRunType: 'function',
+         workflowRendererType: 'function',
+         workflowSchemaType: 'function',
+         physicalWorktreeCreateType: 'function',
+         physicalWorktreeCleanupType: 'function',
+         physicalWorktreeSchemaType: 'function',
+         supervisorRunType: 'function',
         supervisorTickType: 'function',
         schemaType: 'function',
         supervisorRunSchemaType: 'function',

@@ -93,6 +93,8 @@ export interface HarnessOrchestrationCapability {
   worktreeIsolation: {
     strategy: 'one_worktree_per_issue';
     mcpCreatesWorktrees: boolean;
+    physicalAdapter: string;
+    cleanupAdapter: string;
     conflictGuards: string[];
   };
   evidence: {
@@ -173,15 +175,17 @@ const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
     'hostCapabilities',
   ],
   hostResponsibilities: [
-    'create_git_worktrees',
+    'create_git_worktrees_with_physical_adapter',
     'launch_subagents',
     'run_quality_gates',
     'collect_evidence_artifacts',
-    'cleanup_worktrees',
+    'cleanup_worktrees_with_physical_adapter',
   ],
   worktreeIsolation: {
     strategy: 'one_worktree_per_issue',
     mcpCreatesWorktrees: false,
+    physicalAdapter: 'createSymphonyPhysicalWorktree',
+    cleanupAdapter: 'cleanupSymphonyPhysicalWorktree',
     conflictGuards: [
       'active_worktree_path',
       'active_worktree_branch',
@@ -195,6 +199,9 @@ const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
       'orchestration_worktree',
       'orchestration_worktree_branch',
       'orchestration_candidate_files',
+      'physical_worktree_manifest',
+      'physical_worktree_command_log',
+      'physical_worktree_cleanup_plan',
     ],
     healthFlags: [
       'duplicate_active_worktree_artifact_path',

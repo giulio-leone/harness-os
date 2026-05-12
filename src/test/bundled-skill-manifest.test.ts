@@ -78,11 +78,20 @@ test('capability catalog exposes Symphony orchestration discovery metadata', () 
   assert.ok(catalog.orchestration.requiredDispatchFields.includes('repoRoot'));
   assert.equal(catalog.orchestration.worktreeIsolation.strategy, 'one_worktree_per_issue');
   assert.equal(catalog.orchestration.worktreeIsolation.mcpCreatesWorktrees, false);
+  assert.equal(
+    catalog.orchestration.worktreeIsolation.physicalAdapter,
+    'createSymphonyPhysicalWorktree',
+  );
   assert.ok(catalog.orchestration.evidence.acceptedArtifactKinds.includes('test_report'));
   assert.ok(catalog.orchestration.evidence.acceptedArtifactKinds.includes('screenshot'));
   assert.ok(
     catalog.orchestration.evidence.runtimeMetadataArtifactKinds.includes(
       'orchestration_worktree',
+    ),
+  );
+  assert.ok(
+    catalog.orchestration.evidence.runtimeMetadataArtifactKinds.includes(
+      'physical_worktree_manifest',
     ),
   );
   assert.ok(
