@@ -139,6 +139,8 @@ HarnessOS now ships a deterministic reference matrix for automated orchestration
 
 The matrix requires run-scoped `typecheck_report`, `state_export`, and `csqr_lite_scorecard` artifacts, plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every planned assignment. Reference packet assertions verify that those assignment artifacts are produced by the planned subagent, belong to the planned worktree, are covered by passed gates, and have codebase reference coverage. This keeps the no-human-review path auditable while leaving actual shell commands, screenshots, and CI execution host-owned.
 
+The supervisor E2E path now exercises the full no-human control plane through MCP: `compile_plan` and `plan_issues` seed pending work, `supervisor_run` executes bounded inspect/promote/dispatch ticks without any `harness_session(begin)` call from the operator, and `inspect_state` plus `dashboard_view` prove active leases, worktree metadata, evidence packet ids, CSQR-lite scorecard ids, and artifact counts after the host attaches gate evidence. Supervisor tick/run results deliberately do not claim to create screenshots or test reports themselves; they prove autonomous control-flow decisions, while the evidence matrix proves the host-owned gate outputs.
+
 The copy/paste MCP handoff for this flow lives in [`../examples/orchestration-symphony/`](../examples/orchestration-symphony/). Those examples are intentionally host-facing rather than generated session-lifecycle CLI payloads: they show the stable `harness_inspector` -> `harness_orchestrator` -> `harness_symphony` -> `harness_artifacts` call chain and are validated against the public MCP input schemas in the test suite.
 
 ### CSQR-lite scoring model
@@ -162,6 +164,6 @@ Scorecards passed to `harness_session(action: "checkpoint" | "close")` are durab
 
 - The dispatcher assigns work and claims sessions; the supervisor runtime now exposes one-tick and bounded polling entrypoints, but worker process execution still remains host-owned.
 - Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
-- Evidence packet validation and deterministic reference E2E assertions exist; the full E2E/CI gate runner remains host-owned until later hardening milestones.
+- Evidence packet validation, deterministic reference E2E assertions, and supervisor-driven MCP E2E coverage exist; the actual shell command runner for typecheck/test/E2E/screenshot capture remains host-owned.
 - Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.
 - Dashboard APIs build on this evidence substrate rather than changing the schema.

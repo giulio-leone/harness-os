@@ -1,0 +1,16 @@
+{
+  "tool": "harness_artifacts",
+  "input": {
+    "action": "save",
+    "projectName": "HarnessOS",
+    "campaignId": "C-REPLACE-WITH-CREATE-CAMPAIGN-OUTPUT",
+    "kind": "typecheck_report",
+    "path": ".harness/evidence/symphony-reference/run/typecheck-report.log",
+    "metadata": {
+      "evidencePacketId": "reference-orchestration-e2e-packet",
+      "evidenceArtifactId": "run-typecheck-report",
+      "scope": "run",
+      "gate": "reference-static-gate"
+    }
+  }
+}

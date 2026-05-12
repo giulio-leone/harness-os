@@ -1,0 +1,17 @@
+{
+  "tool": "harness_artifacts",
+  "input": {
+    "action": "save",
+    "projectName": "HarnessOS",
+    "campaignId": "C-REPLACE-WITH-CREATE-CAMPAIGN-OUTPUT",
+    "kind": "csqr_lite_scorecard",
+    "path": ".harness/evidence/symphony-reference/run/csqr-lite-scorecard.json",
+    "metadata": {
+      "evidencePacketId": "reference-orchestration-e2e-packet",
+      "evidenceArtifactId": "run-csqr-lite-scorecard",
+      "csqrLiteScorecardId": "reference-csqr-lite-scorecard",
+      "scope": "run",
+      "gate": "reference-csqr-lite-completion-gate"
+    }
+  }
+}

@@ -24,8 +24,12 @@ import type {
   OrchestrationEvidenceArtifact,
   OrchestrationEvidencePacket,
   OrchestrationPlan,
+  OrchestrationSubagent,
 } from '../contracts/orchestration-contracts.js';
-import { orchestrationEvidencePacketSchema } from '../contracts/orchestration-contracts.js';
+import {
+  orchestrationEvidencePacketSchema,
+  orchestrationSupervisorRunSummarySchema,
+} from '../contracts/orchestration-contracts.js';
 import {
   assertReferenceOrchestrationEvidencePacket,
   buildReferenceOrchestrationEvidencePacket,
@@ -33,6 +37,7 @@ import {
   getReferenceAssignmentEvidenceArtifactIds,
   referenceOrchestrationE2eEvidenceMatrix,
 } from '../runtime/orchestration-reference-evidence.js';
+import { buildWorktreeAllocation } from '../runtime/worktree-manager.js';
 
 const timestamp = '2026-05-10T20:00:00.000Z';
 const repoRoot = '/tmp/harness-os';
@@ -462,8 +467,321 @@ test('MCP Symphony E2E flow persists reference evidence packet artifacts', async
   }
 });
 
+test('MCP supervisor run autonomously promotes, dispatches, and exposes evidence-backed state', async () => {
+  const tempDir = createTempDir('orchestration-supervisor-e2e-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  const supervisorRunId = 'supervisor-no-human-run';
+  const supervisorTickId = `${supervisorRunId}-tick-1`;
+  const dispatchBranchPrefix = 'm8-i4-supervisor';
+  const supervisorSubagents = createSupervisorSubagents();
+  const supervisorRepoRoot = join(tempDir, 'repo');
+  const supervisorWorktreeRoot = join(tempDir, 'worktrees');
+
+  try {
+    const { internals } = createServer();
+    const orchestrator = internals.tools.get('harness_orchestrator')!;
+    const symphony = internals.tools.get('harness_symphony')!;
+    const artifacts = internals.tools.get('harness_artifacts')!;
+
+    const workspace = (await orchestrator.handler({
+      action: 'init_workspace',
+      dbPath,
+      workspaceName: 'Supervisor Evidence Workspace',
+    })) as { workspaceId: string };
+    const campaign = (await orchestrator.handler({
+      action: 'create_campaign',
+      dbPath,
+      workspaceId: workspace.workspaceId,
+      projectName: 'Supervisor Evidence Project',
+      campaignName: 'Supervisor Evidence Campaign',
+      objective: 'Prove no-human supervisor dispatch through automated evidence surfaces.',
+    })) as { projectId: string; campaignId: string };
+
+    const compiled = (await symphony.handler({
+      action: 'compile_plan',
+      milestones: [
+        {
+          id: 'm-supervisor-evidence',
+          key: 'supervisor-evidence',
+          description: 'Autonomous supervisor evidence matrix',
+        },
+      ],
+      slices: [
+        {
+          id: 'slice-supervisor-dispatch',
+          milestoneId: 'm-supervisor-evidence',
+          task: 'Supervisor promotes and dispatches ready work without a human checkpoint',
+          priority: 'critical',
+          size: 'M',
+          evidenceRequirements: [
+            {
+              id: 'supervisor-dispatch-e2e-report',
+              kind: 'e2e_report',
+              value: 'evidence://supervisor/dispatch-e2e-report',
+              label: 'Supervisor dispatch E2E report',
+            },
+            {
+              id: 'supervisor-dispatch-screenshot',
+              kind: 'screenshot',
+              value: 'evidence://supervisor/dispatch-screenshot',
+              label: 'Supervisor dispatch dashboard screenshot',
+            },
+          ],
+        },
+        {
+          id: 'slice-supervisor-proof',
+          milestoneId: 'm-supervisor-evidence',
+          task: 'Supervisor evidence is persisted and visible through inspector and dashboard views',
+          priority: 'high',
+          size: 'M',
+          evidenceRequirements: [
+            {
+              id: 'supervisor-proof-e2e-report',
+              kind: 'e2e_report',
+              value: 'evidence://supervisor/proof-e2e-report',
+              label: 'Supervisor proof E2E report',
+            },
+            {
+              id: 'supervisor-proof-screenshot',
+              kind: 'screenshot',
+              value: 'evidence://supervisor/proof-screenshot',
+              label: 'Supervisor proof dashboard screenshot',
+            },
+          ],
+        },
+      ],
+    })) as { planIssuesPayload: { milestones: unknown[] } };
+
+    await orchestrator.handler({
+      action: 'plan_issues',
+      dbPath,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+      ...compiled.planIssuesPayload,
+    });
+
+    const issueRows = selectIssueRows(dbPath);
+    assert.equal(issueRows.length, 2);
+
+    const beforeSupervisor = (await symphony.handler({
+      action: 'dashboard_view',
+      dbPath,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+    })) as DashboardViewResponse;
+    assert.equal(beforeSupervisor.viewModel.overview.laneCounts.pending, 2);
+    assert.equal(beforeSupervisor.viewModel.overview.readyCount, 0);
+    assert.equal(beforeSupervisor.viewModel.overview.activeIssueCount, 0);
+
+    const supervisor = (await symphony.handler({
+      action: 'supervisor_run',
+      contractVersion: '1.0.0',
+      runId: supervisorRunId,
+      dbPath,
+      workspaceId: workspace.workspaceId,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+      mode: 'execute',
+      objective: 'Run autonomous supervisor polling without runtime human checkpoints.',
+      requiredEvidenceArtifactKinds: [
+        'typecheck_report',
+        'state_export',
+        'csqr_lite_scorecard',
+        'test_report',
+        'e2e_report',
+        'screenshot',
+      ],
+      stopCondition: {
+        maxTicks: 2,
+        stopWhenIdle: true,
+        stopWhenBlocked: true,
+      },
+      dispatch: {
+        repoRoot: supervisorRepoRoot,
+        worktreeRoot: supervisorWorktreeRoot,
+        baseRef: 'main',
+        branchPrefix: dispatchBranchPrefix,
+        host: hostRoutingContext.host,
+        hostCapabilities: hostRoutingContext.hostCapabilities,
+        maxConcurrentAgents: 4,
+        subagents: supervisorSubagents,
+      },
+    })) as { result: unknown };
+    const supervisorResult = orchestrationSupervisorRunSummarySchema.parse(
+      supervisor.result,
+    );
+    const firstTick = supervisorResult.tickResults[0]!;
+    const secondTick = supervisorResult.tickResults[1]!;
+    const issueIds = issueRows.map((issue) => issue.id);
+
+    assert.equal(supervisorResult.status, 'succeeded');
+    assert.equal(supervisorResult.stopReason, 'idle');
+    assert.deepEqual(
+      supervisorResult.tickResults.map((result) => result.tickId),
+      [supervisorTickId, `${supervisorRunId}-tick-2`],
+    );
+    assert.deepEqual(
+      firstTick.decisions.map((decision) => decision.kind),
+      [
+        'inspect_dashboard',
+        'promote_queue',
+        'inspect_dashboard',
+        'dispatch_ready',
+      ],
+    );
+    assert.deepEqual([...firstTick.promotedIssueIds].sort(), [...issueIds].sort());
+    assert.deepEqual([...firstTick.dispatchedIssueIds].sort(), [...issueIds].sort());
+    assert.equal(firstTick.stopReason, undefined);
+    assert.equal(secondTick.stopReason, 'idle');
+    assert.deepEqual(selectIssueStatuses(dbPath), {
+      [issueIds[0]!]: 'in_progress',
+      [issueIds[1]!]: 'in_progress',
+    });
+
+    const expectedPlan = buildSupervisorReferencePlan({
+      issueRows: firstTick.dispatchedIssueIds.map((id) => ({ id })),
+      subagents: supervisorSubagents,
+      repoRoot: supervisorRepoRoot,
+      worktreeRoot: supervisorWorktreeRoot,
+      branchPrefix: dispatchBranchPrefix,
+      objective: 'Run autonomous supervisor polling without runtime human checkpoints.',
+      maxConcurrentAgents: 4,
+    });
+    const runResult = buildReferenceOrchestrationRunResult({
+      plan: expectedPlan,
+      runId: supervisorRunId,
+      startedAt: timestamp,
+      completedAt: timestamp,
+      createdAt: timestamp,
+      artifactRoot: '.harness/evidence/supervisor-e2e',
+      commitSha: '50c7cf4',
+    });
+
+    assertReferenceOrchestrationEvidencePacket({
+      plan: expectedPlan,
+      packet: runResult.evidencePacket,
+    });
+    await saveReferenceEvidenceArtifacts({
+      artifacts,
+      dbPath,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+      packet: runResult.evidencePacket,
+    });
+
+    const inspected = (await symphony.handler({
+      action: 'inspect_state',
+      dbPath,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+      eventLimit: 25,
+    })) as InspectStateResponse;
+    const artifactCounts = new Map(
+      inspected.summary.artifacts.byKind.map((group) => [
+        group.kind,
+        group.count,
+      ]),
+    );
+
+    assert.equal(inspected.summary.health.status, 'healthy');
+    assert.equal(inspected.summary.leases.activeCount, 2);
+    assert.deepEqual(
+      inspected.summary.leases.active.map((lease) => lease.agentId).sort(),
+      ['agent-autonomy-1', 'agent-autonomy-2'],
+    );
+    assert.deepEqual(inspected.summary.issues.statusCounts, {
+      in_progress: 2,
+    });
+    assert.equal(artifactCounts.get('evidence_packet'), 1);
+    assert.equal(artifactCounts.get('typecheck_report'), 1);
+    assert.equal(artifactCounts.get('state_export'), 1);
+    assert.equal(artifactCounts.get('csqr_lite_scorecard'), 1);
+    assert.equal(artifactCounts.get('test_report'), 2);
+    assert.equal(artifactCounts.get('e2e_report'), 2);
+    assert.equal(artifactCounts.get('screenshot'), 2);
+    assert.deepEqual(inspected.summary.artifacts.references.evidencePacketIds, [
+      runResult.evidencePacket.id,
+    ]);
+    assert.deepEqual(
+      inspected.summary.artifacts.references.subagentIds,
+      ['agent-autonomy-1', 'agent-autonomy-2'],
+    );
+    assert.equal(inspected.summary.artifacts.references.worktreePaths.length, 2);
+
+    const afterSupervisor = (await symphony.handler({
+      action: 'dashboard_view',
+      dbPath,
+      projectId: campaign.projectId,
+      campaignId: campaign.campaignId,
+    })) as DashboardViewResponse;
+    const inProgressCards = getLaneCards(afterSupervisor, 'in_progress');
+
+    assert.equal(afterSupervisor.viewModel.overview.totalIssues, 2);
+    assert.equal(afterSupervisor.viewModel.overview.activeIssueCount, 2);
+    assert.deepEqual(
+      inProgressCards.map((card) => card.id).sort(),
+      [...issueIds].sort(),
+    );
+    assert.deepEqual(
+      inProgressCards.flatMap((card) =>
+        card.activeLeases.map((lease) => lease.agentId),
+      ).sort(),
+      ['agent-autonomy-1', 'agent-autonomy-2'],
+    );
+    assert.equal(afterSupervisor.viewModel.evidence.evidencePacketCount, 1);
+    assert.equal(afterSupervisor.viewModel.evidence.csqrLiteScorecardCount, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 interface ServerInternals {
   tools: Map<string, { handler: (args: unknown) => Promise<unknown> }>;
+}
+
+interface DashboardViewResponse {
+  viewModel: {
+    overview: {
+      totalIssues: number;
+      readyCount: number;
+      activeIssueCount: number;
+      laneCounts: Record<string, number>;
+    };
+    issueLanes: Array<{
+      id: string;
+      cards: Array<{
+        id: string;
+        activeLeases: Array<{ agentId: string }>;
+      }>;
+    }>;
+    evidence: {
+      evidencePacketCount: number;
+      csqrLiteScorecardCount: number;
+    };
+  };
+}
+
+interface InspectStateResponse {
+  summary: {
+    issues: {
+      statusCounts: Record<string, number>;
+    };
+    leases: {
+      activeCount: number;
+      active: Array<{ agentId: string }>;
+    };
+    artifacts: {
+      byKind: Array<{ kind: string; count: number }>;
+      references: {
+        evidencePacketIds: string[];
+        subagentIds: string[];
+        worktreePaths: string[];
+      };
+    };
+    health: {
+      status: string;
+    };
+  };
 }
 
 class NoopMem0Adapter implements Mem0Adapter {
@@ -616,6 +934,63 @@ function createReferencePlan(): OrchestrationPlan {
   };
 }
 
+function createSupervisorSubagents(): OrchestrationSubagent[] {
+  return [1, 2, 3, 4].map((index) => ({
+    id: `agent-autonomy-${index}`,
+    role: 'autonomous-worker',
+    host: hostRoutingContext.host,
+    modelProfile: 'gpt-5-high',
+    capabilities: ['implementation', 'evidence', 'typescript'],
+    maxConcurrency: 1,
+  }));
+}
+
+function buildSupervisorReferencePlan(input: {
+  issueRows: Array<{ id: string }>;
+  subagents: OrchestrationSubagent[];
+  repoRoot: string;
+  worktreeRoot: string;
+  branchPrefix: string;
+  objective: string;
+  maxConcurrentAgents: number;
+}): OrchestrationPlan {
+  const worktrees = input.issueRows.map((issue) =>
+    buildWorktreeAllocation({
+      issueId: issue.id,
+      repoRoot: input.repoRoot,
+      worktreeRoot: input.worktreeRoot,
+      baseRef: 'main',
+      branchPrefix: input.branchPrefix,
+      cleanupPolicy: 'delete_on_completion',
+    }),
+  );
+
+  return {
+    contractVersion: '1.0.0',
+    objective: input.objective,
+    subagents: input.subagents,
+    worktrees,
+    dispatch: {
+      strategy: 'fanout',
+      maxConcurrentAgents: Math.min(
+        input.maxConcurrentAgents,
+        input.issueRows.length,
+      ),
+      assignments: input.issueRows.map((issue, index) => {
+        const worktree = worktrees[index]!;
+        const subagent = input.subagents[index]!;
+
+        return {
+          id: `assignment-${worktree.id}`,
+          issueId: issue.id,
+          subagentId: subagent.id,
+          worktreeId: worktree.id,
+        };
+      }),
+    },
+  };
+}
+
 function createTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
@@ -630,6 +1005,27 @@ function selectIssueRows(dbPath: string): Array<{ id: string; task: string }> {
   } finally {
     db.close();
   }
+}
+
+function selectIssueStatuses(dbPath: string): Record<string, string> {
+  const db = openHarnessDatabase({ dbPath });
+  try {
+    return Object.fromEntries(
+      selectAll<{ id: string; status: string }>(
+        db.connection,
+        'SELECT id, status FROM issues ORDER BY created_at ASC, id ASC',
+      ).map((row) => [row.id, row.status]),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+function getLaneCards(
+  dashboard: DashboardViewResponse,
+  laneId: string,
+): DashboardViewResponse['viewModel']['issueLanes'][number]['cards'] {
+  return dashboard.viewModel.issueLanes.find((lane) => lane.id === laneId)?.cards ?? [];
 }
 
 async function saveReferenceEvidenceArtifacts(input: {
@@ -661,6 +1057,11 @@ async function saveReferenceEvidenceArtifacts(input: {
         evidencePacketId: input.packet.id,
         evidenceArtifactId: artifact.id,
         scope: artifact.scope,
+        ...(artifact.metadata ?? {}),
+        ...(artifact.producedBySubagentId !== undefined
+          ? { subagentId: artifact.producedBySubagentId }
+          : {}),
+        ...(artifact.worktreeId !== undefined ? { worktreeId: artifact.worktreeId } : {}),
       },
     });
   }

@@ -209,12 +209,51 @@ test('packed npm artifact executes installable bins and host smoke paths', async
       assert.equal(parsed.result.tickResults.length, 1);
     });
 
+    await t.test('installed harness-supervisor bin executes deterministic single ticks from the packed artifact', () => {
+      const result = runBin(join(binDir, 'harness-supervisor'), [], {
+        env: baseEnv,
+        input: `${JSON.stringify({
+          action: 'tick',
+          input: {
+            contractVersion: '1.0.0',
+            tickId: 'packed-supervisor-tick',
+            dbPath,
+            projectId: 'project-1',
+            mode: 'dry_run',
+            stopCondition: {
+              stopWhenIdle: true,
+            },
+          },
+        })}\n`,
+      });
+
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const parsed = JSON.parse(result.stdout) as {
+        action: string;
+        result: {
+          tickId: string;
+          mode: string;
+          stopReason: string;
+          decisions: Array<{ kind: string }>;
+        };
+      };
+      assert.equal(parsed.action, 'tick');
+      assert.equal(parsed.result.tickId, 'packed-supervisor-tick');
+      assert.equal(parsed.result.mode, 'dry_run');
+      assert.equal(parsed.result.stopReason, 'idle');
+      assert.deepEqual(
+        parsed.result.decisions.map((decision) => decision.kind),
+        ['inspect_dashboard', 'idle'],
+      );
+    });
+
     await t.test('installed harness-session-lifecycle-mcp bin responds over JSON-RPC', async () => {
       const messages = await smokeTestInstalledMcpServer(
         join(binDir, 'harness-session-lifecycle-mcp'),
         baseEnv,
       );
       const toolList = messages.find((message) => message.id === 2);
+      const supervisorCall = messages.find((message) => message.id === 3);
 
       assert.ok(toolList);
       assert.equal(
@@ -227,6 +266,32 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         ),
         true,
       );
+      assert.ok(supervisorCall);
+      const supervisorToolResult = supervisorCall.result as {
+        structuredContent?: {
+          result?: {
+            tickId?: string;
+            mode?: string;
+            stopReason?: string;
+          };
+        };
+        isError?: boolean;
+      };
+      const supervisorContent = (
+        supervisorToolResult as {
+          structuredContent?: {
+            result?: {
+              tickId?: string;
+              mode?: string;
+              stopReason?: string;
+            };
+          };
+        }
+      ).structuredContent;
+      assert.equal(supervisorToolResult.isError, false);
+      assert.equal(supervisorContent?.result?.tickId, 'packed-mcp-supervisor-tick');
+      assert.equal(supervisorContent?.result?.mode, 'dry_run');
+      assert.equal(supervisorContent?.result?.stopReason, 'idle');
     });
 
     await t.test('installed package exposes orchestration root and subpath exports', () => {
@@ -632,6 +697,27 @@ async function smokeTestInstalledMcpServer(
       `${JSON.stringify({
         jsonrpc: '2.0',
         id: 3,
+        method: 'tools/call',
+        params: {
+          name: 'harness_symphony',
+          arguments: {
+            action: 'supervisor_tick',
+            contractVersion: '1.0.0',
+            tickId: 'packed-mcp-supervisor-tick',
+            dbPath: env['HARNESS_DB_PATH'],
+            projectId: 'project-1',
+            mode: 'dry_run',
+            stopCondition: {
+              stopWhenIdle: true,
+            },
+          },
+        },
+      })}\n`,
+    );
+    child.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 4,
         method: 'shutdown',
       })}\n`,
     );

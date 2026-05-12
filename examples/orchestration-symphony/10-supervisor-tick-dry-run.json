@@ -1,0 +1,16 @@
+{
+  "tool": "harness_symphony",
+  "input": {
+    "action": "supervisor_tick",
+    "contractVersion": "1.0.0",
+    "tickId": "example-supervisor-tick-1",
+    "dbPath": ".harness/harness.sqlite",
+    "projectName": "HarnessOS",
+    "campaignName": "Symphony Reference Campaign",
+    "mode": "dry_run",
+    "stopCondition": {
+      "stopWhenIdle": true,
+      "stopWhenBlocked": true
+    }
+  }
+}
