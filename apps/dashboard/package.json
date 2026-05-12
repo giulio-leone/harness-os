@@ -10,7 +10,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "typecheck": "next typegen && tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test tests/dashboard-claim.test.ts tests/dashboard-data.test.ts tests/dashboard-issue-detail.test.tsx tests/dashboard-shell.test.tsx tests/dashboard-ticket-writer.test.ts tests/package-boundary.test.ts",
+    "test": "tsx --test tests/dashboard-claim.test.ts tests/dashboard-data.test.ts tests/dashboard-issue-detail.test.tsx tests/dashboard-live-flow.test.tsx tests/dashboard-shell.test.tsx tests/dashboard-ticket-writer.test.ts tests/package-boundary.test.ts",
     "verify": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {

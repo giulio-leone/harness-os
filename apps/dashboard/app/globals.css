@@ -1314,16 +1314,19 @@ select {
 .detail-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
+  gap: 12px;
   align-items: start;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0 18px;
 }
 
 .detail-title {
-  margin: 10px 0 0;
-  font-size: clamp(2rem, 4vw, 4.25rem);
-  line-height: 0.98;
-  letter-spacing: -0.07em;
+  max-width: 920px;
+  margin: 8px 0 0;
+  font-size: clamp(1.55rem, 3vw, 2.7rem);
+  line-height: 1.03;
+  letter-spacing: -0.055em;
   overflow-wrap: anywhere;
 }
 
@@ -1356,15 +1359,29 @@ select {
   top: 24px;
   display: grid;
   gap: 12px;
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
 }
 
 .detail-wide {
   grid-column: 1 / -1;
 }
 
+.detail-layout .panel {
+  border-color: rgba(255, 255, 255, 0.085);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02));
+  box-shadow: none;
+}
+
+.detail-layout .issue-action,
+.detail-layout .issue-blocker {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: initial;
+  -webkit-box-orient: initial;
+}
+
 .claim-panel {
+  position: sticky;
+  top: 24px;
   display: grid;
   gap: 10px;
 }
@@ -1564,6 +1581,10 @@ select {
   padding: 10px;
 }
 
+.timeline-event-payload {
+  margin-top: 10px;
+}
+
 .proof-detail-summary summary {
   cursor: pointer;
   color: var(--muted);
@@ -1619,9 +1640,11 @@ select {
 
   .detail-inspector {
     position: static;
-    order: -1;
-    max-height: none;
     overflow: visible;
+  }
+
+  .claim-panel {
+    position: static;
   }
 
   .workspace-sidebar {
