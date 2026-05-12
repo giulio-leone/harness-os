@@ -15,6 +15,9 @@ import {
   evaluateCsqrLiteCompletionGate,
   loadOrchestrationDashboardViewModel,
   normalizeOrchestrationDashboardIssueFilters,
+  createSymphonyWorkflowReloader,
+  loadSymphonyWorkflowFromText,
+  renderSymphonyWorkflowPrompt,
   runOrchestrationSupervisorTick,
   assertReferenceOrchestrationEvidencePacket,
   orchestrationDashboardViewModelSchema,
@@ -25,6 +28,8 @@ import {
   orchestrationSupervisorRunSummarySchema,
   orchestrationSupervisorTickInputSchema,
   orchestrationSupervisorTickResultSchema,
+  symphonyWorkflowConfigSchema,
+  symphonyWorkflowDocumentSchema,
   planOrchestrationMilestones,
 } from '../index.js';
 import * as orchestration from '../orchestration.js';
@@ -46,12 +51,17 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof loadOrchestrationDashboardViewModel, 'function');
   assert.equal(typeof applyOrchestrationDashboardIssueFilters, 'function');
   assert.equal(typeof normalizeOrchestrationDashboardIssueFilters, 'function');
+  assert.equal(typeof createSymphonyWorkflowReloader, 'function');
+  assert.equal(typeof loadSymphonyWorkflowFromText, 'function');
+  assert.equal(typeof renderSymphonyWorkflowPrompt, 'function');
   assert.equal(typeof runOrchestrationSupervisorTick, 'function');
   assert.equal(typeof orchestrationDashboardViewModelSchema.safeParse, 'function');
   assert.equal(typeof orchestrationSupervisorTickInputSchema.safeParse, 'function');
   assert.equal(typeof orchestrationSupervisorDecisionSchema.safeParse, 'function');
   assert.equal(typeof orchestrationSupervisorTickResultSchema.safeParse, 'function');
   assert.equal(typeof orchestrationSupervisorRunSummarySchema.safeParse, 'function');
+  assert.equal(typeof symphonyWorkflowConfigSchema.safeParse, 'function');
+  assert.equal(typeof symphonyWorkflowDocumentSchema.safeParse, 'function');
   assert.equal(typeof csqrLiteScorecardSchema.safeParse, 'function');
   assert.equal(csqrLiteDefaultCriteria.length, 4);
 });
@@ -107,6 +117,18 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
     normalizeOrchestrationDashboardIssueFilters,
   );
   assert.equal(
+    orchestration.createSymphonyWorkflowReloader,
+    createSymphonyWorkflowReloader,
+  );
+  assert.equal(
+    orchestration.loadSymphonyWorkflowFromText,
+    loadSymphonyWorkflowFromText,
+  );
+  assert.equal(
+    orchestration.renderSymphonyWorkflowPrompt,
+    renderSymphonyWorkflowPrompt,
+  );
+  assert.equal(
     orchestration.runOrchestrationSupervisorTick,
     runOrchestrationSupervisorTick,
   );
@@ -130,6 +152,8 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
     orchestration.orchestrationSupervisorRunSummarySchema,
     orchestrationSupervisorRunSummarySchema,
   );
+  assert.equal(orchestration.symphonyWorkflowConfigSchema, symphonyWorkflowConfigSchema);
+  assert.equal(orchestration.symphonyWorkflowDocumentSchema, symphonyWorkflowDocumentSchema);
   assert.equal(orchestration.csqrLiteScorecardSchema, csqrLiteScorecardSchema);
   assert.equal(orchestration.csqrLiteDefaultCriteria, csqrLiteDefaultCriteria);
 });

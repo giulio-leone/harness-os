@@ -111,6 +111,7 @@ SQLite acts as the absolute source of truth for:
 A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.ts`), supporting full 5-field cron expressions to safely trigger work without duplications.
 
 ### Agentic Symphony-Style Orchestration
+- `loadSymphonyWorkflow()` resolves repo-owned `WORKFLOW.md` contracts with YAML front matter, typed defaults, `$VAR` path/secret resolution, strict prompt interpolation, and reload semantics that preserve the last known good workflow on invalid edits.
 - `harness_symphony(action: "compile_plan")` converts tracker-style milestones and slices into the canonical `plan_issues` batch without mutating state.
 - `harness_symphony(action: "dispatch_ready")` assigns ready issues to one compatible subagent and one isolated worktree per issue, with `gpt-5-high` and four-agent fan-out as the discoverable defaults.
 - `harness_symphony(action: "inspect_state")` reads leases, worktree artifacts, evidence references, recent events, and orchestration health flags.

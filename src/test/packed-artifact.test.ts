@@ -301,9 +301,12 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           buildCsqrLiteScorecard,
           buildOrchestrationDashboardViewModel,
           buildWorktreeAllocation as buildFromRoot,
+          createSymphonyWorkflowReloader as createReloaderFromRoot,
           createDefaultGpt5HighSubagents,
           csqrLiteDefaultCriteria,
+          loadSymphonyWorkflowFromText as loadWorkflowFromRoot,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromRoot,
+          renderSymphonyWorkflowPrompt as renderWorkflowPromptFromRoot,
           runOrchestrationSupervisor as runSupervisorFromRoot,
           runOrchestrationSupervisorTick as runSupervisorTickFromRoot,
         } from 'harness-os';
@@ -318,14 +321,18 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           applyOrchestrationDashboardIssueFilters as applyFiltersFromSubpath,
           buildWorktreeAllocation as buildFromSubpath,
           assertReferenceOrchestrationEvidencePacket,
+          createSymphonyWorkflowReloader as createReloaderFromSubpath,
           csqrLiteScorecardSchema,
           inspectOrchestration,
+          loadSymphonyWorkflowFromText as loadWorkflowFromSubpath,
           orchestrationDashboardViewModelSchema,
           orchestrationPlanSchema,
           orchestrationSupervisorRunInputSchema,
           orchestrationSupervisorRunSummarySchema,
           orchestrationSupervisorTickInputSchema,
           orchestrationSupervisorTickResultSchema,
+          renderSymphonyWorkflowPrompt as renderWorkflowPromptFromSubpath,
+          symphonyWorkflowDocumentSchema,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromSubpath,
           runOrchestrationSupervisor as runSupervisorFromSubpath,
           runOrchestrationSupervisorTick as runSupervisorTickFromSubpath,
@@ -355,9 +362,15 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           dashboardServerOrchestratorType: typeof SessionOrchestrator,
           matrixSameReference: matrixFromRoot === matrixFromSubpath,
           filterSameReference: applyFiltersFromRoot === applyFiltersFromSubpath,
+          workflowLoaderSameReference: loadWorkflowFromRoot === loadWorkflowFromSubpath,
+          workflowRendererSameReference: renderWorkflowPromptFromRoot === renderWorkflowPromptFromSubpath,
+          workflowReloaderSameReference: createReloaderFromRoot === createReloaderFromSubpath,
           supervisorRunSameReference: runSupervisorFromRoot === runSupervisorFromSubpath,
           supervisorTickSameReference: runSupervisorTickFromRoot === runSupervisorTickFromSubpath,
           inspectorType: typeof inspectOrchestration,
+          workflowLoaderType: typeof loadWorkflowFromSubpath,
+          workflowRendererType: typeof renderWorkflowPromptFromSubpath,
+          workflowSchemaType: typeof symphonyWorkflowDocumentSchema.safeParse,
           supervisorRunType: typeof runSupervisorFromSubpath,
           supervisorTickType: typeof runSupervisorTickFromSubpath,
           schemaType: typeof orchestrationPlanSchema.safeParse,
@@ -387,9 +400,15 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         dashboardServerOrchestratorType: string;
         matrixSameReference: boolean;
         filterSameReference: boolean;
+        workflowLoaderSameReference: boolean;
+        workflowRendererSameReference: boolean;
+        workflowReloaderSameReference: boolean;
         supervisorRunSameReference: boolean;
         supervisorTickSameReference: boolean;
         inspectorType: string;
+        workflowLoaderType: string;
+        workflowRendererType: string;
+        workflowSchemaType: string;
         supervisorRunType: string;
         supervisorTickType: string;
         schemaType: string;
@@ -417,9 +436,15 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         dashboardServerOrchestratorType: 'function',
         matrixSameReference: true,
         filterSameReference: true,
+        workflowLoaderSameReference: true,
+        workflowRendererSameReference: true,
+        workflowReloaderSameReference: true,
         supervisorRunSameReference: true,
         supervisorTickSameReference: true,
         inspectorType: 'function',
+        workflowLoaderType: 'function',
+        workflowRendererType: 'function',
+        workflowSchemaType: 'function',
         supervisorRunType: 'function',
         supervisorTickType: 'function',
         schemaType: 'function',
