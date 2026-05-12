@@ -56,8 +56,8 @@ html {
   min-width: 320px;
   min-height: 100%;
   background:
-    radial-gradient(circle at top left, rgba(139, 92, 246, 0.08), transparent 30rem),
-    radial-gradient(circle at 80% 8%, rgba(56, 189, 248, 0.06), transparent 28rem),
+    radial-gradient(circle at 12% 0%, rgba(139, 92, 246, 0.045), transparent 28rem),
+    radial-gradient(circle at 88% 2%, rgba(56, 189, 248, 0.035), transparent 24rem),
     var(--background);
 }
 
@@ -88,7 +88,7 @@ select {
 
 .dashboard-root {
   min-height: 100vh;
-  padding: 24px;
+  padding: 16px;
   overflow-x: hidden;
 }
 
@@ -100,30 +100,29 @@ select {
 
 .board-focus-frame {
   display: grid;
-  gap: 14px;
-  width: min(1760px, 100%);
+  gap: 10px;
+  width: min(1800px, 100%);
   overflow: visible;
 }
 
 .board-focus-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(min(100%, 430px), 480px);
-  gap: 12px 16px;
-  align-items: start;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: 14px;
-  background:
-    linear-gradient(135deg, rgba(139, 92, 246, 0.075), rgba(56, 189, 248, 0.035)),
-    var(--surface);
-  box-shadow: var(--shadow);
+  grid-template-columns: minmax(0, 1fr) minmax(min(100%, 360px), 440px);
+  gap: 8px 14px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0 10px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .board-focus-title-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
+  gap: 10px;
+  align-items: center;
   min-width: 0;
 }
 
@@ -140,19 +139,19 @@ select {
 
 .saved-view-tabs {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
-  padding: 2px 0 4px;
+  padding: 0 0 2px;
 }
 
 .saved-view-tab {
   flex: 0 0 auto;
   border-color: var(--border);
-  background: rgba(255, 255, 255, 0.032);
+  background: rgba(255, 255, 255, 0.026);
 }
 
 .board-scope-grid {
-  display: grid;
+  display: none;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
@@ -170,6 +169,46 @@ select {
 
 .board-region-primary > .panel {
   border-color: rgba(167, 139, 250, 0.18);
+}
+
+.kanban-shell,
+.board-toolbar {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.kanban-shell {
+  padding: 10px;
+}
+
+.kanban-heading,
+.board-toolbar-heading {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kanban-heading {
+  margin-bottom: 10px;
+}
+
+.kanban-heading .eyebrow {
+  margin-bottom: 4px;
+}
+
+.board-toolbar {
+  padding: 9px;
+}
+
+.toolbar-title {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .board-support-details {
@@ -244,8 +283,8 @@ select {
 .workspace-logo {
   display: inline-grid;
   flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   place-items: center;
   border: 1px solid rgba(167, 139, 250, 0.38);
   border-radius: 11px;
@@ -356,17 +395,17 @@ select {
   max-width: 820px;
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: clamp(1.35rem, 1.9vw, 2.15rem);
-  line-height: 1.05;
-  letter-spacing: -0.055em;
+  font-size: clamp(1.15rem, 1.5vw, 1.55rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
 }
 
 .workspace-subtitle {
   max-width: 760px;
-  margin: 8px 0 0;
+  margin: 5px 0 0;
   color: var(--muted);
-  font-size: 0.88rem;
-  line-height: 1.55;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
 .workspace-command-stack {
@@ -670,12 +709,12 @@ select {
 
 .board {
   display: grid;
-  grid-auto-columns: minmax(300px, 380px);
+  grid-auto-columns: minmax(280px, 330px);
   grid-auto-flow: column;
-  gap: 12px;
+  gap: 10px;
   overflow-x: auto;
   overflow-y: visible;
-  padding: 2px 2px 12px;
+  padding: 0 1px 8px;
   scroll-padding-inline: 2px;
   scroll-snap-type: x proximity;
 }
@@ -689,13 +728,15 @@ select {
 .lane {
   display: flex;
   flex-direction: column;
-  max-height: min(72vh, 860px);
-  min-height: 228px;
+  max-height: min(76vh, 900px);
+  min-height: 206px;
   border-radius: 14px;
-  padding: 10px;
+  padding: 8px;
   min-width: 0;
   overflow-y: auto;
   scroll-snap-align: start;
+  background: rgba(255, 255, 255, 0.016);
+  box-shadow: none;
 }
 
 .lane-header {
@@ -703,13 +744,13 @@ select {
   top: 0;
   z-index: 2;
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
+  gap: 8px;
+  align-items: center;
   justify-content: space-between;
-  margin: -10px -10px 10px;
+  margin: -8px -8px 8px;
   border-bottom: 1px solid var(--border);
   border-radius: 14px 14px 0 0;
-  padding: 10px;
+  padding: 8px;
   background:
     linear-gradient(180deg, rgba(18, 20, 27, 0.98), rgba(18, 20, 27, 0.9)),
     var(--surface);
@@ -718,7 +759,7 @@ select {
 
 .lane-title {
   margin: 0;
-  font-size: 0.96rem;
+  font-size: 0.9rem;
 }
 
 .lane-description {
@@ -743,7 +784,8 @@ select {
   font-weight: 700;
   line-height: 1;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .count-pill {
@@ -824,7 +866,7 @@ select {
 
 .empty-lane {
   display: grid;
-  min-height: 156px;
+  min-height: 112px;
   place-items: center;
   border: 1px dashed var(--border-strong);
   border-radius: 12px;
@@ -836,6 +878,8 @@ select {
   display: block;
   border-radius: 12px;
   padding: 10px;
+  background: rgba(12, 14, 20, 0.74);
+  box-shadow: none;
 }
 
 .issue-card-link {
@@ -872,7 +916,7 @@ select {
   gap: 8px;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 7px;
 }
 
 .issue-id {
@@ -892,34 +936,49 @@ select {
 .issue-title {
   min-width: 0;
   margin: 0;
-  font-size: 0.92rem;
-  line-height: 1.35;
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 0.9rem;
+  line-height: 1.28;
   letter-spacing: -0.018em;
   overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .issue-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 5px 8px;
+  margin-top: 8px;
 }
 
-.issue-meta-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.issue-meta-row {
+  color: var(--subtle);
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.issue-meta-row span:not(:first-child)::before {
+  margin-right: 8px;
+  color: var(--border-strong);
+  content: "·";
 }
 
 .issue-action,
 .issue-blocker,
 .issue-health {
-  margin: 12px 0 0;
-  border-left: 2px solid var(--accent);
-  border-radius: 8px;
-  padding: 8px 9px;
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 8px 0 0;
+  border-left: 0;
+  border-radius: 9px;
+  padding: 7px 8px;
   color: var(--muted);
-  font-size: 0.82rem;
-  line-height: 1.45;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .issue-action {
@@ -938,29 +997,31 @@ select {
 }
 
 .proof-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .proof-badge {
-  display: grid;
+  display: inline-flex;
   min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 7px 8px;
-  background: rgba(255, 255, 255, 0.032);
+  align-items: baseline;
+  gap: 3px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 800;
   line-height: 1.1;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .proof-count {
   color: var(--text);
-  font-size: 0.95rem;
+  font-size: 0.78rem;
   letter-spacing: -0.04em;
 }
 
