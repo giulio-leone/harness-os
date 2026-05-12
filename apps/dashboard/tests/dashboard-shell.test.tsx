@@ -96,6 +96,8 @@ test('dashboard board renders dense lanes, proof badges, and keyboard-scroll aff
   );
 
   assert.match(html, /class="board" role="region" tabindex="0"/);
+  assert.match(html, /aria-describedby="board-scroll-hint"/);
+  assert.match(html, /Scroll sideways/);
   assert.match(html, /aria-label="Issue lane board"/);
   assert.match(html, /class="lane lane-ready" data-testid="lane-ready"/);
   assert.match(html, /aria-label="2 issues in Ready"/);
@@ -406,8 +408,15 @@ test('dashboard stylesheet contains responsive overflow guardrails for dense liv
 
   assert.match(css, /overflow-x:\s*hidden/);
   assert.match(css, /\.board\s*\{[\s\S]*grid-auto-flow:\s*column/);
-  assert.match(css, /\.board\s*\{[\s\S]*overflow-x:\s*auto/);
+  assert.match(css, /\.kanban-shell\s*\{[\s\S]*min-width:\s*0/);
+  assert.match(css, /\.kanban-shell\s*\{[\s\S]*overflow:\s*hidden/);
+  assert.match(css, /\.board\s*\{[\s\S]*width:\s*100%/);
+  assert.match(css, /\.board\s*\{[\s\S]*max-width:\s*100%/);
+  assert.match(css, /\.board\s*\{[\s\S]*min-width:\s*0/);
+  assert.match(css, /\.board\s*\{[\s\S]*overflow-x:\s*scroll/);
   assert.match(css, /\.board\s*\{[\s\S]*overflow-y:\s*visible/);
+  assert.match(css, /\.board\s*\{[\s\S]*scrollbar-gutter:\s*stable both-edges/);
+  assert.match(css, /\.board::-webkit-scrollbar-thumb/);
   assert.match(css, /\.board:focus-visible\s*\{[\s\S]*box-shadow:\s*var\(--ds-focus-ring\)/);
   assert.match(css, /\.lane-header\s*\{[\s\S]*position:\s*sticky/);
   assert.match(css, /\.proof-strip\s*\{[\s\S]*display:\s*flex/);
