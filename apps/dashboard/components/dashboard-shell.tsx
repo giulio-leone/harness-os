@@ -124,10 +124,10 @@ function BoardFocusHeader({
         </div>
         <div>
           <h1 className="workspace-title" id="dashboard-title">
-            Focus the active Kanban workflow.
+            Kanban.
           </h1>
           <p className="workspace-subtitle">
-            Board-first view for ready work, active leases, blockers, proof, and recovery.
+            Minimal execution board for autonomous work, blockers, and proof signals.
           </p>
         </div>
       </div>
@@ -175,31 +175,31 @@ function buildSavedViews(viewModel: OrchestrationDashboardViewModel): SavedView[
   return [
     {
       id: 'all',
-      label: 'All work',
+      label: 'All',
       href: { pathname: '/' },
       count: viewModel.overview.totalIssues,
     },
     {
       id: 'ready',
-      label: 'Ready to claim',
+      label: 'Ready',
       href: { pathname: '/', query: { status: 'ready' } },
       count: countSavedViewIssues(viewModel, { status: ['ready'] }),
     },
     {
       id: 'active',
-      label: 'Active leases',
+      label: 'Active',
       href: { pathname: '/', query: { signal: 'active' } },
       count: countSavedViewIssues(viewModel, { signal: 'active' }),
     },
     {
       id: 'blocked',
-      label: 'Blocked / recovery',
+      label: 'Blocked',
       href: { pathname: '/', query: { signal: 'blocked' } },
       count: countSavedViewIssues(viewModel, { signal: 'blocked' }),
     },
     {
       id: 'proof',
-      label: 'Proof artifacts',
+      label: 'Proof',
       href: { pathname: '/', query: { signal: 'evidence' } },
       count: countSavedViewIssues(viewModel, { signal: 'evidence' }),
     },
@@ -226,17 +226,15 @@ function IssueFilterPanel({
   visibleIssueCount: number;
 }) {
   return (
-    <Panel className="filter-panel" aria-labelledby="filters-title">
-      <SectionHeader
-        copy={
-          <span aria-live="polite" className="results-summary" id="filter-summary">
-            Showing {visibleIssueCount} of {totalIssueCount} issues.
-          </span>
-        }
-        eyebrow="Dashboard filters"
-        title="Find issues and proof artifacts"
-        titleId="filters-title"
-      />
+    <section className="filter-panel board-toolbar" aria-labelledby="filters-title">
+      <div className="board-toolbar-heading">
+        <h2 className="toolbar-title" id="filters-title">
+          Board controls
+        </h2>
+        <span aria-live="polite" className="results-summary" id="filter-summary">
+          {visibleIssueCount} / {totalIssueCount} issues
+        </span>
+      </div>
       <form action="/" aria-describedby="filter-summary" className="filter-form" method="get">
         <div className="filter-grid primary-filter-grid">
           <label className="field">
@@ -282,7 +280,7 @@ function IssueFilterPanel({
           </label>
         </div>
         <details className="advanced-filters">
-          <summary>Advanced proof filters</summary>
+          <summary>More filters</summary>
           <div className="filter-grid advanced-filter-grid">
             <label className="field">
               <span className="label">Status</span>
@@ -315,14 +313,14 @@ function IssueFilterPanel({
         </details>
         <div className="filter-actions">
           <button className="primary-button" type="submit">
-            Apply filters
+            Apply
           </button>
           <Link className="secondary-button" href="/">
             Reset filters
           </Link>
         </div>
       </form>
-    </Panel>
+    </section>
   );
 }
 
@@ -500,14 +498,16 @@ function LaneBoard({
   visibleIssueCount: number;
 }) {
   return (
-    <Panel aria-labelledby="lanes-title">
-      <SectionHeader
-        actions={<Pill>{visibleIssueCount} visible issues</Pill>}
-        copy="Lanes keep the stable v1 contract order, preserve future states in Other, and support dense horizontal navigation."
-        eyebrow="Issue lanes"
-        title="Dependency-ordered execution board"
-        titleId="lanes-title"
-      />
+    <section className="kanban-shell" aria-labelledby="lanes-title">
+      <div className="kanban-heading">
+        <div>
+          <p className="eyebrow">Board</p>
+          <h2 className="panel-title" id="lanes-title">
+            Execution lanes
+          </h2>
+        </div>
+        <Pill>{visibleIssueCount} visible</Pill>
+      </div>
       {filtersActive && visibleIssueCount === 0 ? (
         <div className="empty-board">
           <p>No issues match these filters.</p>
@@ -526,7 +526,7 @@ function LaneBoard({
           <LaneColumn filtersActive={filtersActive} lane={lane} key={lane.id} />
         ))}
       </div>
-    </Panel>
+    </section>
   );
 }
 
@@ -548,7 +548,6 @@ function LaneColumn({
           <h3 className="lane-title" id={`${lane.id}-title`}>
             {lane.label}
           </h3>
-          <p className="lane-description">{lane.description}</p>
         </div>
         <span className="count-pill" aria-label={`${lane.count} issues in ${lane.label}`}>
           {lane.count}
@@ -587,8 +586,12 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
     left.localeCompare(right),
   );
   const totalArtifactCount = artifactEntries.reduce((total, [, count]) => total + count, 0);
-  const proofBadges = buildProofBadges(card, totalArtifactCount);
+  const proofBadges = buildProofBadges(card, totalArtifactCount).filter((badge) => badge.count > 0);
   const healthSeverity = getHighestHealthSeverity(card.healthFlags);
+  const healthSignal =
+    card.healthFlags.length > 0
+      ? `${card.healthFlags.length} gate signal${card.healthFlags.length === 1 ? '' : 's'}`
+      : null;
 
   return (
     <Link
@@ -601,36 +604,31 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
     >
       <div className="issue-card-topline">
         <span className="issue-id">{card.id}</span>
-        <span className={`status-pill ${normalizeClassName(card.status)}`}>
-          {formatKind(card.status)}
-        </span>
+        <span className={`priority-pill ${normalizeClassName(card.priority)}`}>{card.priority}</span>
       </div>
-      <div className="issue-card-header">
-        <h4 className="issue-title">{card.task}</h4>
-        <span className={`priority-pill ${normalizeClassName(card.priority)}`}>
-          {card.priority}
-        </span>
-      </div>
-      <div className="issue-meta issue-meta-grid" aria-label={`Execution metadata for ${card.id}`}>
-        <span className="small-pill">size {card.size}</span>
+      <h4 className="issue-title">{card.task}</h4>
+      <div className="issue-meta issue-meta-row" aria-label={`Execution metadata for ${card.id}`}>
+        <span>size {card.size}</span>
         {card.deadlineAt ? (
-          <span className="small-pill">due {formatDate(card.deadlineAt)}</span>
+          <span>due {formatDate(card.deadlineAt)}</span>
         ) : null}
         {card.activeLeases.length > 0 ? (
-          <span className="small-pill">{card.activeLeases.length} active lease(s)</span>
+          <span>{card.activeLeases.length} active lease(s)</span>
         ) : null}
       </div>
-      <div className="proof-strip" aria-label={`Proof summary for ${card.id}`}>
-        {proofBadges.map((badge) => (
-          <span className={`proof-badge ${badge.className}`} key={badge.label}>
-            <span className="proof-count">{badge.count}</span>
-            {badge.label}
-          </span>
-        ))}
-      </div>
+      {proofBadges.length > 0 ? (
+        <div className="proof-strip compact-proof-strip" aria-label={`Proof summary for ${card.id}`}>
+          {proofBadges.map((badge) => (
+            <span className={`proof-badge ${badge.className}`} key={badge.label}>
+              <span className="proof-count">{badge.count}</span>
+              {badge.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {card.nextBestAction ? (
         <p className="issue-action">
-          <strong>Next action:</strong> {card.nextBestAction}
+          <strong>Next:</strong> {card.nextBestAction}
         </p>
       ) : null}
       {card.blockedReason ? (
@@ -638,41 +636,8 @@ function IssueCard({ card }: { card: OrchestrationDashboardIssueCard }) {
           <strong>Blocker:</strong> {card.blockedReason}
         </p>
       ) : null}
-      {artifactEntries.length > 0 ? (
-        <div className="artifact-list compact-artifact-list" aria-label={`Evidence artifacts for ${card.id}`}>
-          {artifactEntries.map(([kind, count]) => (
-            <span className="small-pill proof-kind-pill" key={kind}>
-              {formatKind(kind)} x {count}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {card.csqrLiteScorecardIds.length > 0 ? (
-        <div className="artifact-list" aria-label={`CSQR scorecards for ${card.id}`}>
-          {card.csqrLiteScorecardIds.map((scorecardId) => (
-            <span className="small-pill" key={scorecardId}>
-              CSQR {scorecardId}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {card.worktreePaths.length > 0 ? (
-        <div className="artifact-list" aria-label={`Worktrees for ${card.id}`}>
-          {card.worktreePaths.map((worktreePath) => (
-            <span className="small-pill truncate-pill" key={worktreePath} title={worktreePath}>
-              {formatWorktreePath(worktreePath)}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {card.healthFlags.length > 0 ? (
-        <div className={`issue-health health-${healthSeverity ?? 'medium'}`}>
-          {card.healthFlags.map((flag, index) => (
-            <div key={`${card.id}-${flag.kind}-${index}-${flag.message}`}>
-              <strong>{HEALTH_FLAG_LABELS[flag.kind]}:</strong> {flag.message}
-            </div>
-          ))}
-        </div>
+      {healthSignal ? (
+        <p className={`issue-health health-${healthSeverity ?? 'medium'}`}>{healthSignal}</p>
       ) : null}
     </Link>
   );
@@ -880,11 +845,6 @@ function formatKind(kind: string): string {
 
 function formatDate(value: string): string {
   return value.slice(0, 10);
-}
-
-function formatWorktreePath(path: string): string {
-  const segments = path.split('/').filter(Boolean);
-  return segments.at(-1) ?? path;
 }
 
 function normalizeClassName(value: string): string {
