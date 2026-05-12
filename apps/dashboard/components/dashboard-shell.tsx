@@ -52,121 +52,86 @@ export function DashboardShell({
   const filtersActive = hasOrchestrationDashboardIssueFilters(filters);
   const totalIssueCount = unfilteredIssueCount ?? viewModel.overview.totalIssues;
   const savedViewsSource = savedViewModel ?? viewModel;
+  const savedViews = buildSavedViews(savedViewsSource);
 
   return (
     <main className="dashboard-root" data-testid="orchestration-dashboard">
-      <div className="dashboard-frame dashboard-workspace">
-        <WorkspaceSidebar
+      <div className="dashboard-frame board-focus-frame">
+        <BoardFocusHeader
           dataSource={dataSource}
-          savedViewModel={savedViewsSource}
+          filters={filters}
+          savedViews={savedViews}
+          totalIssueCount={totalIssueCount}
           viewModel={viewModel}
         />
-        <section className="dashboard-main" aria-labelledby="dashboard-title">
-          <DashboardTopbar
-            dataSource={dataSource}
-            filters={filters}
-            totalIssueCount={totalIssueCount}
-            viewModel={viewModel}
-          />
-          <OverviewPanel dataSource={dataSource} viewModel={viewModel} />
-
-          <section className="content-grid">
-            <div className="board-region">
-              <IssueFilterPanel
-                filters={filters}
-                totalIssueCount={totalIssueCount}
-                visibleIssueCount={viewModel.overview.totalIssues}
-              />
-              <LaneBoard
-                filtersActive={filtersActive}
-                lanes={viewModel.issueLanes}
-                visibleIssueCount={viewModel.overview.totalIssues}
-              />
-            </div>
-            <aside className="dashboard-inspector" aria-label="Evidence and health summaries">
+        <section className="board-focus-layout" aria-labelledby="dashboard-title">
+          <div className="board-region board-region-primary">
+            <IssueFilterPanel
+              filters={filters}
+              totalIssueCount={totalIssueCount}
+              visibleIssueCount={viewModel.overview.totalIssues}
+            />
+            <LaneBoard
+              filtersActive={filtersActive}
+              lanes={viewModel.issueLanes}
+              visibleIssueCount={viewModel.overview.totalIssues}
+            />
+          </div>
+          <details className="board-support-details">
+            <summary>
+              <span>Operational context</span>
+              <span className="summary-hint">Health, agents, evidence, timeline, and ticket creation</span>
+            </summary>
+            <div className="dashboard-inspector board-support-grid" aria-label="Evidence and health summaries">
+              <OverviewPanel dataSource={dataSource} viewModel={viewModel} />
               <CreateTicketPanel action={createIssueAction} dataSource={dataSource} />
               <HealthPanel viewModel={viewModel} />
               <ActiveAgentsPanel agents={viewModel.activeAgents} />
               <EvidencePanel viewModel={viewModel} />
               <TimelinePanel viewModel={viewModel} />
-            </aside>
-          </section>
+            </div>
+          </details>
         </section>
       </div>
     </main>
   );
 }
 
-function WorkspaceSidebar({
-  dataSource,
-  savedViewModel,
-  viewModel,
-}: {
-  dataSource: 'live' | 'demo';
-  savedViewModel: OrchestrationDashboardViewModel;
-  viewModel: OrchestrationDashboardViewModel;
-}) {
-  const savedViews = buildSavedViews(savedViewModel);
-
-  return (
-    <aside className="workspace-sidebar" data-testid="dashboard-sidebar" aria-label="Workspace navigation">
-      <div className="workspace-brand">
-        <span className="workspace-logo" aria-hidden="true">
-          H
-        </span>
-        <div>
-          <p className="eyebrow">HarnessOS</p>
-          <p className="workspace-name">Symphony</p>
-        </div>
-      </div>
-      <nav className="workspace-nav" aria-label="Saved dashboard views">
-        <p className="nav-section-label">Saved views</p>
-        {savedViews.map((view) => (
-          <Link className="nav-item" data-testid={`saved-view-${view.id}`} href={view.href} key={view.id}>
-            <span>{view.label}</span>
-            <span className="nav-count">{view.count}</span>
-          </Link>
-        ))}
-      </nav>
-      <div className="workspace-scope" aria-label="Dashboard scope">
-        <ScopePill label="Project" value={viewModel.scope.projectId} />
-        <ScopePill label="Campaign" value={viewModel.scope.campaignId ?? 'All campaigns'} />
-        <ScopePill label="Issue" value={viewModel.scope.issueId ?? 'All issues'} />
-      </div>
-      <div className="workspace-footer">
-        <Pill className="status-pill">{dataSource} data</Pill>
-        <Pill className={`status-pill ${viewModel.health.status}`}>
-          {viewModel.health.status}
-        </Pill>
-      </div>
-    </aside>
-  );
-}
-
-function DashboardTopbar({
+function BoardFocusHeader({
   dataSource,
   filters,
+  savedViews,
   totalIssueCount,
   viewModel,
 }: {
   dataSource: 'live' | 'demo';
   filters: OrchestrationDashboardIssueFilters;
+  savedViews: SavedView[];
   totalIssueCount: number;
   viewModel: OrchestrationDashboardViewModel;
 }) {
   return (
-    <header className="workspace-topbar" data-testid="dashboard-topbar">
-      <div className="workspace-title-block">
-        <p className="eyebrow">HarnessOS Symphony dashboard</p>
-        <h1 className="workspace-title" id="dashboard-title">
-          Linear-like command center for fully agentic campaigns.
-        </h1>
-        <p className="workspace-subtitle">
-          Track lanes, leases, proof artifacts, CSQR scorecards, and recovery signals
-          from the stable orchestration dashboard view model.
-        </p>
+    <header className="board-focus-header" data-testid="dashboard-topbar">
+      <div className="board-focus-title-row">
+        <div className="workspace-brand">
+          <span className="workspace-logo" aria-hidden="true">
+            H
+          </span>
+          <div>
+            <p className="eyebrow">HarnessOS Symphony</p>
+            <p className="workspace-name">Agentic board</p>
+          </div>
+        </div>
+        <div>
+          <h1 className="workspace-title" id="dashboard-title">
+            Focus the active Kanban workflow.
+          </h1>
+          <p className="workspace-subtitle">
+            Board-first view for ready work, active leases, blockers, proof, and recovery.
+          </p>
+        </div>
       </div>
-      <div className="workspace-command-stack">
+      <div className="board-focus-tools">
         <form action="/" aria-label="Command search" className="command-search" method="get" role="search">
           <span className="command-icon" aria-hidden="true">
             CMD K
@@ -188,6 +153,19 @@ function DashboardTopbar({
             {dataSource} / {viewModel.health.status}
           </Pill>
         </div>
+      </div>
+      <nav className="saved-view-tabs" data-testid="dashboard-view-tabs" aria-label="Saved dashboard views">
+        {savedViews.map((view) => (
+          <Link className="nav-item saved-view-tab" data-testid={`saved-view-${view.id}`} href={view.href} key={view.id}>
+            <span>{view.label}</span>
+            <span className="nav-count">{view.count}</span>
+          </Link>
+        ))}
+      </nav>
+      <div className="workspace-scope board-scope-grid" aria-label="Dashboard scope">
+        <ScopePill label="Project" value={viewModel.scope.projectId} />
+        <ScopePill label="Campaign" value={viewModel.scope.campaignId ?? 'All campaigns'} />
+        <ScopePill label="Issue" value={viewModel.scope.issueId ?? 'All issues'} />
       </div>
     </header>
   );
@@ -260,7 +238,7 @@ function IssueFilterPanel({
         titleId="filters-title"
       />
       <form action="/" aria-describedby="filter-summary" className="filter-form" method="get">
-        <div className="filter-grid">
+        <div className="filter-grid primary-filter-grid">
           <label className="field">
             <span className="label">Search</span>
             <input
@@ -292,34 +270,7 @@ function IssueFilterPanel({
             </select>
           </label>
           <label className="field">
-            <span className="label">Status</span>
-            <select defaultValue={filters.status[0] ?? ''} name="status">
-              <option value="">All statuses</option>
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span className="label">Evidence kind</span>
-            <input
-              defaultValue={filters.evidenceKind[0] ?? ''}
-              name="evidenceKind"
-              placeholder="screenshot, test_report, csqr_lite_scorecard"
-            />
-          </label>
-          <label className="field">
-            <span className="label">CSQR scorecard</span>
-            <input
-              defaultValue={filters.hasCsqr ? 'any' : filters.csqr[0] ?? ''}
-              name="csqr"
-              placeholder="any or scorecard id"
-            />
-          </label>
-          <label className="field">
-            <span className="label">Signal</span>
+            <span className="label">Focus</span>
             <select defaultValue={filters.signal ?? ''} name="signal">
               <option value="">Any signal</option>
               <option value="active">Active lease</option>
@@ -330,6 +281,38 @@ function IssueFilterPanel({
             </select>
           </label>
         </div>
+        <details className="advanced-filters">
+          <summary>Advanced proof filters</summary>
+          <div className="filter-grid advanced-filter-grid">
+            <label className="field">
+              <span className="label">Status</span>
+              <select defaultValue={filters.status[0] ?? ''} name="status">
+                <option value="">All statuses</option>
+                {STATUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="label">Evidence kind</span>
+              <input
+                defaultValue={filters.evidenceKind[0] ?? ''}
+                name="evidenceKind"
+                placeholder="screenshot, test_report, csqr_lite_scorecard"
+              />
+            </label>
+            <label className="field">
+              <span className="label">CSQR scorecard</span>
+              <input
+                defaultValue={filters.hasCsqr ? 'any' : filters.csqr[0] ?? ''}
+                name="csqr"
+                placeholder="any or scorecard id"
+              />
+            </label>
+          </div>
+        </details>
         <div className="filter-actions">
           <button className="primary-button" type="submit">
             Apply filters

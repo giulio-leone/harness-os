@@ -20,7 +20,7 @@ test('dashboard shell renders the stable lane order and orchestration evidence s
     <DashboardShell dataSource="demo" viewModel={demoDashboardViewModel} />,
   );
 
-  assert.match(html, /Linear-like command center/);
+  assert.match(html, /Focus the active Kanban workflow/);
   assert.match(html, /data-testid="orchestration-dashboard"/);
   assert.match(html, /data-testid="issue-card-M7-I2"/);
   assert.match(html, /href="\/issues\/M7-I2"/);
@@ -41,7 +41,7 @@ test('dashboard shell renders the stable lane order and orchestration evidence s
   );
 });
 
-test('dashboard shell renders Linear-style sidebar, topbar, command search, and saved views', () => {
+test('dashboard shell renders board-first header, command search, and saved views', () => {
   const filtered = applyDashboardIssueFilters(demoDashboardViewModel, {
     ...emptyFilters(),
     q: 'threshold',
@@ -56,9 +56,9 @@ test('dashboard shell renders Linear-style sidebar, topbar, command search, and 
     />,
   );
 
-  assert.match(html, /data-testid="dashboard-sidebar"/);
-  assert.match(html, /aria-label="Workspace navigation"/);
+  assert.match(html, /class="dashboard-frame board-focus-frame"/);
   assert.match(html, /data-testid="dashboard-topbar"/);
+  assert.match(html, /data-testid="dashboard-view-tabs"/);
   assert.match(html, /aria-label="Command search"/);
   assert.match(html, /class="command-search"/);
   assert.match(html, /placeholder="Search issues, blockers, agents, proof..."/);
@@ -74,6 +74,10 @@ test('dashboard shell renders Linear-style sidebar, topbar, command search, and 
   assert.match(html, /All work/);
   assert.match(html, /Ready to claim/);
   assert.match(html, /Proof artifacts/);
+  assert.match(html, /class="workspace-scope board-scope-grid"/);
+  assert.match(html, /class="board-region board-region-primary"/);
+  assert.match(html, /class="board-support-details"/);
+  assert.match(html, /Operational context/);
   assertSavedViewCount(html, 'all', demoDashboardViewModel.overview.totalIssues);
   assertSavedViewCount(
     html,
@@ -107,6 +111,23 @@ test('dashboard board renders dense lanes, proof badges, and keyboard-scroll aff
   assert.match(html, /<span class="proof-count">[^<]+<\/span>worktrees/);
   assert.match(html, /class="small-pill truncate-pill" title="\/worktrees\/M7-I2-dashboard">M7-I2-dashboard<\/span>/);
   assert.match(html, /class="issue-health health-high"/);
+});
+
+test('dashboard keeps Kanban primary and collapses advanced context by default', () => {
+  const html = renderToStaticMarkup(
+    <DashboardShell dataSource="demo" viewModel={demoDashboardViewModel} />,
+  );
+  const boardIndex = html.indexOf('data-testid="lane-ready"');
+  const supportIndex = html.indexOf('class="board-support-details"');
+  const advancedIndex = html.indexOf('class="advanced-filters"');
+
+  assert.ok(boardIndex > -1);
+  assert.ok(supportIndex > -1);
+  assert.ok(boardIndex < supportIndex);
+  assert.match(html, /Advanced proof filters/);
+  assert.ok(advancedIndex > html.indexOf('class="primary-filter-grid"'));
+  assert.match(html, /name="evidenceKind"/);
+  assert.match(html, /data-testid="create-ticket-panel"/);
 });
 
 test('dashboard setup renders required live configuration instead of placeholder data', () => {
@@ -402,6 +423,12 @@ test('dashboard stylesheet contains responsive overflow guardrails for dense liv
   assert.match(css, /--ds-space-4/);
   assert.match(css, /--ds-focus-ring/);
   assert.match(css, /\.ui-panel/);
+  assert.match(css, /\.board-focus-frame/);
+  assert.match(css, /\.board-focus-header\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(min\(100%, 430px\), 480px\)/);
+  assert.match(css, /\.saved-view-tabs\s*\{[\s\S]*overflow-x:\s*auto/);
+  assert.match(css, /\.board-support-details/);
+  assert.match(css, /\.primary-filter-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(260px, 2fr\) repeat\(3, minmax\(130px, 1fr\)\)/);
+  assert.match(css, /\.advanced-filters/);
   assert.match(css, /\.dashboard-workspace\s*\{[\s\S]*grid-template-columns:\s*minmax\(220px, 248px\) minmax\(0, 1fr\)/);
   assert.match(css, /\.workspace-sidebar\s*\{[\s\S]*position:\s*sticky/);
   assert.match(css, /\.workspace-topbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(min\(100%, 420px\), 480px\)/);
