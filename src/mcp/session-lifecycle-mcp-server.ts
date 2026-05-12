@@ -47,6 +47,10 @@ import {
 import { dispatchReadyOrchestrationIssues } from '../runtime/orchestration-dispatcher.js';
 import { inspectOrchestration } from '../runtime/orchestration-inspector.js';
 import { toHarnessPlanIssuesPayload } from '../runtime/orchestration-planner.js';
+import {
+  runOrchestrationSupervisor,
+  runOrchestrationSupervisorTick,
+} from '../runtime/orchestration-supervisor.js';
 import { loadOrchestrationDashboardViewModel } from '../runtime/orchestration-dashboard.js';
 import {
   applyOrchestrationDashboardIssueFilters,
@@ -700,6 +704,40 @@ export class SessionLifecycleMcpServer {
               } finally {
                 db.close();
               }
+            }
+
+            case 'supervisor_tick': {
+              const input = this.withPinnedMcpDbPath(stripAction(parsed));
+              const result = await runOrchestrationSupervisorTick(input);
+              const hint =
+                result.stopReason === undefined
+                  ? `Supervisor tick dispatched ${result.dispatchedIssueIds.length} issue(s) or found active work.`
+                  : `Supervisor tick stopped with reason "${result.stopReason}".`;
+
+              return {
+                result,
+                ...buildMeta(
+                  result.stopReason === undefined
+                    ? ['harness_symphony', 'harness_session']
+                    : ['harness_symphony', 'harness_inspector'],
+                  hint,
+                ),
+              };
+            }
+
+            case 'supervisor_run': {
+              const input = this.withPinnedMcpDbPath(stripAction(parsed));
+              const result = await runOrchestrationSupervisor(input);
+
+              return {
+                result,
+                ...buildMeta(
+                  result.status === 'failed'
+                    ? ['harness_inspector', 'harness_symphony']
+                    : ['harness_symphony', 'harness_session'],
+                  `Supervisor run stopped with reason "${result.stopReason}" after ${result.tickResults.length} tick(s).`,
+                ),
+              };
             }
           }
         },

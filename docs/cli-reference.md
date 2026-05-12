@@ -1,6 +1,6 @@
 # CLI Reference
 
-HarnessOS ships six installable commands. They all live under the public `2.x` package line, while schema/contract versions are documented separately inside the runtime and examples.
+HarnessOS ships seven installable commands. They all live under the public `2.x` package line, while schema/contract versions are documented separately inside the runtime and examples.
 
 ## Command summary
 
@@ -12,6 +12,7 @@ HarnessOS ships six installable commands. They all live under the public `2.x` p
 | `harness-scheduler-inject` | run the cron-aware scheduler injector | background/scheduled runtime execution |
 | `harness-session-lifecycle` | drive the session-lifecycle contract from JSON payloads on stdin | CLI integration and automation |
 | `harness-session-lifecycle-mcp` | run the session-lifecycle MCP server over stdio | editor/agent integration |
+| `harness-supervisor` | run one supervisor tick or a bounded autonomous polling run from structured JSON | fully agentic no-human orchestration loops |
 
 ## `harness-install-mcp`
 
@@ -90,6 +91,30 @@ harness-session-lifecycle-mcp
 ```
 
 Use `harness-install-mcp` when you want this wired into a supported host automatically instead of launching it manually.
+
+## `harness-supervisor`
+
+Runs the autonomous Symphony supervisor from JSON on stdin or `--input <path>`. The payload is intentionally small:
+
+```json
+{
+  "action": "run",
+  "input": {
+    "contractVersion": "1.0.0",
+    "runId": "supervisor-run-1",
+    "dbPath": ".harness/harness.sqlite",
+    "projectId": "project-1",
+    "mode": "dry_run",
+    "stopCondition": {
+      "maxTicks": 4,
+      "stopWhenIdle": true,
+      "stopWhenBlocked": true
+    }
+  }
+}
+```
+
+Use `action: "tick"` with a `tickId` for one deterministic tick, or `action: "run"` with a `runId` and `stopCondition.maxTicks` for bounded polling. `execute` mode also requires canonical `workspaceId`, `projectId`, and `dispatch` host/worktree routing inputs.
 
 ## Related references
 

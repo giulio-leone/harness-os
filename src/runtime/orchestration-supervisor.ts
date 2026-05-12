@@ -1,12 +1,17 @@
 import { existsSync } from 'node:fs';
+import { setTimeout as sleepFor } from 'node:timers/promises';
 
 import type {
   OrchestrationSupervisorDecision,
+  OrchestrationSupervisorRunInput,
+  OrchestrationSupervisorRunSummary,
   OrchestrationSupervisorStopReason,
   OrchestrationSupervisorTickInput,
   OrchestrationSupervisorTickResult,
 } from '../contracts/orchestration-contracts.js';
 import {
+  orchestrationSupervisorRunInputSchema,
+  orchestrationSupervisorRunSummarySchema,
   orchestrationSupervisorTickInputSchema,
   orchestrationSupervisorTickResultSchema,
 } from '../contracts/orchestration-contracts.js';
@@ -48,6 +53,11 @@ export interface OrchestrationSupervisorTickDependencies {
   ) => Promise<OrchestrationDispatchResult>;
 }
 
+export interface OrchestrationSupervisorRunDependencies
+  extends OrchestrationSupervisorTickDependencies {
+  readonly sleep?: (delayMs: number) => Promise<void>;
+}
+
 interface SupervisorScope {
   readonly projectId: string;
   readonly campaignId?: string;
@@ -62,6 +72,55 @@ interface DashboardRead {
 }
 
 const supervisorContractVersion = '1.0.0';
+
+export async function runOrchestrationSupervisor(
+  rawInput: unknown,
+  dependencies: OrchestrationSupervisorRunDependencies = {},
+): Promise<OrchestrationSupervisorRunSummary> {
+  const input = orchestrationSupervisorRunInputSchema.parse(rawInput);
+  const clock = dependencies.clock ?? (() => new Date().toISOString());
+  const sleep = dependencies.sleep ?? ((delayMs: number) => sleepFor(delayMs));
+  const startedAt = clock();
+  const maxTicks = input.stopCondition.maxTicks ?? 1;
+  const tickResults: OrchestrationSupervisorTickResult[] = [];
+  let terminalStopReason: OrchestrationSupervisorStopReason | undefined;
+
+  for (let index = 0; index < maxTicks; index += 1) {
+    const tickResult = await runOrchestrationSupervisorTick(
+      toSupervisorTickInput(input, index),
+      dependencies,
+    );
+    tickResults.push(tickResult);
+
+    terminalStopReason = deriveTerminalRunStopReason(input, tickResult);
+    if (terminalStopReason !== undefined) {
+      break;
+    }
+
+    const isLastTick = index + 1 >= maxTicks;
+    if (!isLastTick && tickResult.nextDelayMs !== undefined) {
+      await sleep(tickResult.nextDelayMs);
+    }
+  }
+
+  const stopReason = terminalStopReason ?? 'tick_limit_reached';
+  const status = deriveRunStatus(stopReason);
+  const evidenceArtifactIds = uniqueStrings(
+    tickResults.flatMap((tick) => tick.evidenceArtifactIds),
+  );
+
+  return orchestrationSupervisorRunSummarySchema.parse({
+    contractVersion: supervisorContractVersion,
+    runId: input.runId,
+    status,
+    startedAt,
+    completedAt: clock(),
+    tickResults,
+    stopReason,
+    evidenceArtifactIds,
+    summary: `Supervisor run "${input.runId}" stopped after ${tickResults.length} tick(s): ${stopReason}.`,
+  });
+}
 
 export async function runOrchestrationSupervisorTick(
   rawInput: unknown,
@@ -222,6 +281,81 @@ export async function runOrchestrationSupervisorTick(
       summary: `Supervisor tick failed before completion: ${message}`,
     });
   }
+}
+
+function toSupervisorTickInput(
+  input: OrchestrationSupervisorRunInput,
+  index: number,
+): OrchestrationSupervisorTickInput {
+  const tickIdPrefix = input.tickIdPrefix ?? input.runId;
+  return {
+    contractVersion: input.contractVersion,
+    tickId: `${tickIdPrefix}-tick-${index + 1}`,
+    dbPath: input.dbPath,
+    mode: input.mode,
+    eventLimit: input.eventLimit,
+    backoff: input.backoff,
+    stopCondition: input.stopCondition,
+    requiredEvidenceArtifactKinds: input.requiredEvidenceArtifactKinds,
+    ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
+    ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+    ...(input.projectName !== undefined ? { projectName: input.projectName } : {}),
+    ...(input.campaignId !== undefined ? { campaignId: input.campaignId } : {}),
+    ...(input.campaignName !== undefined ? { campaignName: input.campaignName } : {}),
+    ...(input.issueId !== undefined ? { issueId: input.issueId } : {}),
+    ...(input.objective !== undefined ? { objective: input.objective } : {}),
+    ...(input.dashboardFilters !== undefined
+      ? { dashboardFilters: input.dashboardFilters }
+      : {}),
+    ...(input.dispatch !== undefined ? { dispatch: input.dispatch } : {}),
+    ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+  };
+}
+
+function deriveTerminalRunStopReason(
+  input: OrchestrationSupervisorRunInput,
+  tickResult: OrchestrationSupervisorTickResult,
+): OrchestrationSupervisorStopReason | undefined {
+  if (
+    tickResult.stopReason === 'error' ||
+    tickResult.stopReason === 'external_stop'
+  ) {
+    return tickResult.stopReason;
+  }
+
+  if (
+    tickResult.stopReason === 'idle' &&
+    input.stopCondition.stopWhenIdle
+  ) {
+    return 'idle';
+  }
+
+  if (
+    tickResult.stopReason === 'blocked' &&
+    input.stopCondition.stopWhenBlocked
+  ) {
+    return 'blocked';
+  }
+
+  return undefined;
+}
+
+function deriveRunStatus(
+  stopReason: OrchestrationSupervisorStopReason,
+): OrchestrationSupervisorRunSummary['status'] {
+  if (stopReason === 'error') {
+    return 'failed';
+  }
+
+  if (stopReason === 'external_stop') {
+    return 'cancelled';
+  }
+
+  if (stopReason === 'blocked' || stopReason === 'tick_limit_reached') {
+    return 'partial';
+  }
+
+  return 'succeeded';
 }
 
 function resolveSupervisorScope(input: OrchestrationSupervisorTickInput): SupervisorScope {

@@ -52,7 +52,14 @@ test('capability catalog exposes Symphony orchestration discovery metadata', () 
   assert.ok(symphonyTool, 'harness_symphony must be discoverable as an MCP tool');
   assert.deepEqual(
     symphonyTool.actions.map((entry) => entry.action),
-    ['compile_plan', 'dispatch_ready', 'inspect_state', 'dashboard_view'],
+    [
+      'compile_plan',
+      'dispatch_ready',
+      'inspect_state',
+      'dashboard_view',
+      'supervisor_tick',
+      'supervisor_run',
+    ],
   );
   assert.equal(catalog.orchestration.mode, 'symphony');
   assert.equal(catalog.orchestration.tool, 'harness_symphony');
@@ -63,7 +70,11 @@ test('capability catalog exposes Symphony orchestration discovery metadata', () 
     dispatchReady: 'dispatch_ready',
     inspectState: 'inspect_state',
     dashboardView: 'dashboard_view',
+    supervisorTick: 'supervisor_tick',
+    supervisorRun: 'supervisor_run',
   });
+  assert.equal(catalog.orchestration.supervisor.cli, 'harness-supervisor');
+  assert.equal(catalog.orchestration.supervisor.boundedPolling, true);
   assert.ok(catalog.orchestration.requiredDispatchFields.includes('repoRoot'));
   assert.equal(catalog.orchestration.worktreeIsolation.strategy, 'one_worktree_per_issue');
   assert.equal(catalog.orchestration.worktreeIsolation.mcpCreatesWorktrees, false);

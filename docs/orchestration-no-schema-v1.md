@@ -69,7 +69,9 @@ The autonomous supervisor runtime defines the durable control-loop envelope and 
 
 The contract deliberately separates read-only decisions from mutating decisions. Dry-run ticks may execute read-only inspection decisions, but cannot execute or report outcomes for mutating decisions such as queue promotion or dispatch. Mutability is derived from the decision kind/action, so callers cannot mark `dispatch_ready` or `promote_queue` as read-only to bypass dry-run guarantees. Execute-mode inputs require canonical `workspaceId`, `projectId`, and host execution details before the runtime can promote or dispatch work. Tick and run evidence ids must be referenced by the decision or tick that produced them, so future supervisor traces remain replayable from artifacts instead of free-floating JSON.
 
-`runOrchestrationSupervisorTick()` is the M8-I2 runtime boundary. For every tick it validates input, checks an optional external stop file before database reads, resolves project/campaign scope, loads the dashboard view model, applies dashboard filters, and records an `inspect_dashboard` decision. In `dry_run` mode it only reports planned `promote_queue` and `dispatch_ready` decisions. In `execute` mode it owns queue promotion, reloads the filtered dashboard, and dispatches only visible ready issue ids through the dispatcher with `promoteBeforeDispatch: false` so promotion does not run twice. Idle, blocked, external-stop, and error outcomes still return schema-valid tick results with explicit stop reasons and backoff hints.
+`runOrchestrationSupervisorTick()` is the single-tick runtime boundary. For every tick it validates input, checks an optional external stop file before database reads, resolves project/campaign scope, loads the dashboard view model, applies dashboard filters, and records an `inspect_dashboard` decision. In `dry_run` mode it only reports planned `promote_queue` and `dispatch_ready` decisions. In `execute` mode it owns queue promotion, reloads the filtered dashboard, and dispatches only visible ready issue ids through the dispatcher with `promoteBeforeDispatch: false` so promotion does not run twice. Idle, blocked, external-stop, and error outcomes still return schema-valid tick results with explicit stop reasons and backoff hints.
+
+`runOrchestrationSupervisor()` wraps the tick boundary in a bounded polling loop. It always executes at least one tick, derives deterministic tick ids from `runId` or `tickIdPrefix`, sleeps only through injectable/default backoff delays between non-terminal ticks, and stops on external stop, error, configured idle/blocked conditions, or `tick_limit_reached`. `harness-supervisor` and `harness_symphony(action: "supervisor_run")` expose the same contract without adding database tables or MCP tools.
 
 ### 4. Worktree boundary
 
@@ -118,7 +120,7 @@ CSQR-lite scorecard artifacts are not session-owned worktree/handoff artifacts, 
 
 ### 8. Public API boundary
 
-The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, including the supervisor tick/result/run-summary schemas and `runOrchestrationSupervisorTick()`. The MCP surface exposes a dedicated `harness_symphony` tool for compile/dispatch/inspect/dashboard workflows; long-running supervisor polling entrypoints are intentionally deferred until the single-tick runtime boundary is validated.
+The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, including supervisor tick/run schemas, `runOrchestrationSupervisorTick()`, and `runOrchestrationSupervisor()`. The MCP surface keeps the same six-tool catalog and extends the existing `harness_symphony` tool with `supervisor_tick` and `supervisor_run`; the CLI surface exposes the same bounded polling contract through `harness-supervisor`.
 
 ## Fully agentic completion posture
 
@@ -158,7 +160,7 @@ Scorecards passed to `harness_session(action: "checkpoint" | "close")` are durab
 
 ## Current v1 limits
 
-- The dispatcher assigns work and claims sessions; the supervisor runtime executes one deterministic tick, but CLI/MCP supervisor polling entrypoints are not implemented yet.
+- The dispatcher assigns work and claims sessions; the supervisor runtime now exposes one-tick and bounded polling entrypoints, but worker process execution still remains host-owned.
 - Worktree metadata and cleanup plans are typed; shell execution remains a host responsibility.
 - Evidence packet validation and deterministic reference E2E assertions exist; the full E2E/CI gate runner remains host-owned until later hardening milestones.
 - Worktree execution remains host-owned: MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out to create or delete git worktrees.

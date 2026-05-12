@@ -407,6 +407,8 @@ test('harness_inspector: capabilities returns tool catalog, bundled skills, and 
     dispatchReady: 'dispatch_ready',
     inspectState: 'inspect_state',
     dashboardView: 'dashboard_view',
+    supervisorTick: 'supervisor_tick',
+    supervisorRun: 'supervisor_run',
   });
   assert.equal(orchestrationDashboard.filteredViewAction, 'dashboard_view');
   assert.deepEqual(orchestrationDashboard.supportedFilters, [
@@ -419,6 +421,11 @@ test('harness_inspector: capabilities returns tool catalog, bundled skills, and 
     'hasCsqr',
     'signal',
   ]);
+  const orchestrationSupervisor = orchestration.supervisor as Record<string, unknown>;
+  assert.equal(orchestrationSupervisor.cli, 'harness-supervisor');
+  assert.equal(orchestrationSupervisor.tickAction, 'supervisor_tick');
+  assert.equal(orchestrationSupervisor.runAction, 'supervisor_run');
+  assert.equal(orchestrationSupervisor.boundedPolling, true);
   assert.equal(mem0.configured, true);
   assert.equal(mem0.available, true);
   assert.equal(mem0.adapterId, 'stub-test');
@@ -1425,6 +1432,75 @@ test('harness_symphony: dashboard_view returns a filtered stable dashboard model
     assert.deepEqual(
       csqrFiltered.viewModel.issueLanes.flatMap((lane) => lane.cards.map((card) => card.id)),
       ['issue-done'],
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_symphony: supervisor_tick and supervisor_run expose bounded supervisor automation', async () => {
+  const tempDir = createTempDir('symphony-supervisor-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+  try {
+    seedProject(dbPath);
+
+    const { internals } = createServer();
+    const symphony = internals.tools.get('harness_symphony')!;
+    const tick = (await symphony.handler({
+      action: 'supervisor_tick',
+      contractVersion: '1.0.0',
+      tickId: 'mcp-supervisor-tick',
+      dbPath,
+      projectId: 'proj-1',
+      mode: 'dry_run',
+      stopCondition: {
+        stopWhenIdle: true,
+      },
+    })) as {
+      result: {
+        tickId: string;
+        mode: string;
+        stopReason: string;
+        decisions: Array<{ kind: string }>;
+      };
+      _meta: Record<string, unknown>;
+    };
+
+    assert.equal(tick.result.tickId, 'mcp-supervisor-tick');
+    assert.equal(tick.result.mode, 'dry_run');
+    assert.equal(tick.result.stopReason, 'idle');
+    assert.deepEqual(
+      tick.result.decisions.map((decision) => decision.kind),
+      ['inspect_dashboard', 'idle'],
+    );
+    assert.ok(tick._meta);
+
+    const run = (await symphony.handler({
+      action: 'supervisor_run',
+      contractVersion: '1.0.0',
+      runId: 'mcp-supervisor-run',
+      dbPath,
+      projectId: 'proj-1',
+      mode: 'dry_run',
+      stopCondition: {
+        maxTicks: 3,
+        stopWhenIdle: true,
+      },
+    })) as {
+      result: {
+        runId: string;
+        status: string;
+        stopReason: string;
+        tickResults: Array<{ tickId: string }>;
+      };
+    };
+
+    assert.equal(run.result.runId, 'mcp-supervisor-run');
+    assert.equal(run.result.status, 'succeeded');
+    assert.equal(run.result.stopReason, 'idle');
+    assert.deepEqual(
+      run.result.tickResults.map((result) => result.tickId),
+      ['mcp-supervisor-run-tick-1'],
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

@@ -25,7 +25,7 @@ called through `harness_inspector`.
 | --- | --- | --- |
 | `harness_inspector` | read-only discovery and operational visibility | `capabilities`, `get_context`, `next_action`, `export`, `audit`, `health_snapshot` |
 | `harness_orchestrator` | creating scope, injecting plans, promoting or resetting work | `init_workspace`, `create_campaign`, `plan_issues`, `promote_queue`, `rollback_issue` |
-| `harness_symphony` | fully agentic orchestration planning, fan-out dispatch, state inspection, and dashboard read models | `compile_plan`, `dispatch_ready`, `inspect_state`, `dashboard_view` |
+| `harness_symphony` | fully agentic orchestration planning, supervisor polling, fan-out dispatch, state inspection, and dashboard read models | `compile_plan`, `dispatch_ready`, `inspect_state`, `dashboard_view`, `supervisor_tick`, `supervisor_run` |
 | `harness_session` | claim/recovery, checkpoints, close/advance, heartbeats | `begin`, `begin_recovery`, `checkpoint`, `close`, `advance`, `heartbeat` |
 | `harness_artifacts` | register or list durable task evidence | `save`, `list` |
 | `harness_admin` | maintenance, cleanup, drain/archive, memory snapshots | `reconcile`, `drain`, `archive`, `cleanup`, `mem0_snapshot`, `mem0_rollup` |
@@ -35,7 +35,8 @@ called through `harness_inspector`.
 `harness_inspector(action: "capabilities")` returns a top-level `orchestration` block so hosts can detect fully agentic Symphony support without hardcoding tool names or action lists. The block declares:
 
 - `mode: "symphony"` and `tool: "harness_symphony"`
-- `actions.compilePlan`, `actions.dispatchReady`, `actions.inspectState`, and `actions.dashboardView`
+- `actions.compilePlan`, `actions.dispatchReady`, `actions.inspectState`, `actions.dashboardView`, `actions.supervisorTick`, and `actions.supervisorRun`
+- `supervisor.cli: "harness-supervisor"` plus bounded polling defaults for max ticks and idle/blocked/error backoff
 - `defaultModelProfile: "gpt-5-high"` and `defaultMaxConcurrentAgents: 4`
 - `requiredDispatchFields` for `dispatch_ready`
 - `hostResponsibilities` for creating/running/cleaning isolated worktrees and collecting gate evidence
@@ -123,6 +124,8 @@ Use this tool for fully agentic Symphony-style orchestration after the project/c
 | `dispatch_ready` | ready issues should be assigned to isolated worktrees and compatible subagents |
 | `inspect_state` | you need orchestration leases, artifacts, evidence references, recent events, and health flags |
 | `dashboard_view` | you need a stable Linear-like dashboard view model, optionally filtered for agent navigation or proof review |
+| `supervisor_tick` | you need one auditable dry-run or execute supervisor decision trace through MCP |
+| `supervisor_run` | you need bounded autonomous polling with max tick limits, stop conditions, and backoff |
 
 Discovery prerequisite: call `harness_inspector(action: "capabilities")` and read the returned `orchestration.requiredDispatchFields` before invoking `dispatch_ready`. The MCP server records deterministic worktree assignments and runtime metadata artifacts; the host remains responsible for creating the physical git worktrees, launching compatible subagents, running quality gates, attaching accepted evidence artifacts, and cleaning up worktrees.
 
@@ -132,7 +135,37 @@ Dashboard boundary: package consumers can call `loadOrchestrationDashboardViewMo
 
 `dashboard_view` accepts optional `filters` with `q`, `lane`, `status`, `priority`, `evidenceKind`, `csqr`, `hasCsqr`, and `signal`. `csqr: "any"` or `signal: "csqr"` selects issues with any CSQR-lite scorecard; `signal` also accepts `active`, `evidence`, `health`, and `blocked`. The response includes `{ viewModel, filters }`, where `filters` records the normalized filter set, whether filtering is active, and unfiltered/filtered issue counts. Use `inspect_state` when raw orchestration state is needed; use `dashboard_view` when an agent or UI needs the filtered dashboard read model.
 
-Supervisor runtime boundary: package consumers can call `runOrchestrationSupervisorTick()` from `harness-os/orchestration` to execute one dry-run or execute tick over the same primitives. The tick inspects the filtered dashboard, owns queue promotion, dispatches only visible ready issue ids, and returns a schema-validated decision trace with idle/blocked/error backoff. Long-running CLI/MCP polling is intentionally deferred to a later entrypoint.
+Supervisor runtime boundary: package consumers can call `runOrchestrationSupervisorTick()` from `harness-os/orchestration` to execute one dry-run or execute tick over the same primitives, or `runOrchestrationSupervisor()` to run bounded polling. The tick inspects the filtered dashboard, owns queue promotion, dispatches only visible ready issue ids, and returns a schema-validated decision trace with idle/blocked/error backoff. The CLI entrypoint is `harness-supervisor`; the MCP equivalents are `harness_symphony(action: "supervisor_tick")` and `harness_symphony(action: "supervisor_run")`.
+
+Supervisor run example:
+
+```json
+{
+  "action": "supervisor_run",
+  "contractVersion": "1.0.0",
+  "runId": "supervisor-run-1",
+  "dbPath": ".harness/harness.sqlite",
+  "workspaceId": "workspace-1",
+  "projectId": "project-1",
+  "mode": "execute",
+  "stopCondition": {
+    "maxTicks": 4,
+    "stopWhenIdle": true,
+    "stopWhenBlocked": true
+  },
+  "dispatch": {
+    "repoRoot": "/repo/harness-os",
+    "worktreeRoot": "/repo/worktrees",
+    "baseRef": "main",
+    "host": "copilot",
+    "hostCapabilities": {
+      "workloadClasses": ["default", "typescript"],
+      "capabilities": ["node", "sqlite"]
+    },
+    "maxConcurrentAgents": 4
+  }
+}
+```
 
 Reference evidence matrix: fully agentic hosts should attach at least run-scoped `typecheck_report`, `state_export`, and `csqr_lite_scorecard` artifacts plus assignment-scoped `test_report`, `e2e_report`, and `screenshot` artifacts for every dispatched assignment. HarnessOS includes deterministic reference packet assertions for this matrix, while command execution and screenshot capture stay host-owned.
 

@@ -8,6 +8,8 @@ import {
   orchestrationDashboardIssueFiltersInputSchema,
 } from '../contracts/orchestration-dashboard-contracts.js';
 import {
+  orchestrationSupervisorRunInputSchema,
+  orchestrationSupervisorTickInputSchema,
   orchestrationSubagentSchema,
   orchestrationWorktreeCleanupPolicySchema,
 } from '../contracts/orchestration-contracts.js';
@@ -77,6 +79,8 @@ export const symphonyActionValues = [
   'dispatch_ready',
   'inspect_state',
   'dashboard_view',
+  'supervisor_tick',
+  'supervisor_run',
 ] as const;
 export const sessionActionValues = [
   'begin',
@@ -305,11 +309,23 @@ const harnessSymphonyDashboardViewInputSchema = z
   })
   .strict();
 
+const harnessSymphonySupervisorTickInputSchema =
+  orchestrationSupervisorTickInputSchema.safeExtend({
+    action: z.literal('supervisor_tick'),
+  });
+
+const harnessSymphonySupervisorRunInputSchema =
+  orchestrationSupervisorRunInputSchema.safeExtend({
+    action: z.literal('supervisor_run'),
+  });
+
 export const harnessSymphonyInputSchema = z.discriminatedUnion('action', [
   harnessSymphonyCompilePlanInputSchema,
   harnessSymphonyDispatchInputSchema,
   harnessSymphonyInspectInputSchema,
   harnessSymphonyDashboardViewInputSchema,
+  harnessSymphonySupervisorTickInputSchema,
+  harnessSymphonySupervisorRunInputSchema,
 ]);
 
 const sessionTokenSchema = z.string().min(1);
@@ -716,10 +732,10 @@ export const HARNESS_TOOL_CONTRACTS: HarnessToolContract[] = [
   {
     name: 'harness_symphony',
     description:
-      'Fully agentic Symphony-style orchestration. Actions: compile_plan (turn orchestration milestones/slices into canonical plan_issues payloads), dispatch_ready (fan out ready issues across isolated worktrees and compatible subagents), inspect_state (read raw orchestration assignments, leases, artifacts, events, and evidence health), dashboard_view (read a filtered Linear-like dashboard view model).',
-    role: 'Agentic fan-out planning, dispatch, orchestration-state inspection, and dashboard read-model access',
+      'Fully agentic Symphony-style orchestration. Actions: compile_plan (turn orchestration milestones/slices into canonical plan_issues payloads), dispatch_ready (fan out ready issues across isolated worktrees and compatible subagents), inspect_state (read raw orchestration assignments, leases, artifacts, events, and evidence health), dashboard_view (read a filtered Linear-like dashboard view model), supervisor_tick (run one autonomous supervisor tick), supervisor_run (run bounded autonomous supervisor polling).',
+    role: 'Agentic fan-out planning, dispatch, supervisor polling, orchestration-state inspection, and dashboard read-model access',
     summary:
-      'Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, inspect evidence-backed orchestration state, and retrieve filtered dashboard views for agent navigation.',
+      'Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, inspect evidence-backed orchestration state, retrieve filtered dashboard views for agent navigation, and run bounded supervisor automation.',
     inputSchema: harnessSymphonyInputSchema,
     actions: [
       {
@@ -829,6 +845,74 @@ export const HARNESS_TOOL_CONTRACTS: HarnessToolContract[] = [
             status: ['ready'],
             priority: ['high'],
             signal: 'evidence',
+          },
+        },
+      },
+      {
+        action: 'supervisor_tick',
+        purpose:
+          'Run one autonomous supervisor tick through the MCP surface, returning the same auditable decision trace as the public runtime API.',
+        recommendedWhen: [
+          'supervisor automation',
+          'dry-run queue audits',
+          'single-step autonomous orchestration',
+        ],
+        requiredFields: [
+          'contractVersion',
+          'tickId',
+          'dbPath',
+          'projectId or projectName',
+        ],
+        example: {
+          action: 'supervisor_tick',
+          contractVersion: '1.0.0',
+          tickId: 'supervisor-tick-1',
+          dbPath: '/repo/.harness/harness.sqlite',
+          projectName: 'Agent Harness Core',
+          mode: 'dry_run',
+          stopCondition: {
+            stopWhenIdle: true,
+          },
+        },
+      },
+      {
+        action: 'supervisor_run',
+        purpose:
+          'Run bounded autonomous supervisor polling with max tick limits, stop conditions, backoff, and structured JSON results.',
+        recommendedWhen: [
+          'fully autonomous polling',
+          'no-human runtime operation',
+          'evidence-gated dispatch loops',
+        ],
+        requiredFields: [
+          'contractVersion',
+          'runId',
+          'dbPath',
+          'projectId or projectName',
+        ],
+        example: {
+          action: 'supervisor_run',
+          contractVersion: '1.0.0',
+          runId: 'supervisor-run-1',
+          dbPath: '/repo/.harness/harness.sqlite',
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          mode: 'execute',
+          stopCondition: {
+            maxTicks: 4,
+            stopWhenIdle: true,
+            stopWhenBlocked: true,
+          },
+          dispatch: {
+            repoRoot: '/repo/harness-os',
+            worktreeRoot: '/repo/worktrees',
+            baseRef: 'main',
+            host: 'copilot',
+            hostCapabilities: {
+              workloadClasses: ['default', 'typescript'],
+              capabilities: ['node', 'sqlite'],
+            },
+            maxConcurrentAgents: 4,
           },
         },
       },

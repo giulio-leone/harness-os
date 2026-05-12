@@ -14,6 +14,7 @@ test('published CLI entrypoints keep a node shebang', () => {
     'scheduler-inject.js',
     'session-lifecycle.js',
     'session-lifecycle-mcp.js',
+    'supervisor.js',
   ];
 
   for (const entry of expectedBins) {

@@ -178,6 +178,37 @@ test('packed npm artifact executes installable bins and host smoke paths', async
       assert.ok(parsed.result);
     });
 
+    await t.test('installed harness-supervisor bin executes bounded runs from the packed artifact', () => {
+      const result = runBin(join(binDir, 'harness-supervisor'), [], {
+        env: baseEnv,
+        input: `${JSON.stringify({
+          action: 'run',
+          input: {
+            contractVersion: '1.0.0',
+            runId: 'packed-supervisor-run',
+            dbPath,
+            projectId: 'project-1',
+            mode: 'dry_run',
+            stopCondition: {
+              maxTicks: 2,
+              stopWhenIdle: true,
+            },
+          },
+        })}\n`,
+      });
+
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const parsed = JSON.parse(result.stdout) as {
+        action: string;
+        result: { runId: string; status: string; stopReason: string; tickResults: unknown[] };
+      };
+      assert.equal(parsed.action, 'run');
+      assert.equal(parsed.result.runId, 'packed-supervisor-run');
+      assert.equal(parsed.result.status, 'succeeded');
+      assert.equal(parsed.result.stopReason, 'idle');
+      assert.equal(parsed.result.tickResults.length, 1);
+    });
+
     await t.test('installed harness-session-lifecycle-mcp bin responds over JSON-RPC', async () => {
       const messages = await smokeTestInstalledMcpServer(
         join(binDir, 'harness-session-lifecycle-mcp'),
@@ -208,6 +239,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           createDefaultGpt5HighSubagents,
           csqrLiteDefaultCriteria,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromRoot,
+          runOrchestrationSupervisor as runSupervisorFromRoot,
           runOrchestrationSupervisorTick as runSupervisorTickFromRoot,
         } from 'harness-os';
         import {
@@ -225,10 +257,12 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           inspectOrchestration,
           orchestrationDashboardViewModelSchema,
           orchestrationPlanSchema,
+          orchestrationSupervisorRunInputSchema,
           orchestrationSupervisorRunSummarySchema,
           orchestrationSupervisorTickInputSchema,
           orchestrationSupervisorTickResultSchema,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromSubpath,
+          runOrchestrationSupervisor as runSupervisorFromSubpath,
           runOrchestrationSupervisorTick as runSupervisorTickFromSubpath,
         } from 'harness-os/orchestration';
 
@@ -256,10 +290,13 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           dashboardServerOrchestratorType: typeof SessionOrchestrator,
           matrixSameReference: matrixFromRoot === matrixFromSubpath,
           filterSameReference: applyFiltersFromRoot === applyFiltersFromSubpath,
+          supervisorRunSameReference: runSupervisorFromRoot === runSupervisorFromSubpath,
           supervisorTickSameReference: runSupervisorTickFromRoot === runSupervisorTickFromSubpath,
           inspectorType: typeof inspectOrchestration,
+          supervisorRunType: typeof runSupervisorFromSubpath,
           supervisorTickType: typeof runSupervisorTickFromSubpath,
           schemaType: typeof orchestrationPlanSchema.safeParse,
+          supervisorRunSchemaType: typeof orchestrationSupervisorRunInputSchema.safeParse,
           supervisorSchemaType: typeof orchestrationSupervisorTickInputSchema.safeParse,
           supervisorTickResultSchemaType: typeof orchestrationSupervisorTickResultSchema.safeParse,
           supervisorRunSummarySchemaType: typeof orchestrationSupervisorRunSummarySchema.safeParse,
@@ -285,10 +322,13 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         dashboardServerOrchestratorType: string;
         matrixSameReference: boolean;
         filterSameReference: boolean;
+        supervisorRunSameReference: boolean;
         supervisorTickSameReference: boolean;
         inspectorType: string;
+        supervisorRunType: string;
         supervisorTickType: string;
         schemaType: string;
+        supervisorRunSchemaType: string;
         supervisorSchemaType: string;
         supervisorTickResultSchemaType: string;
         supervisorRunSummarySchemaType: string;
@@ -312,10 +352,13 @@ test('packed npm artifact executes installable bins and host smoke paths', async
         dashboardServerOrchestratorType: 'function',
         matrixSameReference: true,
         filterSameReference: true,
+        supervisorRunSameReference: true,
         supervisorTickSameReference: true,
         inspectorType: 'function',
+        supervisorRunType: 'function',
         supervisorTickType: 'function',
         schemaType: 'function',
+        supervisorRunSchemaType: 'function',
         supervisorSchemaType: 'function',
         supervisorTickResultSchemaType: 'function',
         supervisorRunSummarySchemaType: 'function',
