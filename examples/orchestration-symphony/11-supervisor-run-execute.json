@@ -34,6 +34,15 @@
         "capabilities": ["node", "sqlite"]
       },
       "maxConcurrentAgents": 4,
+      "assignmentRunner": {
+        "command": "npm",
+        "args": ["run", "verify:release"],
+        "requiredEvidenceArtifactKinds": ["test_report", "e2e_report"],
+        "includeCsqrLiteScorecard": true,
+        "maxAssignmentsPerTick": 1,
+        "workspaceMode": "existing_worktree",
+        "cleanupWorktree": false
+      },
       "subagents": [
         {
           "id": "agent-worktree",

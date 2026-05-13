@@ -11,6 +11,7 @@ test('published CLI entrypoints keep a node shebang', () => {
     'agent-harness-install-mcp.js',
     'agent-harness-setup.js',
     'agent-harness-sync.js',
+    'agent-runner.js',
     'scheduler-inject.js',
     'session-lifecycle.js',
     'session-lifecycle-mcp.js',

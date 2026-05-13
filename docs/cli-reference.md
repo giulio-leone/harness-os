@@ -1,6 +1,6 @@
 # CLI Reference
 
-HarnessOS ships seven installable commands. They all live under the public `2.x` package line, while schema/contract versions are documented separately inside the runtime and examples.
+HarnessOS ships eight installable commands. They all live under the public `2.x` package line, while schema/contract versions are documented separately inside the runtime and examples.
 
 ## Command summary
 
@@ -13,6 +13,7 @@ HarnessOS ships seven installable commands. They all live under the public `2.x`
 | `harness-session-lifecycle` | drive the session-lifecycle contract from JSON payloads on stdin | CLI integration and automation |
 | `harness-session-lifecycle-mcp` | run the session-lifecycle MCP server over stdio | editor/agent integration |
 | `harness-supervisor` | run one supervisor tick or a bounded autonomous polling run from structured JSON | fully agentic no-human orchestration loops |
+| `harness-agent-runner` | execute one dispatched Symphony assignment and persist command-produced proof artifacts | worker execution inside supervisor or host loops |
 
 ## `harness-install-mcp`
 
@@ -114,9 +115,35 @@ Runs the autonomous Symphony supervisor from JSON on stdin or `--input <path>`. 
 }
 ```
 
-Use `action: "tick"` with a `tickId` for one deterministic tick, or `action: "run"` with a `runId` and `stopCondition.maxTicks` for bounded polling. `execute` mode also requires canonical `workspaceId`, `projectId`, and `dispatch` host/worktree routing inputs.
+Use `action: "tick"` with a `tickId` for one deterministic tick, or `action: "run"` with a `runId` and `stopCondition.maxTicks` for bounded polling. `execute` mode also requires canonical `workspaceId`, `projectId`, `dispatch` host/worktree routing inputs, and `dispatch.assignmentRunner`.
 
-Execute-mode supervisor payloads are the CLI form of the no-human runtime path. The supervisor owns inspection, queue promotion, and dispatch; the host still owns physical worktree creation, subagent launch, gate commands, screenshot capture, artifact file creation, and cleanup.
+Execute-mode supervisor payloads are the CLI form of the no-human runtime path. The supervisor owns inspection, queue promotion, dispatch, and assignment execution through the configured runner command. The command must write test/E2E/CSQR proof files to the `HARNESS_*` paths; HarnessOS does not synthesize green evidence from exit code alone.
+
+## `harness-agent-runner`
+
+Runs one dispatched Symphony assignment from JSON on stdin or `--input <path>`:
+
+```json
+{
+  "action": "run_assignment",
+  "input": {
+    "contractVersion": "1.0.0",
+    "assignment": { "...": "dispatch.assignment" },
+    "issue": { "...": "dispatch.issue" },
+    "subagent": { "...": "dispatch.subagent" },
+    "worktree": { "...": "dispatch.worktree" },
+    "session": { "...": "dispatch.session" },
+    "runner": {
+      "command": "npm",
+      "args": ["run", "verify:release"],
+      "requiredEvidenceArtifactKinds": ["test_report", "e2e_report"],
+      "includeCsqrLiteScorecard": true
+    }
+  }
+}
+```
+
+The runner sets `HARNESS_EVIDENCE_ROOT`, `HARNESS_TEST_REPORT_PATH`, `HARNESS_E2E_REPORT_PATH`, `HARNESS_SCREENSHOT_PATH`, and `HARNESS_CSQR_SCORECARD_PATH` for the command. On success it registers the produced proof files and closes the session `done`; on command failure, missing evidence, or invalid evidence-root placement it closes the session `failed` with a diagnostic artifact.
 
 ```json
 {

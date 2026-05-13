@@ -14,6 +14,9 @@ import {
   orchestrationWorktreeCleanupPolicySchema,
 } from '../contracts/orchestration-contracts.js';
 import {
+  symphonyAssignmentRunnerInputSchema,
+} from '../contracts/orchestration-assignment-runner-contracts.js';
+import {
   issuePrioritySchema,
   tShirtSizeSchema,
 } from '../contracts/task-domain.js';
@@ -79,6 +82,7 @@ export const symphonyActionValues = [
   'dispatch_ready',
   'inspect_state',
   'dashboard_view',
+  'run_assignment',
   'supervisor_tick',
   'supervisor_run',
 ] as const;
@@ -309,6 +313,14 @@ const harnessSymphonyDashboardViewInputSchema = z
   })
   .strict();
 
+const harnessSymphonyRunAssignmentInputSchema = z
+  .object({
+    action: z.literal('run_assignment'),
+    dbPath: optionalString,
+    input: symphonyAssignmentRunnerInputSchema,
+  })
+  .strict();
+
 const harnessSymphonySupervisorTickInputSchema =
   orchestrationSupervisorTickInputSchema.safeExtend({
     action: z.literal('supervisor_tick'),
@@ -324,6 +336,7 @@ export const harnessSymphonyInputSchema = z.discriminatedUnion('action', [
   harnessSymphonyDispatchInputSchema,
   harnessSymphonyInspectInputSchema,
   harnessSymphonyDashboardViewInputSchema,
+  harnessSymphonyRunAssignmentInputSchema,
   harnessSymphonySupervisorTickInputSchema,
   harnessSymphonySupervisorRunInputSchema,
 ]);
@@ -732,10 +745,10 @@ export const HARNESS_TOOL_CONTRACTS: HarnessToolContract[] = [
   {
     name: 'harness_symphony',
     description:
-      'Fully agentic Symphony-style orchestration. Actions: compile_plan (turn orchestration milestones/slices into canonical plan_issues payloads), dispatch_ready (fan out ready issues across isolated worktrees and compatible subagents), inspect_state (read raw orchestration assignments, leases, artifacts, events, and evidence health), dashboard_view (read a filtered Linear-like dashboard view model), supervisor_tick (run one autonomous supervisor tick), supervisor_run (run bounded autonomous supervisor polling).',
+      'Fully agentic Symphony-style orchestration. Actions: compile_plan (turn orchestration milestones/slices into canonical plan_issues payloads), dispatch_ready (fan out ready issues across isolated worktrees and compatible subagents), inspect_state (read raw orchestration assignments, leases, artifacts, events, and evidence health), dashboard_view (read a filtered Linear-like dashboard view model), run_assignment (execute one dispatched assignment and persist command-produced evidence), supervisor_tick (run one autonomous supervisor tick), supervisor_run (run bounded autonomous supervisor polling).',
     role: 'Agentic fan-out planning, dispatch, supervisor polling, orchestration-state inspection, and dashboard read-model access',
     summary:
-      'Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, inspect evidence-backed orchestration state, retrieve filtered dashboard views for agent navigation, and run bounded supervisor automation.',
+      'Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, execute dispatched assignments with test/E2E/CSQR evidence, inspect evidence-backed orchestration state, retrieve filtered dashboard views for agent navigation, and run bounded supervisor automation.',
     inputSchema: harnessSymphonyInputSchema,
     actions: [
       {
@@ -845,6 +858,94 @@ export const HARNESS_TOOL_CONTRACTS: HarnessToolContract[] = [
             status: ['ready'],
             priority: ['high'],
             signal: 'evidence',
+          },
+        },
+      },
+      {
+        action: 'run_assignment',
+        purpose:
+          'Execute one dispatched assignment in its isolated worktree and close its session with command-produced test, E2E, and CSQR-lite evidence.',
+        recommendedWhen: [
+          'assignment execution',
+          'proof-producing worker runs',
+          'host-controlled evidence gates',
+        ],
+        requiredFields: ['input'],
+        example: {
+          action: 'run_assignment',
+          input: {
+            contractVersion: '1.0.0',
+            assignment: {
+              id: 'assignment-M10-I5',
+              issueId: 'M10-I5',
+              subagentId: 'subagent-implementation',
+              worktreeId: 'worktree-M10-I5',
+            },
+            issue: {
+              id: 'M10-I5',
+              task: 'Add assignment execution surface',
+              priority: 'high',
+              status: 'ready',
+            },
+            subagent: {
+              id: 'subagent-implementation',
+              role: 'implementation',
+              modelProfile: 'gpt-5-high',
+              model: 'gpt-5-high',
+              host: 'copilot',
+              capabilities: ['node', 'sqlite'],
+            },
+            worktree: {
+              id: 'worktree-M10-I5',
+              repoRoot: '/repo/harness-os',
+              root: '/repo/worktrees',
+              path: '/repo/worktrees/M10-I5',
+              branch: 'feat/M10-I5-assignment-runner',
+              baseRef: 'main',
+              cleanupPolicy: 'retain',
+              containment: {
+                expectedParentPath: '/repo/worktrees',
+                requirePathWithinRoot: true,
+              },
+            },
+            session: {
+              sessionId: 'session-M10-I5',
+              dbPath: '/repo/.harness/harness.sqlite',
+              workspaceId: 'workspace-1',
+              projectId: 'project-1',
+              agentId: 'subagent-implementation',
+              host: 'copilot',
+              hostCapabilities: {
+                workloadClasses: ['default', 'typescript'],
+                capabilities: ['node', 'sqlite'],
+              },
+              runId: 'session-M10-I5',
+              leaseId: 'lease-M10-I5',
+              leaseExpiresAt: '2030-01-01T00:00:00.000Z',
+              issueId: 'M10-I5',
+              issueTask: 'Add assignment execution surface',
+              claimMode: 'claim',
+              artifacts: [],
+              scope: {
+                workspace: 'workspace-1',
+                project: 'project-1',
+                task: 'M10-I5',
+                run: 'session-M10-I5',
+              },
+              currentTaskStatus: 'in_progress',
+              currentCheckpointId: 'checkpoint-M10-I5',
+              mem0: {
+                enabled: false,
+                available: false,
+                query: 'M10-I5',
+                recalledMemories: [],
+              },
+            },
+            runner: {
+              command: 'npm',
+              args: ['run', 'verify:release'],
+              requiredEvidenceArtifactKinds: ['test_report', 'e2e_report'],
+            },
           },
         },
       },

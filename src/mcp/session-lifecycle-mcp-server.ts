@@ -51,6 +51,7 @@ import {
   runOrchestrationSupervisor,
   runOrchestrationSupervisorTick,
 } from '../runtime/orchestration-supervisor.js';
+import { runSymphonyAssignment } from '../runtime/orchestration-assignment-runner.js';
 import { loadOrchestrationDashboardViewModel } from '../runtime/orchestration-dashboard.js';
 import {
   applyOrchestrationDashboardIssueFilters,
@@ -122,7 +123,7 @@ This server exposes 6 tools, each covering a specific domain. Use the "action" p
 TOOLS:
 1. harness_inspector  — Read-only observation. Actions: capabilities, get_context, next_action, export, audit, health_snapshot.
 2. harness_orchestrator — Setup & queue management. Actions: init_workspace, create_campaign, plan_issues, promote_queue, rollback_issue.
-3. harness_symphony — Fully agentic fan-out orchestration. Actions: compile_plan, dispatch_ready, inspect_state, dashboard_view, supervisor_tick, supervisor_run.
+3. harness_symphony — Fully agentic fan-out orchestration. Actions: compile_plan, dispatch_ready, inspect_state, dashboard_view, run_assignment, supervisor_tick, supervisor_run.
 4. harness_session — Execution lifecycle. Actions: begin, begin_recovery, checkpoint, close, advance, heartbeat.
 5. harness_artifacts — Persistent state registry. Actions: save, list.
 6. harness_admin — Maintenance & administration. Actions: reconcile, drain, archive, cleanup, mem0_snapshot, mem0_rollup.
@@ -143,6 +144,7 @@ FULLY AGENTIC FAN-OUT:
 - harness_symphony(action: "supervisor_tick") → run one auditable dry-run or execute supervisor decision trace
 - harness_symphony(action: "supervisor_run") → run bounded no-human supervisor polling over inspect/promote/dispatch
 - harness_symphony(action: "dispatch_ready") → assign ready issues to isolated worktrees and compatible subagents
+- harness_symphony(action: "run_assignment") → execute a dispatched assignment and persist command-produced proof artifacts
 - harness_symphony(action: "inspect_state") → inspect raw leases, worktree artifacts, evidence references, and orchestration health
 - harness_symphony(action: "dashboard_view") → read a filtered Linear-like dashboard view for agent navigation and proof review
 
@@ -706,6 +708,31 @@ export class SessionLifecycleMcpServer {
               } finally {
                 db.close();
               }
+            }
+
+            case 'run_assignment': {
+              const input = {
+                ...parsed.input,
+                session: {
+                  ...parsed.input.session,
+                  dbPath: this.resolvePinnedMcpDbPath(
+                    parsed.dbPath ?? parsed.input.session.dbPath,
+                  ),
+                },
+              };
+              const result = await runSymphonyAssignment(input);
+
+              return {
+                result,
+                ...buildMeta(
+                  result.status === 'succeeded'
+                    ? ['harness_symphony', 'harness_inspector']
+                    : ['harness_inspector', 'harness_symphony'],
+                  result.status === 'succeeded'
+                    ? `Assignment ${result.assignmentId} completed with ${result.evidenceArtifactIds.length} evidence artifact(s).`
+                    : `Assignment ${result.assignmentId} failed; inspect runner diagnostics and retry through recovery.`,
+                ),
+              };
             }
 
             case 'supervisor_tick': {

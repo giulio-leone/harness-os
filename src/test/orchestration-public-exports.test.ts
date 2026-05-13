@@ -24,10 +24,12 @@ import {
   loadSymphonyWorkflowFromText,
   launchCodexAppServerRunner,
   renderSymphonyWorkflowPrompt,
+  runSymphonyAssignment,
   symphonyCodexRunnerLaunchResultSchema,
   symphonyCodexRunnerTurnExecutionEnvelopeSchema,
   symphonyCodexRunnerTurnResultSchema,
   symphonyWorktreeOperationResultSchema,
+  symphonyAssignmentRunnerInputSchema,
   runOrchestrationSupervisorTick,
   assertReferenceOrchestrationEvidencePacket,
   orchestrationDashboardViewModelSchema,
@@ -70,6 +72,7 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof createSymphonyWorkflowReloader, 'function');
   assert.equal(typeof loadSymphonyWorkflowFromText, 'function');
   assert.equal(typeof renderSymphonyWorkflowPrompt, 'function');
+  assert.equal(typeof runSymphonyAssignment, 'function');
   assert.equal(typeof runOrchestrationSupervisorTick, 'function');
   assert.equal(typeof orchestrationDashboardViewModelSchema.safeParse, 'function');
   assert.equal(typeof orchestrationSupervisorTickInputSchema.safeParse, 'function');
@@ -85,6 +88,7 @@ test('package root exports the stable orchestration API surface', () => {
     'function',
   );
   assert.equal(typeof symphonyWorktreeOperationResultSchema.safeParse, 'function');
+  assert.equal(typeof symphonyAssignmentRunnerInputSchema.safeParse, 'function');
   assert.equal(typeof csqrLiteScorecardSchema.safeParse, 'function');
   assert.equal(csqrLiteDefaultCriteria.length, 4);
 });
@@ -175,6 +179,7 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
     orchestration.renderSymphonyWorkflowPrompt,
     renderSymphonyWorkflowPrompt,
   );
+  assert.equal(orchestration.runSymphonyAssignment, runSymphonyAssignment);
   assert.equal(
     orchestration.runOrchestrationSupervisorTick,
     runOrchestrationSupervisorTick,
@@ -216,6 +221,10 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
   assert.equal(
     orchestration.symphonyWorktreeOperationResultSchema,
     symphonyWorktreeOperationResultSchema,
+  );
+  assert.equal(
+    orchestration.symphonyAssignmentRunnerInputSchema,
+    symphonyAssignmentRunnerInputSchema,
   );
   assert.equal(orchestration.csqrLiteScorecardSchema, csqrLiteScorecardSchema);
   assert.equal(orchestration.csqrLiteDefaultCriteria, csqrLiteDefaultCriteria);

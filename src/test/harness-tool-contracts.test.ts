@@ -134,9 +134,25 @@ test('harness_symphony schema exposes the dedicated orchestration action enum', 
     'dispatch_ready',
     'inspect_state',
     'dashboard_view',
+    'run_assignment',
     'supervisor_tick',
     'supervisor_run',
   ]);
+});
+
+test('harness_symphony run_assignment accepts a dispatched assignment payload', () => {
+  const contract = getHarnessToolContracts().find(
+    (tool) => tool.name === 'harness_symphony',
+  );
+  assert.ok(contract);
+
+  const parsed = contract.inputSchema.parse({
+    action: 'run_assignment',
+    input: buildRunAssignmentPayload(),
+  });
+
+  assert.ok(isRecord(parsed));
+  assert.equal(parsed.action, 'run_assignment');
 });
 
 test('harness_symphony dashboard_view accepts strict dashboard filters', () => {
@@ -201,4 +217,82 @@ function extractGeneratedBlock(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function buildRunAssignmentPayload(): Record<string, unknown> {
+  return {
+    contractVersion: '1.0.0',
+    assignment: {
+      id: 'assignment-contract',
+      issueId: 'issue-contract',
+      subagentId: 'agent-contract',
+      worktreeId: 'worktree-contract',
+    },
+    issue: {
+      id: 'issue-contract',
+      task: 'Validate run_assignment tool contract',
+      priority: 'high',
+      status: 'in_progress',
+    },
+    subagent: {
+      id: 'agent-contract',
+      role: 'implementation',
+      host: 'copilot',
+      modelProfile: 'gpt-5-high',
+      capabilities: ['node', 'sqlite'],
+      maxConcurrency: 1,
+    },
+    worktree: {
+      id: 'worktree-contract',
+      repoRoot: '/repo/harness-os',
+      root: '/repo/worktrees',
+      path: '/repo/worktrees/issue-contract',
+      branch: 'feat/issue-contract',
+      baseRef: 'main',
+      cleanupPolicy: 'retain',
+      containment: {
+        expectedParentPath: '/repo/worktrees',
+        requirePathWithinRoot: true,
+      },
+    },
+    session: {
+      sessionId: 'run-contract',
+      dbPath: '/repo/.harness/harness.sqlite',
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      agentId: 'agent-contract',
+      host: 'copilot',
+      hostCapabilities: {
+        workloadClasses: ['default', 'typescript'],
+        capabilities: ['node', 'sqlite'],
+      },
+      runId: 'run-contract',
+      leaseId: 'lease-contract',
+      leaseExpiresAt: '2030-01-01T00:00:00.000Z',
+      issueId: 'issue-contract',
+      issueTask: 'Validate run_assignment tool contract',
+      claimMode: 'claim',
+      artifacts: [],
+      scope: {
+        workspace: 'workspace-1',
+        project: 'project-1',
+        task: 'issue-contract',
+        run: 'run-contract',
+      },
+      currentTaskStatus: 'in_progress',
+      currentCheckpointId: 'checkpoint-contract',
+      mem0: {
+        enabled: false,
+        available: false,
+        query: 'issue-contract',
+        recalledMemories: [],
+      },
+    },
+    runner: {
+      command: 'npm',
+      args: ['run', 'verify:release'],
+      requiredEvidenceArtifactKinds: ['test_report', 'e2e_report'],
+      includeCsqrLiteScorecard: true,
+    },
+  };
 }

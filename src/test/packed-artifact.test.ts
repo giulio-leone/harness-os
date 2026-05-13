@@ -92,6 +92,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
       HARNESS_DB_PATH: dbPath,
       HARNESS_CRON_PATH: cronConfigPath,
     };
+    assert.equal(existsSync(join(binDir, 'harness-agent-runner')), true);
 
     await t.test('installed harness-setup and harness-sync bins execute from the packed artifact', async () => {
       const setupResult = await runInteractiveSetupBin(
@@ -314,6 +315,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
            symphonyCodexRunnerTurnExecutionEnvelopeSchema as codexEnvelopeSchemaFromRoot,
            referenceOrchestrationE2eEvidenceMatrix as matrixFromRoot,
           renderSymphonyWorkflowPrompt as renderWorkflowPromptFromRoot,
+          runSymphonyAssignment as runAssignmentFromRoot,
           runOrchestrationSupervisor as runSupervisorFromRoot,
           runOrchestrationSupervisorTick as runSupervisorTickFromRoot,
         } from 'harness-os';
@@ -349,8 +351,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           orchestrationSupervisorTickResultSchema,
            renderSymphonyWorkflowPrompt as renderWorkflowPromptFromSubpath,
            symphonyWorktreeOperationResultSchema,
-           symphonyWorkflowDocumentSchema,
+            symphonyAssignmentRunnerInputSchema,
+            symphonyWorkflowDocumentSchema,
           referenceOrchestrationE2eEvidenceMatrix as matrixFromSubpath,
+          runSymphonyAssignment as runAssignmentFromSubpath,
           runOrchestrationSupervisor as runSupervisorFromSubpath,
           runOrchestrationSupervisorTick as runSupervisorTickFromSubpath,
         } from 'harness-os/orchestration';
@@ -389,6 +393,7 @@ test('packed npm artifact executes installable bins and host smoke paths', async
             codexEnvelopeSchemaSameReference: codexEnvelopeSchemaFromRoot === codexEnvelopeSchemaFromSubpath,
              physicalWorktreeCreateSameReference: createPhysicalWorktreeFromRoot === createPhysicalWorktreeFromSubpath,
            physicalWorktreeCleanupSameReference: cleanupPhysicalWorktreeFromRoot === cleanupPhysicalWorktreeFromSubpath,
+           assignmentRunnerSameReference: runAssignmentFromRoot === runAssignmentFromSubpath,
            supervisorRunSameReference: runSupervisorFromRoot === runSupervisorFromSubpath,
           supervisorTickSameReference: runSupervisorTickFromRoot === runSupervisorTickFromSubpath,
           inspectorType: typeof inspectOrchestration,
@@ -405,6 +410,8 @@ test('packed npm artifact executes installable bins and host smoke paths', async
              physicalWorktreeCreateType: typeof createPhysicalWorktreeFromSubpath,
            physicalWorktreeCleanupType: typeof cleanupPhysicalWorktreeFromSubpath,
            physicalWorktreeSchemaType: typeof symphonyWorktreeOperationResultSchema.safeParse,
+           assignmentRunnerSchemaType: typeof symphonyAssignmentRunnerInputSchema.safeParse,
+           assignmentRunnerType: typeof runAssignmentFromSubpath,
            supervisorRunType: typeof runSupervisorFromSubpath,
           supervisorTickType: typeof runSupervisorTickFromSubpath,
           schemaType: typeof orchestrationPlanSchema.safeParse,
@@ -443,8 +450,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           codexRunnerSameReference: boolean;
           codexEnvelopeSchemaSameReference: boolean;
            physicalWorktreeCreateSameReference: boolean;
-         physicalWorktreeCleanupSameReference: boolean;
-         supervisorRunSameReference: boolean;
+          physicalWorktreeCleanupSameReference: boolean;
+          assignmentRunnerSameReference: boolean;
+          supervisorRunSameReference: boolean;
         supervisorTickSameReference: boolean;
         inspectorType: string;
         workflowLoaderType: string;
@@ -459,8 +467,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           codexEnvelopeSchemaType: string;
            physicalWorktreeCreateType: string;
          physicalWorktreeCleanupType: string;
-         physicalWorktreeSchemaType: string;
-         supervisorRunType: string;
+          physicalWorktreeSchemaType: string;
+          assignmentRunnerSchemaType: string;
+          assignmentRunnerType: string;
+          supervisorRunType: string;
         supervisorTickType: string;
         schemaType: string;
         supervisorRunSchemaType: string;
@@ -496,8 +506,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           codexRunnerSameReference: true,
           codexEnvelopeSchemaSameReference: true,
            physicalWorktreeCreateSameReference: true,
-         physicalWorktreeCleanupSameReference: true,
-         supervisorRunSameReference: true,
+          physicalWorktreeCleanupSameReference: true,
+          assignmentRunnerSameReference: true,
+          supervisorRunSameReference: true,
         supervisorTickSameReference: true,
         inspectorType: 'function',
         workflowLoaderType: 'function',
@@ -512,8 +523,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
           codexEnvelopeSchemaType: 'function',
            physicalWorktreeCreateType: 'function',
          physicalWorktreeCleanupType: 'function',
-         physicalWorktreeSchemaType: 'function',
-         supervisorRunType: 'function',
+          physicalWorktreeSchemaType: 'function',
+          assignmentRunnerSchemaType: 'function',
+          assignmentRunnerType: 'function',
+          supervisorRunType: 'function',
         supervisorTickType: 'function',
         schemaType: 'function',
         supervisorRunSchemaType: 'function',
