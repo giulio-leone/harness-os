@@ -93,11 +93,21 @@ test('capability catalog exposes Symphony orchestration discovery metadata', () 
   assert.deepEqual(catalog.orchestration.codexRunner.timeoutFields, [
     'readTimeoutMs',
     'turnTimeoutMs',
+    'stallTimeoutMs',
   ]);
-  assert.ok(
-    catalog.orchestration.codexRunner.deferredTimeoutFields.includes(
-      'stallTimeoutMs',
-    ),
+  assert.deepEqual(catalog.orchestration.codexRunner.deferredTimeoutFields, []);
+  assert.equal(
+    catalog.orchestration.codexRunner.eventTransport,
+    'requestWithEvents_optional',
+  );
+  assert.equal(
+    catalog.orchestration.codexRunner.stallDetection,
+    'event_capable_transport_only',
+  );
+  assert.equal(catalog.orchestration.codexRunner.continuation.mode, 'advisory_opt_in');
+  assert.equal(
+    catalog.orchestration.codexRunner.telemetry.tokenUsage,
+    'absolute_totals',
   );
   assert.ok(
     catalog.orchestration.codexRunner.normalizedErrorCodes.includes(

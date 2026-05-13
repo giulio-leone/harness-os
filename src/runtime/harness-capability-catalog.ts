@@ -106,6 +106,19 @@ export interface HarnessOrchestrationCapability {
     commandExecution: 'bash_lc';
     timeoutFields: string[];
     deferredTimeoutFields: string[];
+    eventTransport: 'requestWithEvents_optional';
+    stallDetection: 'event_capable_transport_only';
+    continuation: {
+      mode: 'advisory_opt_in';
+      defaultDelayMs: number;
+    };
+    telemetry: {
+      tokenUsage: 'absolute_totals';
+      rateLimits: 'latest_snapshot';
+      pendingRequests: boolean;
+      retryBackoff: boolean;
+    };
+    approvalPolicy: 'auto_approve_approval_events_user_input_terminal_failure';
     normalizedErrorCodes: string[];
     dispatcherWiring: 'not_enabled_by_default';
   };
@@ -210,8 +223,21 @@ const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
     fakeProcessAdapter: 'createScriptedCodexAppServerProcessAdapter',
     defaultCommand: 'codex app-server',
     commandExecution: 'bash_lc',
-    timeoutFields: ['readTimeoutMs', 'turnTimeoutMs'],
-    deferredTimeoutFields: ['stallTimeoutMs'],
+    timeoutFields: ['readTimeoutMs', 'turnTimeoutMs', 'stallTimeoutMs'],
+    deferredTimeoutFields: [],
+    eventTransport: 'requestWithEvents_optional',
+    stallDetection: 'event_capable_transport_only',
+    continuation: {
+      mode: 'advisory_opt_in',
+      defaultDelayMs: 1_000,
+    },
+    telemetry: {
+      tokenUsage: 'absolute_totals',
+      rateLimits: 'latest_snapshot',
+      pendingRequests: true,
+      retryBackoff: true,
+    },
+    approvalPolicy: 'auto_approve_approval_events_user_input_terminal_failure',
     normalizedErrorCodes: [...symphonyCodexRunnerErrorCodeValues],
     dispatcherWiring: 'not_enabled_by_default',
   },

@@ -308,10 +308,11 @@ test('packed npm artifact executes installable bins and host smoke paths', async
            createSymphonyWorkflowReloader as createReloaderFromRoot,
           createDefaultGpt5HighSubagents,
           csqrLiteDefaultCriteria,
-          deriveSymphonyCodexSessionId as deriveCodexSessionFromRoot,
-          loadSymphonyWorkflowFromText as loadWorkflowFromRoot,
-          launchCodexAppServerRunner as launchCodexRunnerFromRoot,
-          referenceOrchestrationE2eEvidenceMatrix as matrixFromRoot,
+           deriveSymphonyCodexSessionId as deriveCodexSessionFromRoot,
+           loadSymphonyWorkflowFromText as loadWorkflowFromRoot,
+           launchCodexAppServerRunner as launchCodexRunnerFromRoot,
+           symphonyCodexRunnerTurnExecutionEnvelopeSchema as codexEnvelopeSchemaFromRoot,
+           referenceOrchestrationE2eEvidenceMatrix as matrixFromRoot,
           renderSymphonyWorkflowPrompt as renderWorkflowPromptFromRoot,
           runOrchestrationSupervisor as runSupervisorFromRoot,
           runOrchestrationSupervisorTick as runSupervisorTickFromRoot,
@@ -336,8 +337,9 @@ test('packed npm artifact executes installable bins and host smoke paths', async
             deriveSymphonyCodexSessionId as deriveCodexSessionFromSubpath,
             inspectOrchestration,
            loadSymphonyWorkflowFromText as loadWorkflowFromSubpath,
-          launchCodexAppServerRunner as launchCodexRunnerFromSubpath,
-          orchestrationDashboardViewModelSchema,
+           launchCodexAppServerRunner as launchCodexRunnerFromSubpath,
+           symphonyCodexRunnerTurnExecutionEnvelopeSchema as codexEnvelopeSchemaFromSubpath,
+           orchestrationDashboardViewModelSchema,
           orchestrationPlanSchema,
           symphonyCodexRunnerLaunchResultSchema,
           symphonyCodexRunnerTurnResultSchema,
@@ -382,9 +384,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
            workflowReloaderSameReference: createReloaderFromRoot === createReloaderFromSubpath,
            codexCommandSameReference: buildCodexCommandFromRoot === buildCodexCommandFromSubpath,
            codexSessionSameReference: deriveCodexSessionFromRoot === deriveCodexSessionFromSubpath,
-           codexProcessAdapterSameReference: createCodexProcessAdapterFromRoot === createCodexProcessAdapterFromSubpath,
-           codexRunnerSameReference: launchCodexRunnerFromRoot === launchCodexRunnerFromSubpath,
-            physicalWorktreeCreateSameReference: createPhysicalWorktreeFromRoot === createPhysicalWorktreeFromSubpath,
+            codexProcessAdapterSameReference: createCodexProcessAdapterFromRoot === createCodexProcessAdapterFromSubpath,
+            codexRunnerSameReference: launchCodexRunnerFromRoot === launchCodexRunnerFromSubpath,
+            codexEnvelopeSchemaSameReference: codexEnvelopeSchemaFromRoot === codexEnvelopeSchemaFromSubpath,
+             physicalWorktreeCreateSameReference: createPhysicalWorktreeFromRoot === createPhysicalWorktreeFromSubpath,
            physicalWorktreeCleanupSameReference: cleanupPhysicalWorktreeFromRoot === cleanupPhysicalWorktreeFromSubpath,
            supervisorRunSameReference: runSupervisorFromRoot === runSupervisorFromSubpath,
           supervisorTickSameReference: runSupervisorTickFromRoot === runSupervisorTickFromSubpath,
@@ -396,9 +399,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
             codexTurnSchemaType: typeof symphonyCodexRunnerTurnResultSchema.safeParse,
             codexCommandBuilderType: typeof buildCodexCommandFromSubpath,
             codexSessionId: deriveCodexSessionFromSubpath({ threadId: 'thread-packed', turnId: 'turn-packed' }),
-            codexProcessAdapterType: typeof createCodexProcessAdapterFromSubpath,
-            codexRunnerType: typeof launchCodexRunnerFromSubpath,
-            physicalWorktreeCreateType: typeof createPhysicalWorktreeFromSubpath,
+             codexProcessAdapterType: typeof createCodexProcessAdapterFromSubpath,
+             codexRunnerType: typeof launchCodexRunnerFromSubpath,
+             codexEnvelopeSchemaType: typeof codexEnvelopeSchemaFromSubpath.safeParse,
+             physicalWorktreeCreateType: typeof createPhysicalWorktreeFromSubpath,
            physicalWorktreeCleanupType: typeof cleanupPhysicalWorktreeFromSubpath,
            physicalWorktreeSchemaType: typeof symphonyWorktreeOperationResultSchema.safeParse,
            supervisorRunType: typeof runSupervisorFromSubpath,
@@ -435,9 +439,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
          workflowReloaderSameReference: boolean;
          codexCommandSameReference: boolean;
          codexSessionSameReference: boolean;
-         codexProcessAdapterSameReference: boolean;
-         codexRunnerSameReference: boolean;
-          physicalWorktreeCreateSameReference: boolean;
+          codexProcessAdapterSameReference: boolean;
+          codexRunnerSameReference: boolean;
+          codexEnvelopeSchemaSameReference: boolean;
+           physicalWorktreeCreateSameReference: boolean;
          physicalWorktreeCleanupSameReference: boolean;
          supervisorRunSameReference: boolean;
         supervisorTickSameReference: boolean;
@@ -449,9 +454,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
          codexTurnSchemaType: string;
          codexCommandBuilderType: string;
          codexSessionId: string;
-         codexProcessAdapterType: string;
-         codexRunnerType: string;
-          physicalWorktreeCreateType: string;
+          codexProcessAdapterType: string;
+          codexRunnerType: string;
+          codexEnvelopeSchemaType: string;
+           physicalWorktreeCreateType: string;
          physicalWorktreeCleanupType: string;
          physicalWorktreeSchemaType: string;
          supervisorRunType: string;
@@ -486,9 +492,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
          workflowReloaderSameReference: true,
          codexCommandSameReference: true,
          codexSessionSameReference: true,
-         codexProcessAdapterSameReference: true,
-         codexRunnerSameReference: true,
-          physicalWorktreeCreateSameReference: true,
+          codexProcessAdapterSameReference: true,
+          codexRunnerSameReference: true,
+          codexEnvelopeSchemaSameReference: true,
+           physicalWorktreeCreateSameReference: true,
          physicalWorktreeCleanupSameReference: true,
          supervisorRunSameReference: true,
         supervisorTickSameReference: true,
@@ -500,9 +507,10 @@ test('packed npm artifact executes installable bins and host smoke paths', async
          codexTurnSchemaType: 'function',
          codexCommandBuilderType: 'function',
          codexSessionId: 'thread-packed-turn-packed',
-         codexProcessAdapterType: 'function',
-         codexRunnerType: 'function',
-          physicalWorktreeCreateType: 'function',
+          codexProcessAdapterType: 'function',
+          codexRunnerType: 'function',
+          codexEnvelopeSchemaType: 'function',
+           physicalWorktreeCreateType: 'function',
          physicalWorktreeCleanupType: 'function',
          physicalWorktreeSchemaType: 'function',
          supervisorRunType: 'function',

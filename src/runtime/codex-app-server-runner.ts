@@ -8,15 +8,34 @@ import {
   symphonyCodexRunnerCommandSchema,
   symphonyCodexRunnerConfigSchema,
   symphonyCodexRunnerContractVersion,
+  symphonyCodexRunnerContinuationSchema,
+  symphonyCodexRunnerEventRecordSchema,
   symphonyCodexRunnerLaunchResultSchema,
+  symphonyCodexRunnerPendingRequestSchema,
+  symphonyCodexRunnerRateLimitSnapshotSchema,
+  symphonyCodexRunnerSessionSnapshotSchema,
+  symphonyCodexRunnerTelemetryRecordSchema,
+  symphonyCodexRunnerTokenUsageSchema,
+  symphonyCodexRunnerTurnExecutionEnvelopeSchema,
   symphonyCodexRunnerTurnResultSchema,
   type SymphonyCodexRunnerCommand,
+  type SymphonyCodexRunnerContinuation,
+  type SymphonyCodexRunnerContinuationReason,
   type SymphonyCodexRunnerConversationRef,
   type SymphonyCodexRunnerError,
   type SymphonyCodexRunnerErrorCode,
+  type SymphonyCodexRunnerEventKind,
+  type SymphonyCodexRunnerEventRecord,
   type SymphonyCodexRunnerLaunchResult,
+  type SymphonyCodexRunnerPendingRequest,
+  type SymphonyCodexRunnerPendingRequestKind,
+  type SymphonyCodexRunnerRateLimitSnapshot,
+  type SymphonyCodexRunnerSessionSnapshot,
+  type SymphonyCodexRunnerTelemetryRecord,
+  type SymphonyCodexRunnerTokenUsage,
   type SymphonyCodexRunnerPhase,
   type SymphonyCodexRunnerTurnRef,
+  type SymphonyCodexRunnerTurnExecutionEnvelope,
   type SymphonyCodexRunnerTurnResult,
 } from '../contracts/symphony-codex-runner-contracts.js';
 import type { SymphonyWorkflowDocument } from '../contracts/symphony-workflow-contracts.js';
@@ -44,6 +63,8 @@ const codexErrorPayloadSchema = z
     code: z.string().optional(),
     category: z.string().optional(),
     message: z.string().optional(),
+    retryAfterMs: z.number().int().min(0).optional(),
+    httpStatusCode: z.number().int().min(100).max(599).optional(),
   })
   .passthrough();
 
@@ -55,6 +76,12 @@ const turnResponseSchema = z
     output: z.string().optional(),
     message: z.string().optional(),
     error: codexErrorPayloadSchema.optional(),
+    usage: z.unknown().optional(),
+    tokenUsage: z.unknown().optional(),
+    rateLimit: z.unknown().optional(),
+    rateLimits: z.array(z.unknown()).optional(),
+    retryAfterMs: z.number().int().min(0).optional(),
+    attempt: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -66,7 +93,36 @@ export interface CodexAppServerTransportRequest {
 
 export interface CodexAppServerTransport {
   request(input: CodexAppServerTransportRequest): Promise<unknown>;
+  requestWithEvents?(
+    input: CodexAppServerTransportRequest,
+    observer: CodexAppServerTurnEventObserver,
+  ): Promise<unknown>;
   close?(): Promise<void> | void;
+}
+
+export interface CodexAppServerTurnEventObserver {
+  onEvent(event: CodexAppServerTurnEvent): void;
+}
+
+export interface CodexAppServerTurnEvent {
+  readonly kind: string;
+  readonly message?: string;
+  readonly turnId?: string;
+  readonly sessionId?: string;
+  readonly usage?: unknown;
+  readonly tokenUsage?: unknown;
+  readonly rateLimit?: unknown;
+  readonly rateLimits?: readonly unknown[];
+  readonly requestId?: string;
+  readonly itemId?: string;
+  readonly approvalKind?: 'command_approval' | 'file_change_approval';
+  readonly reason?: string;
+  readonly questions?: readonly string[];
+  readonly availableDecisions?: readonly string[];
+  readonly retryAfterMs?: number;
+  readonly attempt?: number;
+  readonly delayMs?: number;
+  readonly metadata?: Record<string, string>;
 }
 
 export interface CodexAppServerProcessAdapter {
@@ -81,6 +137,8 @@ export interface LaunchCodexAppServerRunnerInput {
   readonly processAdapter: CodexAppServerProcessAdapter;
   readonly readTimeoutMs?: number;
   readonly turnTimeoutMs?: number;
+  readonly stallTimeoutMs?: number;
+  readonly continuationDelayMs?: number;
   readonly now?: () => Date;
   readonly idFactory?: (kind: 'runner' | 'thread' | 'turn') => string;
 }
@@ -89,6 +147,13 @@ export interface StartCodexAppServerTurnInput {
   readonly prompt: string;
   readonly turnId?: string;
   readonly issueId?: string;
+  readonly attempt?: number;
+  readonly continuation?: {
+    readonly enabled: boolean;
+    readonly prompt?: string;
+    readonly delayMs?: number;
+    readonly attempt?: number;
+  };
   readonly metadata?: Record<string, string>;
 }
 
@@ -96,6 +161,9 @@ export interface CodexAppServerRunner {
   readonly command: SymphonyCodexRunnerCommand;
   readonly conversation: SymphonyCodexRunnerConversationRef;
   startTurn(input: StartCodexAppServerTurnInput): Promise<SymphonyCodexRunnerTurnResult>;
+  startTurnWithTelemetry(
+    input: StartCodexAppServerTurnInput,
+  ): Promise<SymphonyCodexRunnerTurnExecutionEnvelope>;
   close(): Promise<void>;
 }
 
@@ -109,6 +177,12 @@ export type ScriptedCodexAppServerStep =
       readonly kind: 'response';
       readonly method: CodexAppServerTransportRequest['method'];
       readonly response: unknown;
+      readonly delayMs?: number;
+    }
+  | {
+      readonly kind: 'event';
+      readonly method?: CodexAppServerTransportRequest['method'];
+      readonly event: CodexAppServerTurnEvent;
       readonly delayMs?: number;
     }
   | {
@@ -279,6 +353,9 @@ export async function launchCodexAppServerRunner(
         conversation,
         transport,
         turnTimeoutMs: config.turnTimeoutMs,
+        stallTimeoutMs: config.stallTimeoutMs,
+        continuationDelayMs: config.continuationDelayMs,
+        maxRetryBackoffMs: config.maxRetryBackoffMs,
         now,
         idFactory,
       }),
@@ -306,15 +383,22 @@ class CodexAppServerRunnerImpl implements CodexAppServerRunner {
 
   private readonly transport: CodexAppServerTransport;
   private readonly turnTimeoutMs: number;
+  private readonly stallTimeoutMs: number;
+  private readonly continuationDelayMs: number;
+  private readonly maxRetryBackoffMs: number;
   private readonly now: () => Date;
   private readonly idFactory: (kind: 'runner' | 'thread' | 'turn') => string;
   private closed = false;
+  private turnCount = 0;
 
   constructor(input: {
     readonly command: SymphonyCodexRunnerCommand;
     readonly conversation: SymphonyCodexRunnerConversationRef;
     readonly transport: CodexAppServerTransport;
     readonly turnTimeoutMs: number;
+    readonly stallTimeoutMs: number;
+    readonly continuationDelayMs: number;
+    readonly maxRetryBackoffMs: number;
     readonly now: () => Date;
     readonly idFactory: (kind: 'runner' | 'thread' | 'turn') => string;
   }) {
@@ -322,6 +406,9 @@ class CodexAppServerRunnerImpl implements CodexAppServerRunner {
     this.conversation = input.conversation;
     this.transport = input.transport;
     this.turnTimeoutMs = input.turnTimeoutMs;
+    this.stallTimeoutMs = input.stallTimeoutMs;
+    this.continuationDelayMs = input.continuationDelayMs;
+    this.maxRetryBackoffMs = input.maxRetryBackoffMs;
     this.now = input.now;
     this.idFactory = input.idFactory;
   }
@@ -329,11 +416,24 @@ class CodexAppServerRunnerImpl implements CodexAppServerRunner {
   async startTurn(
     input: StartCodexAppServerTurnInput,
   ): Promise<SymphonyCodexRunnerTurnResult> {
+    return (await this.startTurnWithTelemetry(input)).result;
+  }
+
+  async startTurnWithTelemetry(
+    input: StartCodexAppServerTurnInput,
+  ): Promise<SymphonyCodexRunnerTurnExecutionEnvelope> {
     const startedAt = this.now();
     const requestedTurnId = input.turnId ?? this.idFactory('turn');
     const requestedTurn = buildTurnRef({
       conversation: this.conversation,
       turnId: requestedTurnId,
+    });
+    const turnCount = this.turnCount + 1;
+    const collector = new CodexTurnTelemetryCollector({
+      conversation: this.conversation,
+      requestedTurn,
+      turnCount,
+      now: this.now,
     });
 
     try {
@@ -345,7 +445,8 @@ class CodexAppServerRunnerImpl implements CodexAppServerRunner {
         );
       }
 
-      const response = await requestWithTimeout({
+      this.turnCount = turnCount;
+      const response = await requestTurnWithTelemetry({
         transport: this.transport,
         request: {
           method: 'turn.start',
@@ -359,34 +460,57 @@ class CodexAppServerRunnerImpl implements CodexAppServerRunner {
             metadata: input.metadata ?? {},
           },
         },
-        timeoutMs: this.turnTimeoutMs,
-        timeoutCode: 'turn_timeout',
-        timeoutMessage: `Codex turn ${requestedTurnId} exceeded ${this.turnTimeoutMs}ms.`,
+        turnTimeoutMs: this.turnTimeoutMs,
+        stallTimeoutMs: this.stallTimeoutMs,
+        onEvent: (event) => {
+          collector.recordRawEvent(event);
+        },
+        turnTimeoutMessage: `Codex turn ${requestedTurnId} exceeded ${this.turnTimeoutMs}ms.`,
+        stallTimeoutMessage: `Codex turn ${requestedTurnId} was inactive for ${this.stallTimeoutMs}ms.`,
       });
 
+      collector.recordTerminalResponse(response);
       return this.normalizeTurnResponse({
         response,
         startedAt,
         requestedTurn,
+        collector,
+        continuationInput: input.continuation,
+        attempt: input.attempt,
       });
     } catch (error) {
       let runnerError = toRunnerError(error, 'turn');
       const shouldCloseTransport =
         runnerError.code === 'process_exited' ||
         runnerError.code === 'turn_timeout' ||
+        runnerError.code === 'stall_timeout' ||
         (runnerError.code === 'transport_closed' && !this.closed);
       if (shouldCloseTransport) {
         this.closed = true;
         runnerError = await closeTransportAfterFailure(this.transport, runnerError);
       }
 
-      return buildTurnResult({
+      const result = buildTurnResult({
         status: 'failed',
         conversation: this.conversation,
         startedAt,
         completedAt: this.now(),
         turn: requestedTurn,
         error: toSerializableError(runnerError),
+      });
+      const continuation = buildFailureContinuation({
+        result,
+        maxRetryBackoffMs: this.maxRetryBackoffMs,
+        attempt: input.attempt ?? 1,
+      });
+      if (continuation !== undefined) {
+        collector.recordRetryBackoff(continuation);
+      }
+
+      return buildTurnExecutionEnvelope({
+        result,
+        collector,
+        continuation,
       });
     }
   }
@@ -420,7 +544,10 @@ class CodexAppServerRunnerImpl implements CodexAppServerRunner {
     readonly response: unknown;
     readonly startedAt: Date;
     readonly requestedTurn: SymphonyCodexRunnerTurnRef;
-  }): SymphonyCodexRunnerTurnResult {
+    readonly collector: CodexTurnTelemetryCollector;
+    readonly continuationInput?: StartCodexAppServerTurnInput['continuation'];
+    readonly attempt?: number;
+  }): SymphonyCodexRunnerTurnExecutionEnvelope {
     const parsed = turnResponseSchema.safeParse(input.response);
     if (!parsed.success) {
       throw new CodexAppServerRunnerError(
@@ -456,7 +583,7 @@ class CodexAppServerRunnerImpl implements CodexAppServerRunner {
     }
 
     if (response.status === 'completed' || response.status === 'succeeded') {
-      return buildTurnResult({
+      const result = buildTurnResult({
         status: 'succeeded',
         conversation: this.conversation,
         startedAt: input.startedAt,
@@ -464,15 +591,41 @@ class CodexAppServerRunnerImpl implements CodexAppServerRunner {
         turn,
         output: response.output ?? '',
       });
+      const continuation = buildSuccessContinuation({
+        result,
+        continuationInput: input.continuationInput,
+        defaultDelayMs: this.continuationDelayMs,
+      });
+      if (continuation !== undefined) {
+        input.collector.recordRetryBackoff(continuation);
+      }
+      return buildTurnExecutionEnvelope({
+        result,
+        collector: input.collector,
+        continuation,
+      });
     }
 
-    return buildTurnResult({
+    const result = buildTurnResult({
       status: 'failed',
       conversation: this.conversation,
       startedAt: input.startedAt,
       completedAt: this.now(),
       turn,
       error: buildTurnFailureError(response),
+    });
+    const continuation = buildFailureContinuation({
+      result,
+      maxRetryBackoffMs: this.maxRetryBackoffMs,
+      attempt: input.attempt ?? response.attempt ?? 1,
+    });
+    if (continuation !== undefined) {
+      input.collector.recordRetryBackoff(continuation);
+    }
+    return buildTurnExecutionEnvelope({
+      result,
+      collector: input.collector,
+      continuation,
     });
   }
 }
@@ -495,6 +648,43 @@ class ScriptedCodexAppServerTransport implements CodexAppServerTransport {
     }
 
     this.requests.push(input);
+    const step = await this.shiftStep(input);
+    if (step.kind === 'event') {
+      throw new CodexAppServerRunnerError(
+        'protocol_error',
+        input.phase,
+        `Scripted event ${step.event.kind} requires an event-capable turn request.`,
+      );
+    }
+    return this.resolveNonEventStep(step, input);
+  }
+
+  async requestWithEvents(
+    input: CodexAppServerTransportRequest,
+    observer: CodexAppServerTurnEventObserver,
+  ): Promise<unknown> {
+    if (this.closed) {
+      throw new CodexAppServerRunnerError(
+        'transport_closed',
+        input.phase,
+        'Codex app-server transport is closed.',
+      );
+    }
+
+    this.requests.push(input);
+    while (true) {
+      const step = await this.shiftStep(input);
+      if (step.kind === 'event') {
+        observer.onEvent(step.event);
+        continue;
+      }
+      return this.resolveNonEventStep(step, input);
+    }
+  }
+
+  private async shiftStep(
+    input: CodexAppServerTransportRequest,
+  ): Promise<ScriptedCodexAppServerStep> {
     const step = this.steps.shift();
     if (step === undefined) {
       throw new CodexAppServerRunnerError(
@@ -516,6 +706,13 @@ class ScriptedCodexAppServerTransport implements CodexAppServerTransport {
       await delay(step.delayMs);
     }
 
+    return step;
+  }
+
+  private resolveNonEventStep(
+    step: Exclude<ScriptedCodexAppServerStep, { readonly kind: 'event' }>,
+    input: CodexAppServerTransportRequest,
+  ): Promise<unknown> | unknown {
     switch (step.kind) {
       case 'response':
         return step.response;
@@ -608,6 +805,9 @@ function resolveRunnerCommand(
 function resolveRunnerConfig(input: LaunchCodexAppServerRunnerInput): {
   readonly readTimeoutMs: number;
   readonly turnTimeoutMs: number;
+  readonly stallTimeoutMs: number;
+  readonly continuationDelayMs: number;
+  readonly maxRetryBackoffMs: number;
 } {
   const parsed = symphonyCodexRunnerConfigSchema.parse({
     command:
@@ -616,11 +816,16 @@ function resolveRunnerConfig(input: LaunchCodexAppServerRunnerInput): {
         : input.workflow?.config.codex.command,
     readTimeoutMs: input.readTimeoutMs ?? input.workflow?.config.codex.readTimeoutMs,
     turnTimeoutMs: input.turnTimeoutMs ?? input.workflow?.config.codex.turnTimeoutMs,
+    stallTimeoutMs: input.stallTimeoutMs ?? input.workflow?.config.codex.stallTimeoutMs,
+    continuationDelayMs: input.continuationDelayMs,
   });
 
   return {
     readTimeoutMs: parsed.readTimeoutMs,
     turnTimeoutMs: parsed.turnTimeoutMs,
+    stallTimeoutMs: parsed.stallTimeoutMs,
+    continuationDelayMs: parsed.continuationDelayMs,
+    maxRetryBackoffMs: input.workflow?.config.agent.maxRetryBackoffMs ?? 300_000,
   };
 }
 
@@ -702,6 +907,106 @@ async function requestWithTimeout(input: {
       input.timeoutMessage,
     ),
   );
+}
+
+function requestTurnWithTelemetry(input: {
+  readonly transport: CodexAppServerTransport;
+  readonly request: CodexAppServerTransportRequest;
+  readonly turnTimeoutMs: number;
+  readonly stallTimeoutMs: number;
+  readonly onEvent: (event: CodexAppServerTurnEvent) => void;
+  readonly turnTimeoutMessage: string;
+  readonly stallTimeoutMessage: string;
+}): Promise<unknown> {
+  const requestWithEvents = input.transport.requestWithEvents;
+  if (requestWithEvents === undefined) {
+    return requestWithTimeout({
+      transport: input.transport,
+      request: input.request,
+      timeoutMs: input.turnTimeoutMs,
+      timeoutCode: 'turn_timeout',
+      timeoutMessage: input.turnTimeoutMessage,
+    });
+  }
+
+  let settled = false;
+  let turnTimeout: ReturnType<typeof setTimeout> | undefined;
+  let stallTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  return new Promise((resolve, reject) => {
+    const clearTimers = () => {
+      if (turnTimeout !== undefined) {
+        clearTimeout(turnTimeout);
+      }
+      if (stallTimeout !== undefined) {
+        clearTimeout(stallTimeout);
+      }
+    };
+    const rejectOnce = (error: CodexAppServerRunnerError) => {
+      if (!settled) {
+        settled = true;
+        clearTimers();
+        reject(error);
+      }
+    };
+    const resolveOnce = (value: unknown) => {
+      if (!settled) {
+        settled = true;
+        clearTimers();
+        resolve(value);
+      }
+    };
+    const resetStallTimer = () => {
+      if (input.stallTimeoutMs <= 0 || settled) {
+        return;
+      }
+      if (stallTimeout !== undefined) {
+        clearTimeout(stallTimeout);
+      }
+      stallTimeout = setTimeout(() => {
+        rejectOnce(
+          new CodexAppServerRunnerError(
+            'stall_timeout',
+            input.request.phase,
+            input.stallTimeoutMessage,
+            [],
+            undefined,
+            { stallTimeoutMs: String(input.stallTimeoutMs) },
+          ),
+        );
+      }, input.stallTimeoutMs);
+    };
+
+    turnTimeout = setTimeout(() => {
+      rejectOnce(
+        new CodexAppServerRunnerError(
+          'turn_timeout',
+          input.request.phase,
+          input.turnTimeoutMessage,
+          [],
+          undefined,
+          { turnTimeoutMs: String(input.turnTimeoutMs) },
+        ),
+      );
+    }, input.turnTimeoutMs);
+    resetStallTimer();
+
+    requestWithEvents
+      .call(input.transport, input.request, {
+        onEvent(event) {
+          if (settled) {
+            return;
+          }
+          input.onEvent(event);
+          if (isCodexActivityEvent(event)) {
+            resetStallTimer();
+          }
+        },
+      })
+      .then(resolveOnce, (error: unknown) => {
+        rejectOnce(toRunnerError(error, input.request.phase));
+      });
+  });
 }
 
 function withTimeout<T>(
@@ -911,6 +1216,339 @@ function closeTransportBounded(
   });
 }
 
+class CodexTurnTelemetryCollector {
+  readonly events: SymphonyCodexRunnerEventRecord[] = [];
+  readonly telemetry: SymphonyCodexRunnerTelemetryRecord[] = [];
+
+  private lastEventKind: SymphonyCodexRunnerEventKind | undefined;
+  private lastEventAt: string | undefined;
+  private lastMessage: string | undefined;
+  private lastTokenUsage: SymphonyCodexRunnerTokenUsage | undefined;
+  private aggregateTokenUsage: SymphonyCodexRunnerTokenUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
+  private readonly rateLimits = new Map<string, SymphonyCodexRunnerRateLimitSnapshot>();
+  private readonly pendingRequests = new Map<string, SymphonyCodexRunnerPendingRequest>();
+  private eventIndex = 0;
+  private telemetryIndex = 0;
+
+  constructor(
+    private readonly input: {
+      readonly conversation: SymphonyCodexRunnerConversationRef;
+      readonly requestedTurn: SymphonyCodexRunnerTurnRef;
+      readonly turnCount: number;
+      readonly now: () => Date;
+    },
+  ) {}
+
+  recordRawEvent(event: CodexAppServerTurnEvent): void {
+    const kind = normalizeEventKind(event.kind);
+    const turn = this.resolveTurn(event.turnId);
+    const observedAt = this.input.now().toISOString();
+    const tokenUsage = normalizeTokenUsage(event.tokenUsage ?? event.usage);
+    const rateLimits = normalizeRateLimits(event.rateLimits ?? event.rateLimit);
+    const message = event.message;
+
+    this.pushEvent({
+      kind,
+      observedAt,
+      turn,
+      message,
+      tokenUsage,
+      rateLimit: rateLimits[0],
+      attempt: event.attempt,
+      delayMs: normalizeOptionalNonNegativeInteger(event.delayMs),
+      retryAfterMs: normalizeOptionalNonNegativeInteger(event.retryAfterMs),
+      metadata: event.metadata ?? {},
+    });
+
+    if (tokenUsage !== undefined) {
+      this.recordTokenUsage(tokenUsage, observedAt, turn);
+    }
+    for (const rateLimit of rateLimits) {
+      this.recordRateLimit(rateLimit, observedAt, turn);
+    }
+
+    if (kind === 'approval_requested') {
+      const pending = this.createPendingRequest({
+        event,
+        observedAt,
+        turn,
+        kind: approvalRequestKind(event),
+        status: 'pending',
+      });
+      this.recordPendingRequest(pending, observedAt, turn);
+      const resolved = symphonyCodexRunnerPendingRequestSchema.parse({
+        ...pending,
+        status: 'resolved',
+        resolvedAt: observedAt,
+      });
+      this.recordPendingRequest(resolved, observedAt, turn);
+      this.pushEvent({
+        kind: 'approval_auto_approved',
+        observedAt,
+        turn,
+        message: 'Approval request auto-approved by high-trust runner policy.',
+        pendingRequest: resolved,
+        metadata: {
+          policy: 'auto_approve',
+          sourceEventKind: event.kind,
+        },
+      });
+      return;
+    }
+
+    if (kind === 'user_input_required') {
+      this.recordPendingRequest(
+        this.createPendingRequest({
+          event,
+          observedAt,
+          turn,
+          kind: 'user_input',
+          status: 'pending',
+        }),
+        observedAt,
+        turn,
+      );
+    }
+  }
+
+  recordTerminalResponse(response: unknown): void {
+    const parsed = turnResponseSchema.safeParse(response);
+    if (!parsed.success) {
+      return;
+    }
+
+    const turn = this.resolveTurn(parsed.data.turnId);
+    const observedAt = this.input.now().toISOString();
+    const tokenUsage = normalizeTokenUsage(
+      parsed.data.tokenUsage ?? parsed.data.usage,
+    );
+    const rateLimits = normalizeRateLimits(
+      parsed.data.rateLimits ?? parsed.data.rateLimit,
+    );
+    const terminalKind = terminalEventKind(parsed.data.status);
+
+    this.pushEvent({
+      kind: terminalKind,
+      observedAt,
+      turn,
+      message: parsed.data.message,
+      tokenUsage,
+      rateLimit: rateLimits[0],
+      attempt: parsed.data.attempt,
+      retryAfterMs:
+        parsed.data.retryAfterMs ??
+        normalizeOptionalNonNegativeInteger(parsed.data.error?.retryAfterMs),
+      metadata: {
+        codexStatus: parsed.data.status,
+      },
+    });
+
+    if (tokenUsage !== undefined) {
+      this.recordTokenUsage(tokenUsage, observedAt, turn);
+    }
+    for (const rateLimit of rateLimits) {
+      this.recordRateLimit(rateLimit, observedAt, turn);
+    }
+  }
+
+  recordRetryBackoff(continuation: SymphonyCodexRunnerContinuation): void {
+    const observedAt = this.input.now().toISOString();
+    this.pushEvent({
+      kind:
+        continuation.reason === 'clean_exit'
+          ? 'retry_scheduled'
+          : 'backoff_scheduled',
+      observedAt,
+      turn: continuation.continuationOf,
+      attempt: continuation.attempt,
+      delayMs: continuation.delayMs,
+      retryAfterMs: continuation.retryAfterMs,
+      metadata: {
+        reason: continuation.reason,
+      },
+    });
+    this.pushTelemetry({
+      kind: 'retry_backoff',
+      observedAt,
+      turn: continuation.continuationOf,
+      reason: continuation.reason,
+      attempt: continuation.attempt,
+      delayMs: continuation.delayMs,
+      retryAfterMs: continuation.retryAfterMs,
+    });
+  }
+
+  buildSessionSnapshot(currentTurn?: SymphonyCodexRunnerTurnRef): SymphonyCodexRunnerSessionSnapshot {
+    return symphonyCodexRunnerSessionSnapshotSchema.parse({
+      contractVersion: symphonyCodexRunnerContractVersion,
+      conversation: this.input.conversation,
+      currentTurn,
+      turnCount: this.input.turnCount,
+      lastEventKind: this.lastEventKind,
+      lastEventAt: this.lastEventAt,
+      lastMessage: this.lastMessage,
+      lastTokenUsage: this.lastTokenUsage,
+      aggregateTokenUsage: this.aggregateTokenUsage,
+      rateLimits: [...this.rateLimits.values()],
+      pendingRequests: [...this.pendingRequests.values()],
+      metadata: {},
+    });
+  }
+
+  private pushEvent(input: {
+    readonly kind: SymphonyCodexRunnerEventKind;
+    readonly observedAt: string;
+    readonly turn?: SymphonyCodexRunnerTurnRef;
+    readonly message?: string;
+    readonly tokenUsage?: SymphonyCodexRunnerTokenUsage;
+    readonly rateLimit?: SymphonyCodexRunnerRateLimitSnapshot;
+    readonly pendingRequest?: SymphonyCodexRunnerPendingRequest;
+    readonly attempt?: number;
+    readonly delayMs?: number;
+    readonly retryAfterMs?: number;
+    readonly metadata?: Record<string, string>;
+  }): void {
+    const record = symphonyCodexRunnerEventRecordSchema.parse({
+      contractVersion: symphonyCodexRunnerContractVersion,
+      eventId: `codex-event-${++this.eventIndex}`,
+      kind: input.kind,
+      observedAt: input.observedAt,
+      conversation: this.input.conversation,
+      turn: input.turn,
+      message: input.message,
+      tokenUsage: input.tokenUsage,
+      rateLimit: input.rateLimit,
+      pendingRequest: input.pendingRequest,
+      attempt: input.attempt,
+      delayMs: input.delayMs,
+      retryAfterMs: input.retryAfterMs,
+      metadata: input.metadata ?? {},
+    });
+    this.events.push(record);
+    this.lastEventKind = record.kind;
+    this.lastEventAt = record.observedAt;
+    if (record.message !== undefined) {
+      this.lastMessage = record.message;
+    }
+  }
+
+  private pushTelemetry(input: {
+    readonly kind: z.infer<typeof symphonyCodexRunnerTelemetryRecordSchema>['kind'];
+    readonly observedAt: string;
+    readonly turn?: SymphonyCodexRunnerTurnRef;
+    readonly tokenUsage?: SymphonyCodexRunnerTokenUsage;
+    readonly rateLimit?: SymphonyCodexRunnerRateLimitSnapshot;
+    readonly pendingRequest?: SymphonyCodexRunnerPendingRequest;
+    readonly reason?: SymphonyCodexRunnerContinuationReason;
+    readonly attempt?: number;
+    readonly delayMs?: number;
+    readonly retryAfterMs?: number;
+    readonly metadata?: Record<string, string>;
+  }): void {
+    this.telemetry.push(
+      symphonyCodexRunnerTelemetryRecordSchema.parse({
+        contractVersion: symphonyCodexRunnerContractVersion,
+        telemetryId: `codex-telemetry-${++this.telemetryIndex}`,
+        kind: input.kind,
+        observedAt: input.observedAt,
+        conversation: this.input.conversation,
+        turn: input.turn,
+        tokenUsage: input.tokenUsage,
+        rateLimit: input.rateLimit,
+        pendingRequest: input.pendingRequest,
+        reason: input.reason,
+        attempt: input.attempt,
+        delayMs: input.delayMs,
+        retryAfterMs: input.retryAfterMs,
+        metadata: input.metadata ?? {},
+      }),
+    );
+  }
+
+  private recordTokenUsage(
+    tokenUsage: SymphonyCodexRunnerTokenUsage,
+    observedAt: string,
+    turn?: SymphonyCodexRunnerTurnRef,
+  ): void {
+    this.lastTokenUsage = tokenUsage;
+    this.aggregateTokenUsage = tokenUsage;
+    this.pushTelemetry({
+      kind: 'token_usage',
+      observedAt,
+      turn,
+      tokenUsage,
+    });
+  }
+
+  private recordRateLimit(
+    rateLimit: SymphonyCodexRunnerRateLimitSnapshot,
+    observedAt: string,
+    turn?: SymphonyCodexRunnerTurnRef,
+  ): void {
+    this.rateLimits.set(rateLimitKey(rateLimit), rateLimit);
+    this.pushTelemetry({
+      kind: 'rate_limit',
+      observedAt,
+      turn,
+      rateLimit,
+    });
+  }
+
+  private recordPendingRequest(
+    pendingRequest: SymphonyCodexRunnerPendingRequest,
+    observedAt: string,
+    turn?: SymphonyCodexRunnerTurnRef,
+  ): void {
+    this.pendingRequests.set(pendingRequestKey(pendingRequest), pendingRequest);
+    this.pushTelemetry({
+      kind: 'pending_request',
+      observedAt,
+      turn,
+      pendingRequest,
+      metadata: {
+        status: pendingRequest.status,
+      },
+    });
+  }
+
+  private createPendingRequest(input: {
+    readonly event: CodexAppServerTurnEvent;
+    readonly observedAt: string;
+    readonly turn?: SymphonyCodexRunnerTurnRef;
+    readonly kind: SymphonyCodexRunnerPendingRequestKind;
+    readonly status: SymphonyCodexRunnerPendingRequest['status'];
+  }): SymphonyCodexRunnerPendingRequest {
+    const turn = input.turn ?? this.input.requestedTurn;
+    return symphonyCodexRunnerPendingRequestSchema.parse({
+      kind: input.kind,
+      status: input.status,
+      requestId: input.event.requestId,
+      itemId: input.event.itemId,
+      threadId: turn.threadId,
+      turnId: turn.turnId,
+      startedAt: input.observedAt,
+      reason: input.event.reason ?? input.event.message,
+      questions: [...(input.event.questions ?? [])],
+      availableDecisions: [...(input.event.availableDecisions ?? [])],
+      metadata: input.event.metadata ?? {},
+    });
+  }
+
+  private resolveTurn(turnId?: string): SymphonyCodexRunnerTurnRef | undefined {
+    if (turnId === undefined || turnId === this.input.requestedTurn.turnId) {
+      return this.input.requestedTurn;
+    }
+    return buildTurnRef({
+      conversation: this.input.conversation,
+      turnId,
+    });
+  }
+}
+
 function parseInitializeResponse(response: unknown): z.infer<
   typeof initializeResponseSchema
 > {
@@ -1005,8 +1643,118 @@ function buildTurnResult(input:
           ...base,
           turn: input.turn,
           error: input.error,
-        },
+      },
   );
+}
+
+function buildTurnExecutionEnvelope(input: {
+  readonly result: SymphonyCodexRunnerTurnResult;
+  readonly collector: CodexTurnTelemetryCollector;
+  readonly continuation?: SymphonyCodexRunnerContinuation;
+}): SymphonyCodexRunnerTurnExecutionEnvelope {
+  return symphonyCodexRunnerTurnExecutionEnvelopeSchema.parse({
+    contractVersion: symphonyCodexRunnerContractVersion,
+    result: input.result,
+    events: input.collector.events,
+    telemetry: input.collector.telemetry,
+    session: input.collector.buildSessionSnapshot(input.result.turn),
+    continuation: input.continuation,
+    metadata: {
+      stallDetection:
+        input.result.error?.code === 'stall_timeout'
+          ? 'triggered'
+          : 'event_capable_transport_only',
+    },
+  });
+}
+
+function buildSuccessContinuation(input: {
+  readonly result: SymphonyCodexRunnerTurnResult;
+  readonly continuationInput?: StartCodexAppServerTurnInput['continuation'];
+  readonly defaultDelayMs: number;
+}): SymphonyCodexRunnerContinuation | undefined {
+  if (
+    input.result.turn === undefined ||
+    input.continuationInput === undefined ||
+    !input.continuationInput.enabled
+  ) {
+    return undefined;
+  }
+
+  return symphonyCodexRunnerContinuationSchema.parse({
+    contractVersion: symphonyCodexRunnerContractVersion,
+    continuationOf: input.result.turn,
+    reason: 'clean_exit',
+    attempt: input.continuationInput.attempt ?? 1,
+    delayMs: input.continuationInput.delayMs ?? input.defaultDelayMs,
+    prompt: input.continuationInput.prompt,
+    metadata: {
+      mode: 'caller_requested',
+      threadId: input.result.turn.threadId,
+    },
+  });
+}
+
+function buildFailureContinuation(input: {
+  readonly result: SymphonyCodexRunnerTurnResult;
+  readonly maxRetryBackoffMs: number;
+  readonly attempt: number;
+}): SymphonyCodexRunnerContinuation | undefined {
+  if (input.result.turn === undefined || input.result.error === undefined) {
+    return undefined;
+  }
+
+  const reason = continuationReasonForError(input.result.error);
+  if (reason === undefined) {
+    return undefined;
+  }
+
+  const retryAfterMs = normalizeOptionalNonNegativeInteger(
+    input.result.error.details.retryAfterMs,
+  );
+  const delayMs =
+    retryAfterMs ??
+    calculateFailureBackoffMs(input.attempt, input.maxRetryBackoffMs);
+
+  return symphonyCodexRunnerContinuationSchema.parse({
+    contractVersion: symphonyCodexRunnerContractVersion,
+    continuationOf: input.result.turn,
+    reason,
+    attempt: input.attempt,
+    delayMs,
+    retryAfterMs,
+    metadata: {
+      errorCode: input.result.error.code,
+      ...(input.result.error.codexCategory !== undefined
+        ? { codexCategory: input.result.error.codexCategory }
+        : {}),
+    },
+  });
+}
+
+function continuationReasonForError(
+  error: SymphonyCodexRunnerError,
+): Exclude<SymphonyCodexRunnerContinuationReason, 'clean_exit' | 'approval' | 'user_input'> | undefined {
+  if (error.code === 'stall_timeout') {
+    return 'stall_timeout';
+  }
+  if (
+    error.code === 'rate_limit' ||
+    error.code === 'server_overloaded' ||
+    error.details.retryAfterMs !== undefined ||
+    error.codexCategory === 'usageLimitExceeded' ||
+    error.codexCategory === 'rate_limit' ||
+    error.codexCategory === 'server_overloaded' ||
+    error.codexCategory === 'overloaded'
+  ) {
+    return 'retryable_failure';
+  }
+  return undefined;
+}
+
+function calculateFailureBackoffMs(attempt: number, maxRetryBackoffMs: number): number {
+  const exponent = Math.max(0, attempt - 1);
+  return Math.min(10_000 * 2 ** exponent, maxRetryBackoffMs);
 }
 
 function buildTurnFailureError(
@@ -1034,6 +1782,15 @@ function buildTurnFailureError(
       ...(errorPayload?.category !== undefined
         ? { codexCategory: errorPayload.category }
         : {}),
+      ...(errorPayload?.httpStatusCode !== undefined
+        ? { httpStatusCode: String(errorPayload.httpStatusCode) }
+        : {}),
+      ...(response.retryAfterMs !== undefined
+        ? { retryAfterMs: String(response.retryAfterMs) }
+        : {}),
+      ...(errorPayload?.retryAfterMs !== undefined
+        ? { retryAfterMs: String(errorPayload.retryAfterMs) }
+        : {}),
     },
   };
 }
@@ -1059,6 +1816,203 @@ function turnFailureCode(
         `Successful Codex status ${status} cannot be mapped to a failure code.`,
       );
   }
+}
+
+function terminalEventKind(
+  status: z.infer<typeof turnResponseSchema>['status'],
+): SymphonyCodexRunnerEventKind {
+  switch (status) {
+    case 'completed':
+    case 'succeeded':
+      return 'turn_completed';
+    case 'failed':
+      return 'turn_failed';
+    case 'cancelled':
+      return 'turn_cancelled';
+    case 'input_required':
+      return 'user_input_required';
+  }
+}
+
+function normalizeEventKind(kind: string): SymphonyCodexRunnerEventKind {
+  switch (kind) {
+    case 'turn_started':
+    case 'turn.started':
+    case 'turn/start':
+      return 'turn_started';
+    case 'turn_progress':
+    case 'turn.progress':
+    case 'item_started':
+    case 'item.completed':
+    case 'notification':
+      return kind === 'notification' ? 'notification' : 'turn_progress';
+    case 'approval_requested':
+    case 'command_approval_requested':
+    case 'file_change_approval_requested':
+    case 'serverRequest/approval':
+      return 'approval_requested';
+    case 'approval_auto_approved':
+      return 'approval_auto_approved';
+    case 'user_input_required':
+    case 'tool/requestUserInput':
+    case 'serverRequest/userInput':
+      return 'user_input_required';
+    case 'rate_limit_updated':
+    case 'account_rate_limits.updated':
+    case 'rateLimits':
+      return 'rate_limit_updated';
+    case 'token_usage_updated':
+    case 'usage.updated':
+    case 'turn.completed.usage':
+      return 'token_usage_updated';
+    case 'retry_scheduled':
+      return 'retry_scheduled';
+    case 'backoff_scheduled':
+      return 'backoff_scheduled';
+    case 'turn_completed':
+    case 'turn.completed':
+      return 'turn_completed';
+    case 'turn_failed':
+    case 'turn.failed':
+      return 'turn_failed';
+    case 'turn_cancelled':
+    case 'turn.cancelled':
+      return 'turn_cancelled';
+    case 'other_message':
+      return 'other_message';
+    default:
+      return 'other_message';
+  }
+}
+
+function isCodexActivityEvent(event: CodexAppServerTurnEvent): boolean {
+  if (
+    event.tokenUsage !== undefined ||
+    event.usage !== undefined ||
+    event.rateLimit !== undefined ||
+    event.rateLimits !== undefined
+  ) {
+    return true;
+  }
+
+  switch (normalizeEventKind(event.kind)) {
+    case 'turn_started':
+    case 'turn_progress':
+    case 'approval_requested':
+    case 'approval_auto_approved':
+    case 'user_input_required':
+    case 'rate_limit_updated':
+    case 'token_usage_updated':
+      return true;
+    case 'retry_scheduled':
+    case 'backoff_scheduled':
+    case 'turn_completed':
+    case 'turn_failed':
+    case 'turn_cancelled':
+    case 'notification':
+    case 'other_message':
+      return false;
+  }
+}
+
+function approvalRequestKind(
+  event: CodexAppServerTurnEvent,
+): SymphonyCodexRunnerPendingRequestKind {
+  if (event.approvalKind !== undefined) {
+    return event.approvalKind;
+  }
+  if (event.kind === 'file_change_approval_requested') {
+    return 'file_change_approval';
+  }
+  return 'command_approval';
+}
+
+function normalizeTokenUsage(value: unknown): SymphonyCodexRunnerTokenUsage | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const inputTokens = getNonNegativeInteger(value, [
+    'inputTokens',
+    'input_tokens',
+    'input',
+    'promptTokens',
+    'prompt_tokens',
+  ]);
+  const outputTokens = getNonNegativeInteger(value, [
+    'outputTokens',
+    'output_tokens',
+    'output',
+    'completionTokens',
+    'completion_tokens',
+  ]);
+  const explicitTotalTokens = getNonNegativeInteger(value, [
+    'totalTokens',
+    'total_tokens',
+    'total',
+  ]);
+
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    explicitTotalTokens === undefined
+  ) {
+    return undefined;
+  }
+
+  const normalizedInput = inputTokens ?? 0;
+  const normalizedOutput = outputTokens ?? 0;
+  return symphonyCodexRunnerTokenUsageSchema.parse({
+    inputTokens: normalizedInput,
+    outputTokens: normalizedOutput,
+    totalTokens: explicitTotalTokens ?? normalizedInput + normalizedOutput,
+  });
+}
+
+function normalizeRateLimits(value: unknown): SymphonyCodexRunnerRateLimitSnapshot[] {
+  const candidates = Array.isArray(value) ? value : [value];
+  return candidates.flatMap((candidate) => {
+    const snapshot = normalizeRateLimitSnapshot(candidate);
+    return snapshot === undefined ? [] : [snapshot];
+  });
+}
+
+function normalizeRateLimitSnapshot(
+  value: unknown,
+): SymphonyCodexRunnerRateLimitSnapshot | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const family =
+    getString(value, ['family', 'type', 'category']) ??
+    getString(value, ['name', 'limitName']);
+  if (family === undefined) {
+    return undefined;
+  }
+
+  const resetAt = getString(value, ['resetAt', 'reset_at']);
+  return symphonyCodexRunnerRateLimitSnapshotSchema.parse({
+    family,
+    name: getString(value, ['name', 'limitName']),
+    used: getNonNegativeInteger(value, ['used', 'consumed']),
+    limit: getNonNegativeInteger(value, ['limit', 'max']),
+    remaining: getNonNegativeInteger(value, ['remaining', 'available']),
+    resetAt: resetAt !== undefined && isIsoDate(resetAt) ? resetAt : undefined,
+    metadata: {},
+  });
+}
+
+function rateLimitKey(rateLimit: SymphonyCodexRunnerRateLimitSnapshot): string {
+  return `${rateLimit.family}:${rateLimit.name ?? ''}`;
+}
+
+function pendingRequestKey(pendingRequest: SymphonyCodexRunnerPendingRequest): string {
+  return (
+    pendingRequest.requestId ??
+    pendingRequest.itemId ??
+    `${pendingRequest.threadId}:${pendingRequest.turnId}:${pendingRequest.kind}`
+  );
 }
 
 function buildTurnRef(input: {
@@ -1121,6 +2075,47 @@ function normalizeEnv(env: Record<string, string | undefined>): Record<string, s
   return Object.fromEntries(
     Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
+}
+
+function getString(record: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function getNonNegativeInteger(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): number | undefined {
+  for (const key of keys) {
+    const normalized = normalizeOptionalNonNegativeInteger(record[key]);
+    if (normalized !== undefined) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+function normalizeOptionalNonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === 'string' && /^[0-9]+$/.test(value)) {
+    return Number(value);
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isIsoDate(value: string): boolean {
+  return !Number.isNaN(Date.parse(value));
 }
 
 function defaultIdFactory(kind: 'runner' | 'thread' | 'turn'): string {
