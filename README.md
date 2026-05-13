@@ -96,7 +96,7 @@ SQLite acts as the absolute source of truth for:
 
 ### 🧭 Capability Discoverability
 - `harness_inspector(action: "capabilities")` exposes the runtime tool surface, bundled skills, policy-driven skills, Symphony orchestration metadata, and mem0 state in an agent-readable format.
-- The `orchestration` block advertises Symphony mode, the `harness_symphony` actions, the `gpt-5-high` default profile, four-agent fan-out defaults, required dispatch fields, worktree isolation responsibilities, accepted evidence artifact kinds, and runtime metadata artifact kinds so hosts can discover support without hardcoded assumptions.
+- The `orchestration` block advertises Symphony mode, the `harness_symphony` actions, the `gpt-5-high` default profile, four-agent fan-out defaults, required dispatch fields, worktree isolation responsibilities, Codex runner contracts, accepted evidence artifact kinds, and runtime metadata artifact kinds so hosts can discover support without hardcoded assumptions.
 - The packaged skills under `.github/skills` mirror the canonical runtime contract, so prompts, docs, and MCP discovery stay aligned.
 - The bundled skill manifest now publishes explicit workload profiles (`coding`, `research`, `ops`, `sales`, `support`, `assistant`) and per-skill `workloadProfileIds`, so hosts can specialize without hardcoding the core runtime to one domain.
 - Human-facing discovery docs now live in one place per surface: [docs/mcp-tools.md](docs/mcp-tools.md) for MCP tools, [docs/cli-reference.md](docs/cli-reference.md) for the installable CLIs, [docs/workload-profiles.md](docs/workload-profiles.md) for workload selection, and [.github/skills/README.md](.github/skills/README.md) for the bundled skill index.
@@ -113,6 +113,7 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.
 ### Agentic Symphony-Style Orchestration
 - `loadSymphonyWorkflow()` resolves repo-owned `WORKFLOW.md` contracts with YAML front matter, typed defaults, `$VAR` path/secret resolution, strict prompt interpolation, and reload semantics that preserve the last known good workflow on invalid edits.
 - `createSymphonyPhysicalWorktree()` and `cleanupSymphonyPhysicalWorktree()` let a host materialize an assigned worktree with safe refs, root containment, repo-owned hooks, timeouts, idempotent cleanup, and per-run evidence manifests/logs outside the removable checkout.
+- `launchCodexAppServerRunner()` defines the opt-in Codex app-server runner boundary with fake-process coverage, `bash -lc` workflow command execution, runner/thread/turn identity, Symphony session-id derivation, read/turn timeout normalization, and typed startup/turn error categories.
 - `harness_symphony(action: "compile_plan")` converts tracker-style milestones and slices into the canonical `plan_issues` batch without mutating state.
 - `harness_symphony(action: "dispatch_ready")` assigns ready issues to one compatible subagent and one isolated worktree per issue, with `gpt-5-high` and four-agent fan-out as the discoverable defaults.
 - `harness_symphony(action: "inspect_state")` reads leases, worktree artifacts, evidence references, recent events, and orchestration health flags.

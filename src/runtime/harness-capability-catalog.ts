@@ -6,6 +6,7 @@ import type {
   WorkloadProfileId,
 } from '../contracts/workload-profiles.js';
 import { orchestrationEvidenceArtifactKindValues } from '../contracts/orchestration-contracts.js';
+import { symphonyCodexRunnerErrorCodeValues } from '../contracts/symphony-codex-runner-contracts.js';
 import {
   defaultSkillPolicies,
   type SkillFamilyPolicy,
@@ -96,6 +97,17 @@ export interface HarnessOrchestrationCapability {
     physicalAdapter: string;
     cleanupAdapter: string;
     conflictGuards: string[];
+  };
+  codexRunner: {
+    contractVersion: '1.0.0';
+    launchAdapter: 'launchCodexAppServerRunner';
+    fakeProcessAdapter: 'createScriptedCodexAppServerProcessAdapter';
+    defaultCommand: 'codex app-server';
+    commandExecution: 'bash_lc';
+    timeoutFields: string[];
+    deferredTimeoutFields: string[];
+    normalizedErrorCodes: string[];
+    dispatcherWiring: 'not_enabled_by_default';
   };
   evidence: {
     acceptedArtifactKinds: string[];
@@ -191,6 +203,17 @@ const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
       'active_worktree_branch',
       'candidate_file_overlap',
     ],
+  },
+  codexRunner: {
+    contractVersion: '1.0.0',
+    launchAdapter: 'launchCodexAppServerRunner',
+    fakeProcessAdapter: 'createScriptedCodexAppServerProcessAdapter',
+    defaultCommand: 'codex app-server',
+    commandExecution: 'bash_lc',
+    timeoutFields: ['readTimeoutMs', 'turnTimeoutMs'],
+    deferredTimeoutFields: ['stallTimeoutMs'],
+    normalizedErrorCodes: [...symphonyCodexRunnerErrorCodeValues],
+    dispatcherWiring: 'not_enabled_by_default',
   },
   evidence: {
     acceptedArtifactKinds: [...orchestrationEvidenceArtifactKindValues],

@@ -82,7 +82,13 @@ The contract deliberately separates read-only decisions from mutating decisions.
 
 `createSymphonyPhysicalWorktree()` and `cleanupSymphonyPhysicalWorktree()` are the opt-in physical execution adapter for hosts that are ready to materialize those assignments. The adapter keeps the dispatcher behavior unchanged, but can create/reuse a real `git worktree`, verify the checkout root and branch, run repo-owned `WORKFLOW.md` hooks with explicit `ISSUE_*`/workspace env, enforce hook/command timeouts, perform idempotent cleanup according to the existing cleanup policy, and write per-run/attempt evidence under `${worktree.root}/.harness/orchestration/worktrees/<id>/<run>/attempt-XX`. Those artifacts include a manifest, command log, and cleanup plan so later `harness_session` checkpoints can persist them as session evidence without adding schema tables.
 
-### 5. Conflict boundary
+### 5. Codex app-server runner boundary
+
+`launchCodexAppServerRunner()` is the additive Codex runner contract for hosts that want to run the repo-owned workflow command after a physical worktree exists. It does not change dispatcher defaults and does not launch Codex unless the caller supplies a process adapter. The default command builder preserves `WORKFLOW.md` `codex.command` as shell input and represents execution as `bash -lc <command>` in the workspace cwd. The runtime initializes the app-server once, establishes a stable runner/thread conversation, derives Symphony turn session ids as `<threadId>-<turnId>`, and normalizes startup, read, turn timeout, transport, process-exit, malformed-response, cancellation, failure, and input-required states into strict result contracts.
+
+The included scripted process adapter is intentionally deterministic test infrastructure: it can emit valid responses, malformed payloads, hangs, transport closes, process exits, and normalized Codex error categories without launching a real Codex binary or opening the network. Continuation, stall/non-stall policy, token/rate-limit telemetry, retry/backoff events, and assignment-runner wiring remain reserved for later M10 increments.
+
+### 6. Conflict boundary
 
 Conflict checks run twice:
 
@@ -91,7 +97,7 @@ Conflict checks run twice:
 
 This second check is the authoritative guard against race conditions. It scans active run notes and active session artifacts, ignores released/inactive artifact metadata, and blocks duplicate worktree paths, duplicate worktree branches, and overlapping candidate file paths across the project.
 
-### 6. Evidence boundary
+### 7. Evidence boundary
 
 Session artifacts are the no-schema persistence mechanism for orchestration evidence. On claim, resume, and recovery, `SessionOrchestrator` inserts each session artifact into `artifacts`, links the generated artifact ids from the claim/recovery checkpoint, and emits `session_artifacts_registered`.
 
@@ -117,15 +123,15 @@ CSQR-lite scorecard artifacts are not session-owned worktree/handoff artifacts, 
 
 `close()` and `advanceSession()` enforce the CSQR-lite completion gate whenever `taskStatus` is `done`: at least one run-scoped scorecard must exist for the active `runId`, and every applicable run scorecard must meet `max(8.0, scorecard.targetScore)`. The gate is evaluated before task-state mutation; success emits `csqr_lite_completion_gate_evaluated`, while missing or below-threshold scorecards abort without mutating issue, run, lease, checkpoint, event, or artifact state.
 
-### 7. Inspector boundary
+### 8. Inspector boundary
 
 `inspectOrchestration()` is read-only and never initializes or mutates a database. It summarizes issue state, active leases, artifacts grouped by kind, recent events, extracted worktree/subagent/evidence/CSQR-lite references, and health flags. Branch marker artifacts are not treated as worktree path artifacts; only actual worktree path artifacts participate in duplicate active worktree health checks.
 
 `loadOrchestrationDashboardViewModel()` and `buildOrchestrationDashboardViewModel()` are the dashboard API boundary for the Linear-like UI in [`../apps/dashboard`](../apps/dashboard). The loader delegates to `inspectOrchestration()`; the builder is pure and converts the inspector summary into a stable v1 view model with ordered issue lanes, enriched issue cards, active-agent lease cards, evidence rollups, recent timeline entries, and routed health flags. Unknown or future issue statuses are preserved in the `other` lane so no issue card disappears when orchestration status vocabulary evolves.
 
-### 8. Public API boundary
+### 9. Public API boundary
 
-The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, including supervisor tick/run schemas, `runOrchestrationSupervisorTick()`, and `runOrchestrationSupervisor()`. The MCP surface keeps the same six-tool catalog and extends the existing `harness_symphony` tool with `supervisor_tick` and `supervisor_run`; the CLI surface exposes the same bounded polling contract through `harness-supervisor`.
+The v1 orchestration modules are intentionally additive at the database/schema layer. Existing lifecycle contracts remain valid, with one compatible extension: `SessionArtifactReference.id` is optional on input and present on persisted session artifacts returned from begin/resume/recovery. The public package surface exports stable orchestration modules, including supervisor tick/run schemas, `runOrchestrationSupervisorTick()`, `runOrchestrationSupervisor()`, Codex runner schemas, `launchCodexAppServerRunner()`, and deterministic scripted Codex process adapters. The MCP surface keeps the same six-tool catalog and extends the existing `harness_symphony` tool with `supervisor_tick` and `supervisor_run`; the CLI surface exposes the same bounded polling contract through `harness-supervisor`.
 
 ## Fully agentic completion posture
 
@@ -168,7 +174,7 @@ Scorecards passed to `harness_session(action: "checkpoint" | "close")` are durab
 ## Current v1 limits
 
 - The dispatcher assigns work and claims sessions; the supervisor runtime now exposes one-tick and bounded polling entrypoints, but worker process execution still remains host-owned until the runner surface consumes dispatched assignments.
-- Worktree metadata, physical creation, hooks, timeout handling, cleanup, and evidence manifests are typed; invoking the adapter remains an explicit host/runner responsibility.
+- Worktree metadata, physical creation, hooks, timeout handling, cleanup, runner launch/turn identity, fake process behavior, and evidence manifests are typed; invoking the physical and Codex runner adapters remains an explicit host/runner responsibility.
 - Evidence packet validation, deterministic reference E2E assertions, and supervisor-driven MCP E2E coverage exist; the actual shell command runner for typecheck/test/E2E/screenshot capture remains host-owned.
-- MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out by default. Hosts can opt into the physical adapter before the future assignment runner wires this into `harness_symphony`.
+- MCP dispatch records deterministic worktree/branch assignments and evidence metadata, but does not shell out by default. Hosts can opt into the physical and Codex runner adapters before the future assignment runner wires them into `harness_symphony`.
 - Dashboard APIs build on this evidence substrate rather than changing the schema.
