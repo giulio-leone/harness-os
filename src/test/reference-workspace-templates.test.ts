@@ -137,7 +137,7 @@ test('MCP and CLI discoverability docs stay aligned with public contracts', () =
   }
 
   const publicBins = Object.keys(packageJson.bin ?? {}).sort((left, right) => left.localeCompare(right));
-  assert.equal(publicBins.length, 7);
+  assert.equal(publicBins.length, 8);
   for (const bin of publicBins) {
     assert.match(cliGuide, new RegExp(`\`${escapeForRegex(bin)}\``));
   }

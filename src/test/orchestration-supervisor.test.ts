@@ -104,17 +104,36 @@ test('supervisor execute tick promotes first, dispatches only filtered visible r
       priority: 'high',
     });
 
-    const result = await runOrchestrationSupervisorTick({
-      ...baseTickInput(dbPath),
-      mode: 'execute',
-      dashboardFilters: {
-        priority: 'critical',
+    const result = await runOrchestrationSupervisorTick(
+      {
+        ...baseTickInput(dbPath),
+        mode: 'execute',
+        dashboardFilters: {
+          priority: 'critical',
+        },
+        dispatch: {
+          ...baseTickInput(dbPath).dispatch,
+          subagents: [createSubagent('agent-a')],
+        },
       },
-      dispatch: {
-        ...baseTickInput(dbPath).dispatch,
-        subagents: [createSubagent('agent-a')],
+      {
+        runAssignment: async (input) => ({
+          contractVersion: '1.0.0',
+          assignmentId: input.assignment.id,
+          issueId: input.issue.id,
+          runId: input.session.runId,
+          status: 'succeeded',
+          startedAt: timestamp,
+          completedAt: timestamp,
+          evidenceArtifacts: [],
+          evidenceArtifactIds: ['artifact-test-report'],
+          csqrLiteScorecardArtifactIds: [],
+          checkpointId: 'checkpoint-agent-runner',
+          summary: 'assignment executed by fake runner',
+          durationMs: 1,
+        }),
       },
-    });
+    );
 
     assert.deepEqual(orchestrationSupervisorTickResultSchema.parse(result), result);
     assert.equal(result.mode, 'execute');
@@ -128,13 +147,61 @@ test('supervisor execute tick promotes first, dispatches only filtered visible r
         'promote_queue',
         'inspect_dashboard',
         'dispatch_ready',
+        'run_assignment',
       ],
     );
+    assert.deepEqual(result.evidenceArtifactIds, ['artifact-test-report']);
     assert.equal(result.stopReason, undefined);
     assert.deepEqual(readIssueStatuses(dbPath), {
       'issue-critical-pending': 'in_progress',
       'issue-high-ready': 'ready',
     });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('supervisor execute tick errors before dispatch when assignment runner is absent', async () => {
+  const tempDir = createLocalTempDir('missing-assignment-runner');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedBaseProject(dbPath);
+    seedIssue(dbPath, {
+      issueId: 'issue-ready',
+      status: 'ready',
+      priority: 'critical',
+    });
+
+    const result = await runOrchestrationSupervisorTick(
+      {
+        ...baseTickInput(dbPath),
+        mode: 'execute',
+        dispatch: {
+          repoRoot,
+          worktreeRoot,
+          baseRef: 'main',
+          host: 'copilot',
+          hostCapabilities,
+          maxConcurrentAgents: 4,
+          subagents: [createSubagent('agent-a')],
+        },
+      },
+      {
+        dispatchReady: async () => {
+          throw new Error('dispatch should not run without assignmentRunner');
+        },
+      },
+    );
+
+    assert.deepEqual(orchestrationSupervisorTickResultSchema.parse(result), result);
+    assert.equal(result.stopReason, 'error');
+    assert.match(result.summary, /dispatch\.assignmentRunner/);
+    assert.deepEqual(
+      result.decisions.map((decision) => decision.kind),
+      ['inspect_dashboard', 'promote_queue', 'inspect_dashboard', 'error'],
+    );
+    assert.equal(readIssueStatuses(dbPath)['issue-ready'], 'ready');
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -395,6 +462,13 @@ function baseTickInput(dbPath: string) {
       host: 'copilot',
       hostCapabilities,
       maxConcurrentAgents: 4,
+      assignmentRunner: {
+        command: 'node',
+        args: ['runner.js'],
+        requiredEvidenceArtifactKinds: ['test_report', 'e2e_report'],
+        includeCsqrLiteScorecard: true,
+        maxAssignmentsPerTick: 1,
+      },
     },
   };
 }

@@ -67,8 +67,17 @@ export interface HarnessOrchestrationCapability {
     dispatchReady: 'dispatch_ready';
     inspectState: 'inspect_state';
     dashboardView: 'dashboard_view';
+    runAssignment: 'run_assignment';
     supervisorTick: 'supervisor_tick';
     supervisorRun: 'supervisor_run';
+  };
+  assignmentRunner: {
+    contractVersion: '1.0.0';
+    cli: 'harness-agent-runner';
+    action: 'run_assignment';
+    requiredEvidenceArtifactKinds: readonly ['test_report', 'e2e_report'];
+    optionalEvidenceArtifactKinds: readonly ['screenshot'];
+    requiredScorecard: 'csqr_lite_scorecard';
   };
   dashboard: {
     contractVersion: '1.0.0';
@@ -160,8 +169,17 @@ const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
     dispatchReady: 'dispatch_ready',
     inspectState: 'inspect_state',
     dashboardView: 'dashboard_view',
+    runAssignment: 'run_assignment',
     supervisorTick: 'supervisor_tick',
     supervisorRun: 'supervisor_run',
+  },
+  assignmentRunner: {
+    contractVersion: '1.0.0',
+    cli: 'harness-agent-runner',
+    action: 'run_assignment',
+    requiredEvidenceArtifactKinds: ['test_report', 'e2e_report'],
+    optionalEvidenceArtifactKinds: ['screenshot'],
+    requiredScorecard: 'csqr_lite_scorecard',
   },
   dashboard: {
     contractVersion: '1.0.0',
@@ -201,9 +219,8 @@ const ORCHESTRATION_CAPABILITY: HarnessOrchestrationCapability = {
   ],
   hostResponsibilities: [
     'create_git_worktrees_with_physical_adapter',
-    'launch_subagents',
-    'run_quality_gates',
-    'collect_evidence_artifacts',
+    'execute_assignment_runner_commands',
+    'produce_test_e2e_and_csqr_evidence',
     'cleanup_worktrees_with_physical_adapter',
   ],
   worktreeIsolation: {

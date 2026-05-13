@@ -119,10 +119,22 @@ export const orchestrationSupervisorDecisionKindValues = [
   'inspect_dashboard',
   'promote_queue',
   'dispatch_ready',
+  'run_assignment',
   'await_evidence',
   'idle',
   'blocked',
   'error',
+] as const;
+
+export const orchestrationAssignmentRunnerWorkspaceModeValues = [
+  'existing_worktree',
+  'create_physical_worktree',
+] as const;
+
+export const orchestrationAssignmentRunnerEvidenceArtifactKindValues = [
+  'test_report',
+  'e2e_report',
+  'screenshot',
 ] as const;
 
 export const orchestrationSupervisorTickModeSchema = z.enum(
@@ -133,6 +145,12 @@ export const orchestrationSupervisorStopReasonSchema = z.enum(
 );
 export const orchestrationSupervisorDecisionKindSchema = z.enum(
   orchestrationSupervisorDecisionKindValues,
+);
+export const orchestrationAssignmentRunnerWorkspaceModeSchema = z.enum(
+  orchestrationAssignmentRunnerWorkspaceModeValues,
+);
+export const orchestrationAssignmentRunnerEvidenceArtifactKindSchema = z.enum(
+  orchestrationAssignmentRunnerEvidenceArtifactKindValues,
 );
 
 export const orchestrationSubagentSchema = z
@@ -757,6 +775,34 @@ export const orchestrationRunResultSchema = z
     }
   });
 
+export const orchestrationAssignmentRunnerConfigSchema = z
+  .object({
+    command: nonEmptyString,
+    args: z.array(nonEmptyString).default([]),
+    env: z.record(z.string(), z.string()).default({}),
+    timeoutMs: positiveInteger.default(30 * 60 * 1000),
+    maxOutputBytes: positiveInteger.default(128 * 1024),
+    evidenceRoot: absolutePathSchema().optional(),
+    requiredEvidenceArtifactKinds: z
+      .array(orchestrationAssignmentRunnerEvidenceArtifactKindSchema)
+      .default(['test_report', 'e2e_report']),
+    includeCsqrLiteScorecard: z.boolean().default(true),
+    maxAssignmentsPerTick: positiveInteger.default(1),
+    workspaceMode: orchestrationAssignmentRunnerWorkspaceModeSchema.default(
+      'existing_worktree',
+    ),
+    workflowPath: absolutePathSchema().optional(),
+    cleanupWorktree: z.boolean().default(false),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    validateUniqueStrings(
+      value.requiredEvidenceArtifactKinds,
+      'requiredEvidenceArtifactKinds',
+      ctx,
+    );
+  });
+
 export const orchestrationSupervisorHostExecutionSchema = z
   .object({
     repoRoot: absolutePathSchema(),
@@ -768,6 +814,7 @@ export const orchestrationSupervisorHostExecutionSchema = z
     cleanupPolicy: orchestrationWorktreeCleanupPolicySchema.optional(),
     maxConcurrentAgents: positiveInteger.default(4),
     subagents: z.array(orchestrationSubagentSchema).min(1).optional(),
+    assignmentRunner: orchestrationAssignmentRunnerConfigSchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -1040,6 +1087,15 @@ export type OrchestrationSupervisorStopReason = z.infer<
 export type OrchestrationSupervisorDecisionKind = z.infer<
   typeof orchestrationSupervisorDecisionKindSchema
 >;
+export type OrchestrationAssignmentRunnerWorkspaceMode = z.infer<
+  typeof orchestrationAssignmentRunnerWorkspaceModeSchema
+>;
+export type OrchestrationAssignmentRunnerEvidenceArtifactKind = z.infer<
+  typeof orchestrationAssignmentRunnerEvidenceArtifactKindSchema
+>;
+export type OrchestrationAssignmentRunnerConfig = z.infer<
+  typeof orchestrationAssignmentRunnerConfigSchema
+>;
 export type OrchestrationSubagent = z.infer<
   typeof orchestrationSubagentSchema
 >;
@@ -1252,8 +1308,10 @@ function isSupervisorMutatingDecision(value: {
   return (
     value.kind === 'promote_queue' ||
     value.kind === 'dispatch_ready' ||
+    value.kind === 'run_assignment' ||
     value.action === 'promote_queue' ||
-    value.action === 'dispatch_ready'
+    value.action === 'dispatch_ready' ||
+    value.action === 'run_assignment'
   );
 }
 

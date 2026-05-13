@@ -32,6 +32,7 @@
     "!.github/skills/**/*.pyc"
   ],
   "bin": {
+    "harness-agent-runner": "./dist/bin/agent-runner.js",
     "harness-install-mcp": "./dist/bin/agent-harness-install-mcp.js",
     "harness-scheduler-inject": "./dist/bin/scheduler-inject.js",
     "harness-session-lifecycle": "./dist/bin/session-lifecycle.js",
@@ -63,7 +64,9 @@
     "session:lifecycle:mcp": "node dist/bin/session-lifecycle-mcp.js",
     "session:lifecycle:mcp:dev": "tsx src/bin/session-lifecycle-mcp.ts",
     "supervisor": "node dist/bin/supervisor.js",
-    "supervisor:dev": "tsx src/bin/supervisor.ts"
+    "supervisor:dev": "tsx src/bin/supervisor.ts",
+    "agent-runner": "node dist/bin/agent-runner.js",
+    "agent-runner:dev": "tsx src/bin/agent-runner.ts"
   },
   "keywords": [
     "agent",

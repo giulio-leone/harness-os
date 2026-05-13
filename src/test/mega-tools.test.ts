@@ -5,7 +5,7 @@
  * verifying action dispatch, error handling, _meta hints, and DB state.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -372,6 +372,8 @@ test('harness_inspector: capabilities returns tool catalog, bundled skills, and 
   const skills = result.skills as Array<Record<string, unknown>>;
   const orchestration = result.orchestration as Record<string, unknown>;
   const orchestrationDashboard = orchestration.dashboard as Record<string, unknown>;
+  const orchestrationAssignmentRunner =
+    orchestration.assignmentRunner as Record<string, unknown>;
   const mem0 = result.mem0 as Record<string, unknown>;
 
   assert.ok(tools.some((entry) => entry.name === 'harness_inspector'));
@@ -407,9 +409,16 @@ test('harness_inspector: capabilities returns tool catalog, bundled skills, and 
     dispatchReady: 'dispatch_ready',
     inspectState: 'inspect_state',
     dashboardView: 'dashboard_view',
+    runAssignment: 'run_assignment',
     supervisorTick: 'supervisor_tick',
     supervisorRun: 'supervisor_run',
   });
+  assert.equal(orchestrationAssignmentRunner.cli, 'harness-agent-runner');
+  assert.equal(orchestrationAssignmentRunner.action, 'run_assignment');
+  assert.deepEqual(orchestrationAssignmentRunner.requiredEvidenceArtifactKinds, [
+    'test_report',
+    'e2e_report',
+  ]);
   assert.equal(orchestrationDashboard.filteredViewAction, 'dashboard_view');
   assert.deepEqual(orchestrationDashboard.supportedFilters, [
     'q',
@@ -1433,6 +1442,144 @@ test('harness_symphony: dashboard_view returns a filtered stable dashboard model
       csqrFiltered.viewModel.issueLanes.flatMap((lane) => lane.cards.map((card) => card.id)),
       ['issue-done'],
     );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('harness_symphony: run_assignment executes a dispatched session through MCP', async () => {
+  const tempDir = createTempDir('symphony-run-assignment-');
+  const dbPath = join(tempDir, 'harness.sqlite');
+
+  try {
+    seedProject(dbPath);
+    seedIssue(dbPath, 'issue-run-assignment', 'ready', [], {
+      priority: 'critical',
+    });
+
+    const session = await new SessionOrchestrator().beginIncrementalSession(
+      beginArgs(dbPath, {
+        sessionId: 'run-mcp-assignment',
+        preferredIssueId: 'issue-run-assignment',
+        agentId: 'agent-run-assignment',
+      }),
+    );
+    const repoRoot = join(tempDir, 'repo');
+    const worktreeRoot = join(tempDir, 'worktrees');
+    const worktreePath = join(worktreeRoot, 'issue-run-assignment');
+    mkdirSync(repoRoot, { recursive: true });
+    mkdirSync(worktreePath, { recursive: true });
+
+    const scorecard = buildCsqrLiteScorecard({
+      id: 'scorecard-run-mcp-assignment',
+      scope: 'run',
+      runId: session.runId,
+      targetScore: 8,
+      createdAt: '2026-05-13T00:00:00.000Z',
+      scores: [
+        {
+          criterionId: 'correctness',
+          score: 9,
+          notes: 'MCP run_assignment completed the dispatched work.',
+          evidenceArtifactIds: ['artifact-mcp'],
+        },
+        {
+          criterionId: 'security',
+          score: 9,
+          notes: 'No unsafe MCP boundary behavior was introduced.',
+          evidenceArtifactIds: ['artifact-mcp'],
+        },
+        {
+          criterionId: 'quality',
+          score: 9,
+          notes: 'The handler delegates through the public assignment runner.',
+          evidenceArtifactIds: ['artifact-mcp'],
+        },
+        {
+          criterionId: 'runtime-evidence',
+          score: 9,
+          notes: 'Command-produced proof files were persisted.',
+          evidenceArtifactIds: ['artifact-mcp'],
+        },
+      ],
+    });
+    const proofWriter = [
+      'const fs = require("node:fs");',
+      'fs.writeFileSync(process.env.HARNESS_TEST_REPORT_PATH, JSON.stringify({ status: "passed", suite: "mcp" }));',
+      'fs.writeFileSync(process.env.HARNESS_E2E_REPORT_PATH, JSON.stringify({ status: "passed", flow: "run_assignment" }));',
+      'fs.writeFileSync(process.env.HARNESS_CSQR_SCORECARD_PATH, process.env.SCORECARD_JSON);',
+    ].join('');
+
+    const { internals } = createServer();
+    const symphony = internals.tools.get('harness_symphony')!;
+    const response = (await symphony.handler({
+      action: 'run_assignment',
+      input: {
+        contractVersion: '1.0.0',
+        assignment: {
+          id: 'assignment-run-assignment',
+          issueId: 'issue-run-assignment',
+          subagentId: 'agent-run-assignment',
+          worktreeId: 'worktree-run-assignment',
+        },
+        issue: {
+          id: 'issue-run-assignment',
+          task: session.issueTask,
+          priority: 'critical',
+          status: 'in_progress',
+        },
+        subagent: {
+          id: 'agent-run-assignment',
+          role: 'implementation',
+          host: TEST_HOST_ROUTING_CONTEXT.host,
+          modelProfile: 'gpt-5-high',
+          capabilities: ['node', 'sqlite'],
+          maxConcurrency: 1,
+        },
+        worktree: {
+          id: 'worktree-run-assignment',
+          repoRoot,
+          root: worktreeRoot,
+          path: worktreePath,
+          branch: 'feat/issue-run-assignment',
+          baseRef: 'main',
+          cleanupPolicy: 'retain',
+          containment: {
+            expectedParentPath: worktreeRoot,
+            requirePathWithinRoot: true,
+          },
+        },
+        session,
+        runner: {
+          command: process.execPath,
+          args: ['-e', proofWriter],
+          env: {
+            SCORECARD_JSON: JSON.stringify(scorecard),
+          },
+          requiredEvidenceArtifactKinds: ['test_report', 'e2e_report'],
+          includeCsqrLiteScorecard: true,
+        },
+      },
+    })) as {
+      result: { status: string; evidenceArtifactIds: string[] };
+      _meta: { nextTools: string[] };
+    };
+
+    assert.equal(response.result.status, 'succeeded');
+    assert.equal(response.result.evidenceArtifactIds.length, 3);
+    assert.ok(response._meta.nextTools.includes('harness_inspector'));
+
+    const db = openHarnessDatabase({ dbPath });
+    try {
+      const issue = selectOne<{ status: string }>(
+        db.connection,
+        'SELECT status FROM issues WHERE id = ?',
+        ['issue-run-assignment'],
+      );
+      assert.equal(issue?.status, 'done');
+    } finally {
+      db.close();
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

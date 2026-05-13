@@ -57,6 +57,7 @@ test('capability catalog exposes Symphony orchestration discovery metadata', () 
       'dispatch_ready',
       'inspect_state',
       'dashboard_view',
+      'run_assignment',
       'supervisor_tick',
       'supervisor_run',
     ],
@@ -70,10 +71,13 @@ test('capability catalog exposes Symphony orchestration discovery metadata', () 
     dispatchReady: 'dispatch_ready',
     inspectState: 'inspect_state',
     dashboardView: 'dashboard_view',
+    runAssignment: 'run_assignment',
     supervisorTick: 'supervisor_tick',
     supervisorRun: 'supervisor_run',
   });
   assert.equal(catalog.orchestration.supervisor.cli, 'harness-supervisor');
+  assert.equal(catalog.orchestration.assignmentRunner.cli, 'harness-agent-runner');
+  assert.equal(catalog.orchestration.assignmentRunner.action, 'run_assignment');
   assert.equal(catalog.orchestration.supervisor.boundedPolling, true);
   assert.ok(catalog.orchestration.requiredDispatchFields.includes('repoRoot'));
   assert.equal(catalog.orchestration.worktreeIsolation.strategy, 'one_worktree_per_issue');

@@ -146,7 +146,7 @@ If you need a concise “which tool do I call next?” guide instead of raw exam
 
 ## 6. Fully Agentic Symphony Flow
 
-Use the Symphony flow when a project already has a campaign scope and you want ready issues to run without human runtime checkpoints. The runtime assigns work; the host executes it. `runOrchestrationSupervisorTick()` provides the deterministic single-tick runtime, while `runOrchestrationSupervisor()`, `harness-supervisor`, and `harness_symphony(action: "supervisor_run")` provide bounded autonomous polling with max tick limits, stop conditions, and backoff. Dry-runs inspect and plan without mutation; execute mode requires canonical `workspaceId`, `projectId`, and host execution inputs before promotion or dispatch.
+Use the Symphony flow when a project already has a campaign scope and you want ready issues to run without human runtime checkpoints. The runtime assigns work and, in execute mode, runs dispatched assignments through a configured assignment runner command that must produce test, E2E, and CSQR-lite proof files. `runOrchestrationSupervisorTick()` provides the deterministic single-tick runtime, while `runOrchestrationSupervisor()`, `harness-supervisor`, and `harness_symphony(action: "supervisor_run")` provide bounded autonomous polling with max tick limits, stop conditions, and backoff. Dry-runs inspect and plan without mutation; execute mode requires canonical `workspaceId`, `projectId`, host execution inputs, and `dispatch.assignmentRunner` before promotion or dispatch.
 
 The stabilized MCP sequence is:
 
@@ -154,9 +154,9 @@ The stabilized MCP sequence is:
 2. Create or reuse a workspace/campaign with `harness_orchestrator(action: "init_workspace")` and `harness_orchestrator(action: "create_campaign")`.
 3. Convert tracker-style milestones and slices with `harness_symphony(action: "compile_plan")`.
 4. Send the returned `planIssuesPayload.milestones` to `harness_orchestrator(action: "plan_issues")`.
-5. Fan out ready work with `harness-supervisor` or `harness_symphony(action: "supervisor_run")` for bounded autonomous polling, or directly with `harness_symphony(action: "dispatch_ready")` when a host wants to manage inspect/promote/dispatch steps itself. Use `repoRoot`, `worktreeRoot`, `baseRef`, `host`, `hostCapabilities`, and up to four compatible `gpt-5-high` subagents.
-6. In the host runtime, create the physical git worktrees, launch the assigned subagents, run the deterministic gates, capture screenshots/E2E reports, and save evidence with `harness_artifacts(action: "save")`.
-7. Inspect health with `harness_symphony(action: "inspect_state")` or retrieve the UI/agent read model with `harness_symphony(action: "dashboard_view")` before closing the worker sessions.
+5. Fan out and execute ready work with `harness-supervisor` or `harness_symphony(action: "supervisor_run")` for bounded autonomous polling. Execute-mode supervisor payloads must include `dispatch.assignmentRunner` with the command that writes proof files to the `HARNESS_TEST_REPORT_PATH`, `HARNESS_E2E_REPORT_PATH`, and `HARNESS_CSQR_SCORECARD_PATH` environment paths. Use direct `harness_symphony(action: "dispatch_ready")` only when a host intentionally manages assignment execution through `harness_symphony(action: "run_assignment")` or another compatible runner surface.
+6. Ensure each assigned worktree exists and let the configured command create the required proof files under the provided `HARNESS_*` paths. HarnessOS registers those proof files as artifacts and closes each executed session `done` or `failed`; use `harness_artifacts(action: "save")` only for additional host-side evidence such as optional screenshots or CI references.
+7. Inspect health with `harness_symphony(action: "inspect_state")` or retrieve the UI/agent read model with `harness_symphony(action: "dashboard_view")` after runner evidence ingestion.
 
 Reference payloads for that sequence live under [`../examples/orchestration-symphony/`](../examples/orchestration-symphony/). Each JSON file uses this shape:
 

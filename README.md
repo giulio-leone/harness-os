@@ -118,7 +118,7 @@ A cron-aware, idempotent injector for scheduled work (`src/bin/scheduler-inject.
 - `harness_symphony(action: "dispatch_ready")` assigns ready issues to one compatible subagent and one isolated worktree per issue, with `gpt-5-high` and four-agent fan-out as the discoverable defaults.
 - `harness_symphony(action: "inspect_state")` reads leases, worktree artifacts, evidence references, recent events, and orchestration health flags.
 - `runOrchestrationSupervisorTick()` executes one deterministic autonomous supervisor tick, while `runOrchestrationSupervisor()`, `harness-supervisor`, and `harness_symphony(action: "supervisor_run")` provide bounded autonomous polling with stop conditions and backoff.
-- Completion remains no-human-checkpoint: the supervisor owns inspect/promote/dispatch, while hosts or future runners create/run/cleanup git worktrees through the physical adapter and attach typecheck, test, E2E, screenshot, state export, CSQR-lite, and codebase evidence before closing work.
+- Completion remains no-human-checkpoint: the supervisor owns inspect/promote/dispatch and, in execute mode, requires an `assignmentRunner` command to run dispatched assignments and attach command-produced test, E2E, CSQR-lite, optional screenshot, state export, and codebase evidence before closing work.
 - Copy/paste MCP payloads live in [`examples/orchestration-symphony/`](examples/orchestration-symphony/), and the runtime contract is documented in [docs/orchestration-no-schema-v1.md](docs/orchestration-no-schema-v1.md).
 
 ### Linear-Like Orchestration Dashboard
@@ -234,7 +234,7 @@ Every payload must declare `"contractVersion": "6.0.0"`.
 | --- | --- | --- |
 | `harness_inspector` | Use first in a new session, when queue state is unclear, or when the agent needs a machine-readable guide to the runtime plus auditable next_action reasons, exportable operational state, and health snapshots. | `capabilities`, `get_context`, `next_action`, `export`, `audit`, `health_snapshot` |
 | `harness_orchestrator` | Use to create scope, inject planned work, promote dependencies, and reset stuck issues. | `init_workspace`, `create_campaign`, `plan_issues`, `promote_queue`, `rollback_issue` |
-| `harness_symphony` | Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, inspect evidence-backed orchestration state, retrieve filtered dashboard views for agent navigation, and run bounded supervisor automation. | `compile_plan`, `dispatch_ready`, `inspect_state`, `dashboard_view`, `supervisor_tick`, `supervisor_run` |
+| `harness_symphony` | Use for fully agentic multi-issue execution after project planning exists: compile orchestration slices, dispatch ready issues into isolated worktrees, execute dispatched assignments with test/E2E/CSQR evidence, inspect evidence-backed orchestration state, retrieve filtered dashboard views for agent navigation, and run bounded supervisor automation. | `compile_plan`, `dispatch_ready`, `inspect_state`, `dashboard_view`, `run_assignment`, `supervisor_tick`, `supervisor_run` |
 | `harness_session` | Use for claim/resume, checkpointing, close/advance, and lease heartbeat during execution. | `begin`, `begin_recovery`, `checkpoint`, `close`, `advance`, `heartbeat` |
 | `harness_artifacts` | Use to persist references to screenshots, browser state, generated files, or other task evidence. | `save`, `list` |
 | `harness_admin` | Use for recovery-oriented maintenance, retention cleanup, and project-level memory snapshots or rollups. | `reconcile`, `drain`, `archive`, `cleanup`, `mem0_snapshot`, `mem0_rollup` |
@@ -325,7 +325,7 @@ For an in-depth look at how HarnessOS works, refer to the [Architecture Document
 
 The typical execution flow:
 1. `harness_orchestrator(action: "plan_issues")` — Imports a canonical milestone batch into the queue.
-2. `runOrchestrationSupervisor()`, `harness-supervisor`, or `harness_symphony(action: "supervisor_run")` — Runs bounded supervisor polling that promotes eligible work and fans visible ready issues out to isolated worktree/subagent assignments.
+2. `runOrchestrationSupervisor()`, `harness-supervisor`, or `harness_symphony(action: "supervisor_run")` — Runs bounded supervisor polling that promotes eligible work, fans visible ready issues out to isolated worktree/subagent assignments, and executes them when `dispatch.assignmentRunner` is supplied.
 3. `beginIncrementalSession()` — Claims a ready task when single-worker execution is preferred instead of the supervisor fan-out path.
 4. `beginRecoverySession()` — Resolves and overrides a stuck or failed task.
 5. `checkpoint()` — Writes immediate progress to SQLite.

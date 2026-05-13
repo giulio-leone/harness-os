@@ -3,12 +3,18 @@ import { setTimeout as sleepFor } from 'node:timers/promises';
 
 import type {
   OrchestrationSupervisorDecision,
+  OrchestrationSupervisorHostExecution,
   OrchestrationSupervisorRunInput,
   OrchestrationSupervisorRunSummary,
   OrchestrationSupervisorStopReason,
   OrchestrationSupervisorTickInput,
   OrchestrationSupervisorTickResult,
 } from '../contracts/orchestration-contracts.js';
+import {
+  symphonyAssignmentRunnerContractVersion,
+  type SymphonyAssignmentRunnerInput,
+  type SymphonyAssignmentRunnerResult,
+} from '../contracts/orchestration-assignment-runner-contracts.js';
 import {
   orchestrationSupervisorRunInputSchema,
   orchestrationSupervisorRunSummarySchema,
@@ -31,8 +37,10 @@ import type { InspectOrchestrationInput } from './orchestration-inspector.js';
 import {
   dispatchReadyOrchestrationIssues,
   type DispatchReadyOrchestrationIssuesInput,
+  type OrchestrationIssueDispatch,
   type OrchestrationDispatchResult,
 } from './orchestration-dispatcher.js';
+import { runSymphonyAssignment } from './orchestration-assignment-runner.js';
 import {
   resolveCampaignId,
   resolveProjectId,
@@ -51,6 +59,9 @@ export interface OrchestrationSupervisorTickDependencies {
   readonly dispatchReady?: (
     input: DispatchReadyOrchestrationIssuesInput,
   ) => Promise<OrchestrationDispatchResult>;
+  readonly runAssignment?: (
+    input: SymphonyAssignmentRunnerInput,
+  ) => Promise<SymphonyAssignmentRunnerResult>;
 }
 
 export interface OrchestrationSupervisorRunDependencies
@@ -219,6 +230,7 @@ export async function runOrchestrationSupervisorTick(
       });
     }
 
+    assertAssignmentRunnerConfigured(input.dispatch);
     const dispatchResult = await executeDispatch({
       input,
       scope,
@@ -227,9 +239,19 @@ export async function runOrchestrationSupervisorTick(
       decisions,
       clock,
     });
+    const assignmentResults = await executeAssignments({
+      input,
+      dispatchResult,
+      dependencies,
+      decisions,
+      clock,
+    });
     const dispatchedIssueIds = dispatchResult.dispatches.map(
       (dispatch) => dispatch.issue.id,
     );
+    const assignmentFailureCount = assignmentResults.filter(
+      (result) => result.status === 'failed',
+    ).length;
     const promotedIssueIds = uniqueStrings([
       ...promotion.promotedIssueIds,
       ...dispatchResult.promotedIssueIds,
@@ -246,9 +268,10 @@ export async function runOrchestrationSupervisorTick(
       promotedIssueIds,
       dispatchedIssueIds,
       dispatchResult,
+      assignmentFailureCount,
       summary:
         dispatchedIssueIds.length > 0
-          ? `Dispatched ${dispatchedIssueIds.length} visible ready issue(s) after promoting ${promotedIssueIds.length} issue(s).`
+          ? `Dispatched ${dispatchedIssueIds.length} visible ready issue(s) and ran ${assignmentResults.length} assignment(s) after promoting ${promotedIssueIds.length} issue(s).`
           : `No visible ready issues were dispatched; ${dispatchResult.unassignedIssues.length} unassigned issue(s) and ${dispatchResult.failures.length} failure(s) were reported.`,
     });
   } catch (error) {
@@ -592,6 +615,7 @@ async function executeDispatch(input: {
       maxAssignments: Math.min(
         input.visibleReadyIssueIds.length,
         dispatch.maxConcurrentAgents,
+        dispatch.assignmentRunner?.maxAssignmentsPerTick ?? 0,
       ),
       maxConcurrentAgents: dispatch.maxConcurrentAgents,
       promoteBeforeDispatch: false,
@@ -646,6 +670,112 @@ async function executeDispatch(input: {
   }
 }
 
+async function executeAssignments(input: {
+  input: OrchestrationSupervisorTickInput;
+  dispatchResult: OrchestrationDispatchResult;
+  dependencies: OrchestrationSupervisorTickDependencies;
+  decisions: OrchestrationSupervisorDecision[];
+  clock: () => string;
+}): Promise<SymphonyAssignmentRunnerResult[]> {
+  const runner = input.input.dispatch?.assignmentRunner;
+  if (runner === undefined) {
+    throw new Error(
+      'execute supervisor ticks require dispatch.assignmentRunner before dispatching assignments.',
+    );
+  }
+
+  const runAssignment = input.dependencies.runAssignment ?? runSymphonyAssignment;
+  const results: SymphonyAssignmentRunnerResult[] = [];
+
+  for (const dispatch of input.dispatchResult.dispatches) {
+    const startedAt = input.clock();
+    try {
+      const result = await runAssignment(
+        buildAssignmentRunnerInput(dispatch, runner),
+      );
+      results.push(result);
+      input.decisions.push(
+        buildDecision({
+          tickId: input.input.tickId,
+          suffix: `run-assignment-${sanitizeDecisionSegment(dispatch.issue.id)}`,
+          kind: 'run_assignment',
+          tool: 'harness_symphony',
+          action: 'run_assignment',
+          summary: `Assignment ${dispatch.assignment.id} ${result.status} for issue ${dispatch.issue.id}.`,
+          wouldMutate: true,
+          executed: true,
+          startedAt,
+          completedAt: input.clock(),
+          evidenceArtifactIds: result.evidenceArtifactIds,
+          metadata: {
+            assignmentId: dispatch.assignment.id,
+            issueId: dispatch.issue.id,
+            runId: dispatch.session.runId,
+            status: result.status,
+            evidenceArtifactIds: result.evidenceArtifactIds.join(','),
+            csqrLiteScorecardArtifactIds:
+              result.csqrLiteScorecardArtifactIds.join(','),
+            ...(result.checkpointId !== undefined
+              ? { checkpointId: result.checkpointId }
+              : {}),
+          },
+        }),
+      );
+    } catch (error) {
+      const message = getErrorMessage(error);
+      input.decisions.push(
+        buildDecision({
+          tickId: input.input.tickId,
+          suffix: `run-assignment-${sanitizeDecisionSegment(dispatch.issue.id)}-failed`,
+          kind: 'run_assignment',
+          tool: 'harness_symphony',
+          action: 'run_assignment',
+          summary: `Assignment ${dispatch.assignment.id} failed before producing runner output: ${message}`,
+          wouldMutate: true,
+          executed: true,
+          startedAt,
+          completedAt: input.clock(),
+          metadata: {
+            assignmentId: dispatch.assignment.id,
+            issueId: dispatch.issue.id,
+            runId: dispatch.session.runId,
+            errorMessage: message,
+          },
+        }),
+      );
+      throw error;
+    }
+  }
+
+  return results;
+}
+
+function buildAssignmentRunnerInput(
+  dispatch: OrchestrationIssueDispatch,
+  runner: OrchestrationSupervisorHostExecution['assignmentRunner'],
+): SymphonyAssignmentRunnerInput {
+  if (runner === undefined) {
+    throw new Error(
+      'execute supervisor ticks require dispatch.assignmentRunner before running assignments.',
+    );
+  }
+
+  return {
+    contractVersion: symphonyAssignmentRunnerContractVersion,
+    assignment: dispatch.assignment,
+    issue: {
+      id: dispatch.issue.id,
+      task: dispatch.issue.task,
+      priority: dispatch.issue.priority,
+      status: dispatch.issue.status,
+    },
+    subagent: dispatch.subagent,
+    worktree: dispatch.worktree,
+    session: dispatch.session,
+    runner,
+  };
+}
+
 function buildExecuteResult(input: {
   input: OrchestrationSupervisorTickInput;
   startedAt: string;
@@ -655,6 +785,7 @@ function buildExecuteResult(input: {
   promotedIssueIds: readonly string[];
   dispatchedIssueIds: readonly string[];
   dispatchResult?: OrchestrationDispatchResult;
+  assignmentFailureCount?: number;
   summary: string;
 }): OrchestrationSupervisorTickResult {
   const readyCount = input.dashboard.visibleReadyIssueIds.length;
@@ -665,7 +796,9 @@ function buildExecuteResult(input: {
     (input.dispatchResult.unassignedIssues.length > 0 ||
       input.dispatchResult.failures.length > 0);
   const stopReason =
-    input.dispatchedIssueIds.length > 0
+    (input.assignmentFailureCount ?? 0) > 0
+      ? 'blocked'
+      : input.dispatchedIssueIds.length > 0
       ? undefined
       : blockedByDispatch
         ? 'blocked'
@@ -756,6 +889,7 @@ function buildDecision(input: {
   action?: string;
   startedAt?: string;
   completedAt?: string;
+  evidenceArtifactIds?: readonly string[];
   metadata?: Record<string, string>;
 }): OrchestrationSupervisorDecision {
   const timestamp =
@@ -770,7 +904,7 @@ function buildDecision(input: {
     executed: input.executed,
     startedAt: input.startedAt ?? timestamp,
     completedAt: input.completedAt ?? timestamp,
-    evidenceArtifactIds: [],
+    evidenceArtifactIds: [...(input.evidenceArtifactIds ?? [])],
     ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
   };
 }
@@ -824,6 +958,10 @@ function buildTickResult(input: {
   stopReason?: OrchestrationSupervisorStopReason;
   nextDelayMs?: number;
 }): OrchestrationSupervisorTickResult {
+  const evidenceArtifactIds = uniqueStrings(
+    input.decisions.flatMap((decision) => decision.evidenceArtifactIds),
+  );
+
   return orchestrationSupervisorTickResultSchema.parse({
     contractVersion: supervisorContractVersion,
     tickId: input.input.tickId,
@@ -835,10 +973,22 @@ function buildTickResult(input: {
     readyIssueCount: input.readyIssueCount,
     promotedIssueIds: input.promotedIssueIds,
     dispatchedIssueIds: input.dispatchedIssueIds,
-    evidenceArtifactIds: [],
+    evidenceArtifactIds,
     ...(input.nextDelayMs !== undefined ? { nextDelayMs: input.nextDelayMs } : {}),
     summary: input.summary,
   });
+}
+
+function assertAssignmentRunnerConfigured(
+  dispatch: OrchestrationSupervisorHostExecution | undefined,
+): void {
+  if (dispatch?.assignmentRunner !== undefined) {
+    return;
+  }
+
+  throw new Error(
+    'execute supervisor ticks require dispatch.assignmentRunner; dispatch-only supervisor execution is no longer supported.',
+  );
 }
 
 function hasDecisionKind(
@@ -850,6 +1000,14 @@ function hasDecisionKind(
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+function sanitizeDecisionSegment(value: string): string {
+  return value
+    .trim()
+    .replace(/[^A-Za-z0-9._:-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 function getErrorMessage(error: unknown): string {

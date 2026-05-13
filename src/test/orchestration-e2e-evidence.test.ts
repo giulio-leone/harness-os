@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -562,6 +562,30 @@ test('MCP supervisor run autonomously promotes, dispatches, and exposes evidence
 
     const issueRows = selectIssueRows(dbPath);
     assert.equal(issueRows.length, 2);
+    for (const issue of issueRows) {
+      const allocation = buildWorktreeAllocation({
+        issueId: issue.id,
+        repoRoot: supervisorRepoRoot,
+        worktreeRoot: supervisorWorktreeRoot,
+        baseRef: 'main',
+        branchPrefix: dispatchBranchPrefix,
+      });
+      mkdirSync(allocation.path, { recursive: true });
+    }
+    const supervisorProofWriter = [
+      'const fs = require("node:fs");',
+      'const runId = process.env.HARNESS_RUN_ID;',
+      'const criteria = [',
+      '{ id: "correctness", dimension: "correctness", name: "Correctness", description: "Assignment behavior is verified.", weight: 1 },',
+      '{ id: "security", dimension: "security", name: "Security", description: "No unsafe runtime behavior is introduced.", weight: 1 },',
+      '{ id: "quality", dimension: "quality", name: "Quality", description: "Implementation quality remains maintainable.", weight: 1 },',
+      '{ id: "runtime-evidence", dimension: "runtime_evidence", name: "Runtime evidence", description: "Command-produced reports prove the run.", weight: 1 }',
+      '];',
+      'const scorecard = { contractVersion: "1.0.0", id: `scorecard-${runId}`, scope: "run", runId, summary: "Supervisor assignment runner proof passed.", criteria, scores: criteria.map((criterion) => ({ criterionId: criterion.id, score: 9, notes: "Automated supervisor runner proof produced evidence.", evidenceArtifactIds: ["runner-proof"] })), weightedAverage: 9, targetScore: 8, createdAt: "2026-05-13T00:00:00.000Z" };',
+      'fs.writeFileSync(process.env.HARNESS_TEST_REPORT_PATH, JSON.stringify({ status: "passed", suite: "supervisor-run" }));',
+      'fs.writeFileSync(process.env.HARNESS_E2E_REPORT_PATH, JSON.stringify({ status: "passed", flow: "supervisor-run" }));',
+      'fs.writeFileSync(process.env.HARNESS_CSQR_SCORECARD_PATH, JSON.stringify(scorecard));',
+    ].join('');
 
     const beforeSupervisor = (await symphony.handler({
       action: 'dashboard_view',
@@ -605,6 +629,13 @@ test('MCP supervisor run autonomously promotes, dispatches, and exposes evidence
         hostCapabilities: hostRoutingContext.hostCapabilities,
         maxConcurrentAgents: 4,
         subagents: supervisorSubagents,
+        assignmentRunner: {
+          command: process.execPath,
+          args: ['-e', supervisorProofWriter],
+          requiredEvidenceArtifactKinds: ['test_report', 'e2e_report'],
+          includeCsqrLiteScorecard: true,
+          maxAssignmentsPerTick: 4,
+        },
       },
     })) as { result: unknown };
     const supervisorResult = orchestrationSupervisorRunSummarySchema.parse(
@@ -627,6 +658,8 @@ test('MCP supervisor run autonomously promotes, dispatches, and exposes evidence
         'promote_queue',
         'inspect_dashboard',
         'dispatch_ready',
+        'run_assignment',
+        'run_assignment',
       ],
     );
     assert.deepEqual([...firstTick.promotedIssueIds].sort(), [...issueIds].sort());
@@ -634,8 +667,8 @@ test('MCP supervisor run autonomously promotes, dispatches, and exposes evidence
     assert.equal(firstTick.stopReason, undefined);
     assert.equal(secondTick.stopReason, 'idle');
     assert.deepEqual(selectIssueStatuses(dbPath), {
-      [issueIds[0]!]: 'in_progress',
-      [issueIds[1]!]: 'in_progress',
+      [issueIds[0]!]: 'done',
+      [issueIds[1]!]: 'done',
     });
 
     const expectedPlan = buildSupervisorReferencePlan({
@@ -684,20 +717,18 @@ test('MCP supervisor run autonomously promotes, dispatches, and exposes evidence
     );
 
     assert.equal(inspected.summary.health.status, 'healthy');
-    assert.equal(inspected.summary.leases.activeCount, 2);
-    assert.deepEqual(
-      inspected.summary.leases.active.map((lease) => lease.agentId).sort(),
-      ['agent-autonomy-1', 'agent-autonomy-2'],
-    );
+    assert.equal(inspected.summary.leases.activeCount, 0);
+    assert.deepEqual(inspected.summary.leases.active, []);
     assert.deepEqual(inspected.summary.issues.statusCounts, {
-      in_progress: 2,
+      done: 2,
     });
     assert.equal(artifactCounts.get('evidence_packet'), 1);
     assert.equal(artifactCounts.get('typecheck_report'), 1);
     assert.equal(artifactCounts.get('state_export'), 1);
-    assert.equal(artifactCounts.get('csqr_lite_scorecard'), 1);
-    assert.equal(artifactCounts.get('test_report'), 2);
-    assert.equal(artifactCounts.get('e2e_report'), 2);
+    assert.equal(artifactCounts.get('csqr_lite_scorecard'), 3);
+    assert.equal(artifactCounts.get('diagnostic_log'), 2);
+    assert.equal(artifactCounts.get('test_report'), 4);
+    assert.equal(artifactCounts.get('e2e_report'), 4);
     assert.equal(artifactCounts.get('screenshot'), 2);
     assert.deepEqual(inspected.summary.artifacts.references.evidencePacketIds, [
       runResult.evidencePacket.id,
@@ -714,22 +745,22 @@ test('MCP supervisor run autonomously promotes, dispatches, and exposes evidence
       projectId: campaign.projectId,
       campaignId: campaign.campaignId,
     })) as DashboardViewResponse;
-    const inProgressCards = getLaneCards(afterSupervisor, 'in_progress');
+    const doneCards = getLaneCards(afterSupervisor, 'done');
 
     assert.equal(afterSupervisor.viewModel.overview.totalIssues, 2);
-    assert.equal(afterSupervisor.viewModel.overview.activeIssueCount, 2);
+    assert.equal(afterSupervisor.viewModel.overview.activeIssueCount, 0);
     assert.deepEqual(
-      inProgressCards.map((card) => card.id).sort(),
+      doneCards.map((card) => card.id).sort(),
       [...issueIds].sort(),
     );
     assert.deepEqual(
-      inProgressCards.flatMap((card) =>
+      doneCards.flatMap((card) =>
         card.activeLeases.map((lease) => lease.agentId),
-      ).sort(),
-      ['agent-autonomy-1', 'agent-autonomy-2'],
+      ),
+      [],
     );
     assert.equal(afterSupervisor.viewModel.evidence.evidencePacketCount, 1);
-    assert.equal(afterSupervisor.viewModel.evidence.csqrLiteScorecardCount, 1);
+    assert.equal(afterSupervisor.viewModel.evidence.csqrLiteScorecardCount, 3);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
