@@ -15,11 +15,17 @@ import {
   evaluateCsqrLiteCompletionGate,
   loadOrchestrationDashboardViewModel,
   normalizeOrchestrationDashboardIssueFilters,
+  buildSymphonyCodexAppServerCommand,
   cleanupSymphonyPhysicalWorktree,
+  createScriptedCodexAppServerProcessAdapter,
   createSymphonyPhysicalWorktree,
   createSymphonyWorkflowReloader,
+  deriveSymphonyCodexSessionId,
   loadSymphonyWorkflowFromText,
+  launchCodexAppServerRunner,
   renderSymphonyWorkflowPrompt,
+  symphonyCodexRunnerLaunchResultSchema,
+  symphonyCodexRunnerTurnResultSchema,
   symphonyWorktreeOperationResultSchema,
   runOrchestrationSupervisorTick,
   assertReferenceOrchestrationEvidencePacket,
@@ -54,6 +60,10 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof loadOrchestrationDashboardViewModel, 'function');
   assert.equal(typeof applyOrchestrationDashboardIssueFilters, 'function');
   assert.equal(typeof normalizeOrchestrationDashboardIssueFilters, 'function');
+  assert.equal(typeof buildSymphonyCodexAppServerCommand, 'function');
+  assert.equal(typeof createScriptedCodexAppServerProcessAdapter, 'function');
+  assert.equal(typeof deriveSymphonyCodexSessionId, 'function');
+  assert.equal(typeof launchCodexAppServerRunner, 'function');
   assert.equal(typeof createSymphonyPhysicalWorktree, 'function');
   assert.equal(typeof cleanupSymphonyPhysicalWorktree, 'function');
   assert.equal(typeof createSymphonyWorkflowReloader, 'function');
@@ -67,6 +77,8 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof orchestrationSupervisorRunSummarySchema.safeParse, 'function');
   assert.equal(typeof symphonyWorkflowConfigSchema.safeParse, 'function');
   assert.equal(typeof symphonyWorkflowDocumentSchema.safeParse, 'function');
+  assert.equal(typeof symphonyCodexRunnerLaunchResultSchema.safeParse, 'function');
+  assert.equal(typeof symphonyCodexRunnerTurnResultSchema.safeParse, 'function');
   assert.equal(typeof symphonyWorktreeOperationResultSchema.safeParse, 'function');
   assert.equal(typeof csqrLiteScorecardSchema.safeParse, 'function');
   assert.equal(csqrLiteDefaultCriteria.length, 4);
@@ -123,6 +135,22 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
     normalizeOrchestrationDashboardIssueFilters,
   );
   assert.equal(
+    orchestration.buildSymphonyCodexAppServerCommand,
+    buildSymphonyCodexAppServerCommand,
+  );
+  assert.equal(
+    orchestration.createScriptedCodexAppServerProcessAdapter,
+    createScriptedCodexAppServerProcessAdapter,
+  );
+  assert.equal(
+    orchestration.deriveSymphonyCodexSessionId,
+    deriveSymphonyCodexSessionId,
+  );
+  assert.equal(
+    orchestration.launchCodexAppServerRunner,
+    launchCodexAppServerRunner,
+  );
+  assert.equal(
     orchestration.createSymphonyPhysicalWorktree,
     createSymphonyPhysicalWorktree,
   );
@@ -168,6 +196,14 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
   );
   assert.equal(orchestration.symphonyWorkflowConfigSchema, symphonyWorkflowConfigSchema);
   assert.equal(orchestration.symphonyWorkflowDocumentSchema, symphonyWorkflowDocumentSchema);
+  assert.equal(
+    orchestration.symphonyCodexRunnerLaunchResultSchema,
+    symphonyCodexRunnerLaunchResultSchema,
+  );
+  assert.equal(
+    orchestration.symphonyCodexRunnerTurnResultSchema,
+    symphonyCodexRunnerTurnResultSchema,
+  );
   assert.equal(
     orchestration.symphonyWorktreeOperationResultSchema,
     symphonyWorktreeOperationResultSchema,

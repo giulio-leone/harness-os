@@ -82,6 +82,28 @@ test('capability catalog exposes Symphony orchestration discovery metadata', () 
     catalog.orchestration.worktreeIsolation.physicalAdapter,
     'createSymphonyPhysicalWorktree',
   );
+  assert.equal(
+    catalog.orchestration.codexRunner.launchAdapter,
+    'launchCodexAppServerRunner',
+  );
+  assert.equal(
+    catalog.orchestration.codexRunner.fakeProcessAdapter,
+    'createScriptedCodexAppServerProcessAdapter',
+  );
+  assert.deepEqual(catalog.orchestration.codexRunner.timeoutFields, [
+    'readTimeoutMs',
+    'turnTimeoutMs',
+  ]);
+  assert.ok(
+    catalog.orchestration.codexRunner.deferredTimeoutFields.includes(
+      'stallTimeoutMs',
+    ),
+  );
+  assert.ok(
+    catalog.orchestration.codexRunner.normalizedErrorCodes.includes(
+      'turn_input_required',
+    ),
+  );
   assert.ok(catalog.orchestration.evidence.acceptedArtifactKinds.includes('test_report'));
   assert.ok(catalog.orchestration.evidence.acceptedArtifactKinds.includes('screenshot'));
   assert.ok(
