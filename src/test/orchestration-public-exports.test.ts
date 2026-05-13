@@ -25,6 +25,7 @@ import {
   launchCodexAppServerRunner,
   renderSymphonyWorkflowPrompt,
   symphonyCodexRunnerLaunchResultSchema,
+  symphonyCodexRunnerTurnExecutionEnvelopeSchema,
   symphonyCodexRunnerTurnResultSchema,
   symphonyWorktreeOperationResultSchema,
   runOrchestrationSupervisorTick,
@@ -79,6 +80,10 @@ test('package root exports the stable orchestration API surface', () => {
   assert.equal(typeof symphonyWorkflowDocumentSchema.safeParse, 'function');
   assert.equal(typeof symphonyCodexRunnerLaunchResultSchema.safeParse, 'function');
   assert.equal(typeof symphonyCodexRunnerTurnResultSchema.safeParse, 'function');
+  assert.equal(
+    typeof symphonyCodexRunnerTurnExecutionEnvelopeSchema.safeParse,
+    'function',
+  );
   assert.equal(typeof symphonyWorktreeOperationResultSchema.safeParse, 'function');
   assert.equal(typeof csqrLiteScorecardSchema.safeParse, 'function');
   assert.equal(csqrLiteDefaultCriteria.length, 4);
@@ -203,6 +208,10 @@ test('orchestration subpath re-exports the same stable runtime values', () => {
   assert.equal(
     orchestration.symphonyCodexRunnerTurnResultSchema,
     symphonyCodexRunnerTurnResultSchema,
+  );
+  assert.equal(
+    orchestration.symphonyCodexRunnerTurnExecutionEnvelopeSchema,
+    symphonyCodexRunnerTurnExecutionEnvelopeSchema,
   );
   assert.equal(
     orchestration.symphonyWorktreeOperationResultSchema,
